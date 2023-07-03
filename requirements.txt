@@ -1,0 +1,16 @@
+soundfile
+numpy
+subprocess
+cv2
+json
+moviepy
+decimal
+librosa
+matplotlib
+scipy
+sklearn
+pydub
+pygetwindow
+traceback
+noisereduce
+spleeter
