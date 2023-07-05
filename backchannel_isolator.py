@@ -460,7 +460,7 @@ def mute_by_deviation(song_path, reaction_path):
 
     delay = 0
     if len(song) > len(reaction):
-        song = song[:,:len(reaction)]
+        song = song[:len(reaction)]
     else:
         pad_width = len(reaction) - len(song) - delay
         song = np.pad(song, (delay, pad_width))
