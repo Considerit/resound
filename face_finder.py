@@ -69,10 +69,18 @@ import numpy as np
 import subprocess
 import pygetwindow as gw
 import os
-from moviepy.editor import VideoFileClip
+from moviepy.editor import VideoFileClip, AudioFileClip
+
+def replace_audio(video, audio_path):
+    audio = AudioFileClip(audio_path)
+
+    # Set the audio of the video clip
+    video = video.set_audio(audio)
+
+    return video
 
 
-def crop_video(input_file, output_file, x, y, w, h):
+def crop_video(input_file, output_file, replacement_audio, x, y, w, h):
     # Load the video clip
     video = VideoFileClip(input_file)
 
@@ -91,6 +99,9 @@ def crop_video(input_file, output_file, x, y, w, h):
       w = h = 450
       cropped_video = cropped_video.resize(width=video.w//2*2, height=video.h//2*2)
 
+    if replacement_audio:
+      cropped_video = replace_audio(cropped_video, replacement_audio)
+
     # Write the cropped video to a file
     cropped_video.write_videofile(output_file, codec="libx264", audio_codec="aac", fps=30,
                                   ffmpeg_params=['-pix_fmt', 'yuv420p'])
@@ -98,18 +109,27 @@ def crop_video(input_file, output_file, x, y, w, h):
     # Close the video clip
     video.close()
 
-def create_reactor_view(react_path, base_path, show_facial_recognition=False): 
+def create_reactor_view(react_path, base_path, replacement_audio=None, show_facial_recognition=False): 
   base_reaction_path, base_video_ext = os.path.splitext(react_path)
 
-  output_file = f"{base_reaction_path}-zoom-0{base_video_ext}"
+  output_files = []
+  i = 0
+  
+  # Check if files exist with naming convention
+  while os.path.exists(f"{base_reaction_path}-cropped-{i}{base_video_ext}"):
+      output_files.append(f"{base_reaction_path}-cropped-{i}{base_video_ext}")
+      i += 1
 
-  if not os.path.exists(output_file):
-    reactors = detect_faces(react_path, base_path, show_facial_recognition)
-    print(reactors)
-    for i, (x,y,w,h) in enumerate(reactors): 
-      output_file = f"{base_reaction_path}-zoom-{i}{base_video_ext}"
+  # If no existing files found, proceed with face detection and cropping
+  if len(output_files) == 0:
+      reactors = detect_faces(react_path, base_path, show_facial_recognition)
+      print(reactors)
+      for i, (x,y,w,h) in enumerate(reactors): 
+          output_file = f"{base_reaction_path}-cropped-{i}{base_video_ext}"
+          crop_video(react_path, output_file, replacement_audio, int(x), int(y), int(w), int(h))
+          output_files.append(output_file)
 
-      crop_video(react_path, output_file, int(x),int(y),int(w),int(h))
+  return output_files
 
 
 
