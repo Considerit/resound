@@ -1,13 +1,14 @@
 import os
 
-from utilities import trim_and_concat_video, prepare_files, extract_audio, compute_precision_recall, universal_frame_rate, download_and_parse_reactions, is_close
+from utilities import trim_and_concat_video, prepare_reactions, extract_audio, compute_precision_recall, universal_frame_rate, download_and_parse_reactions, is_close
 from cross_expander import cross_expander_aligner
 from face_finder import create_reactor_view
 from backchannel_isolator import process_reactor_audio
 
 from decimal import Decimal, getcontext
 
-
+import cProfile
+import pstats
 
 ground_truth = {
     "CAN HE RAP THO？! ｜ Ren - The Hunger knox-truncated.mp4": [(0.0, 12.6), (80, 89), (123, 131), (156, 160), (173, 176), (189, 193), (235, 239), (247, 254.5), (286, 290), (342, 346), (373, 377), (442, 445), (477, 483), (513, 517), (546, 552), (570, 578), (599, 600), (632, 639), (645, 651), (662, 665), (675, 680), (694, 707), (734, 753)],
@@ -71,8 +72,11 @@ def compress_segments(match_segments, sr, segment_combination_threshold):
     # compressed_subsequences = match_segments
     return compressed_subsequences
 
-def create_aligned_reaction_video(reaction_audio_data, reaction_sample_rate, reaction_audio_path, react_video_ext, output_file: str, react_video, base_video, base_audio_data, base_audio_path, options):
+def create_aligned_reaction_video(react_video_ext, output_file: str, react_video, base_video, base_audio_data, base_audio_path, options):
 
+    gt = ground_truth.get(os.path.basename(react_video) )
+    # if not gt: 
+    #     return
 
     options.setdefault("step_size", 1)
     options.setdefault("min_segment_length_in_seconds", 3)
@@ -83,9 +87,15 @@ def create_aligned_reaction_video(reaction_audio_data, reaction_sample_rate, rea
     options.setdefault("peak_tolerance", .7)
     options.setdefault("expansion_tolerance", .7)
 
-    gt = ground_truth.get(os.path.basename(react_video) )
-    # if not gt: 
-    #     return
+
+    segment_combination_threshold = options['segment_combination_threshold']
+    del options['segment_combination_threshold']
+
+
+    # Extract the reaction audio
+    reaction_audio_data, reaction_sample_rate, reaction_audio_path = extract_audio(react_video)
+
+
 
 
     # Determine the number of decimal places to try avoiding frame boundary errors given python rounding issues
@@ -93,7 +103,6 @@ def create_aligned_reaction_video(reaction_audio_data, reaction_sample_rate, rea
     precision = Decimal(1) / fr
     precision_str = str(precision)
     getcontext().prec = len(precision_str.split('.')[-1])
-
 
 
     print(f"\n*******{options}")
@@ -105,7 +114,7 @@ def create_aligned_reaction_video(reaction_audio_data, reaction_sample_rate, rea
 
 
 
-    sequences = compress_segments(uncompressed_sequences, segment_combination_threshold=options['segment_combination_threshold'], sr=reaction_sample_rate)
+    sequences = compress_segments(uncompressed_sequences, segment_combination_threshold=segment_combination_threshold, sr=reaction_sample_rate)
 
     reaction_sample_rate = Decimal(reaction_sample_rate)
 
@@ -131,14 +140,14 @@ def create_aligned_reaction_video(reaction_audio_data, reaction_sample_rate, rea
 
     # Trim and align the reaction video
     trim_and_concat_video(react_video, final_sequences, base_video, output_file, react_video_ext)
+    return output_file
 
 
-
-def handle_reaction_video(directory: str, reaction_dir: str, output_dir: str, react_video, base_video, base_audio_data, base_audio_path, options):
+def handle_reaction_video(output_dir: str, react_video, base_video, base_audio_data, base_audio_path, options):
 
 
     react_video_name, react_video_ext = os.path.splitext(react_video)
-    output_file = os.path.join(directory, output_dir, os.path.basename(react_video_name) + f"-CROSS-EXPANDER{react_video_ext}")
+    output_file = os.path.join(output_dir, os.path.basename(react_video_name) + f"-CROSS-EXPANDER{react_video_ext}")
 
     # if '40' not in react_video_name:
     #     return
@@ -146,37 +155,41 @@ def handle_reaction_video(directory: str, reaction_dir: str, output_dir: str, re
     print("processing ", react_video_name)
     # Create the output video file name
 
-    # Extract the reaction audio
-    reaction_audio_data, reaction_sample_rate, reaction_audio_path = extract_audio(react_video, reaction_dir)
 
     if not os.path.exists(output_file):
-        create_aligned_reaction_video(reaction_audio_data, reaction_sample_rate, reaction_audio_path, react_video_ext, output_file, react_video, base_video, base_audio_data, base_audio_path, options)
+        create_aligned_reaction_video(react_video_ext, output_file, react_video, base_video, base_audio_data, base_audio_path, options)
 
-    if False:
-        create_reactor_view(output_file, base_video, False)
-
-
-    if True:        
-        _,_,aligned_reaction_audio_path = extract_audio(output_file, os.path.join(directory, output_dir))
-        process_reactor_audio(aligned_reaction_audio_path, base_audio_path)
+    _,_,aligned_reaction_audio_path = extract_audio(output_file)
+    isolated_commentary = process_reactor_audio(aligned_reaction_audio_path, base_audio_path)
+    faces = create_reactor_view(output_file, base_video, replacement_audio=isolated_commentary, show_facial_recognition=False)
 
 
 
 
 
-def cross_correlate_videos(directory: str, reactions_dir: str = 'reactions', output_dir: str = 'aligned', options = {}):
-    # directory = os.path.join('Reactions', directory)
-
-    print("Processing directory", directory, reactions_dir, "Outputting to", output_dir)
-
-    directory, output_dir, base_video, react_videos = prepare_files(directory, reactions_dir, output_dir)
 
 
-    # # Extract the base audio and get the sample rate
-    base_audio_data, _, base_audio_path = extract_audio(base_video, directory)
 
 
-    reaction_dir = os.path.join(directory, reactions_dir)
+def cross_correlate_videos(song: str, output_dir: str = 'aligned', options = {}):
+    song_directory = os.path.join('Media', song)
+    reactions_dir = 'reactions'
+
+    full_output_dir = os.path.join(song_directory, output_dir)
+    if not os.path.exists(full_output_dir):
+       # Create a new directory because it does not exist
+       os.makedirs(full_output_dir)
+
+    print("Processing directory", song_directory, reactions_dir, "Outputting to", output_dir)
+
+    base_video, react_videos = prepare_reactions(song_directory)
+
+
+    # Extract the base audio and get the sample rate
+    base_audio_data, _, base_audio_path = extract_audio(base_video)
+
+
+    reaction_dir = os.path.join(song_directory, reactions_dir)
 
     failed_reactions = []
     for react_video in react_videos:
@@ -184,13 +197,21 @@ def cross_correlate_videos(directory: str, reactions_dir: str = 'reactions', out
         #     continue
 
         try:
-            handle_reaction_video(directory, reaction_dir, output_dir, react_video, base_video, base_audio_data, base_audio_path, options)
+            # profiler = cProfile.Profile()
+            # profiler.enable()
+
+
+
+            handle_reaction_video(full_output_dir, react_video, base_video, base_audio_data, base_audio_path, options)
+
+            # profiler.disable()
+            # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+            # stats.print_stats()
+
         except Exception as e: 
             traceback.print_exc()
             print(e)
             failed_reactions.append((react_video, e))
-
-
 
     return failed_reactions
 
@@ -202,14 +223,12 @@ if __name__ == '__main__':
 
     # download_and_parse_reactions("Ren - Suicide")
 
-
-
-    songs = [ "Ren - Suicide"] #, "Ren - Fire", "Ren - Suicide", "Ren - The Hunger"] 
+    songs = ["Ren - Suicide"] #, "Ren - Hunger", "Ren - Suicide"] 
     # songs = [ "Ren - Fire"] #, "Ren - Genesis", "Ren - Suicide", "Ren - The Hunger"] 
 
     failures = []
     for song in songs: 
-        failed = cross_correlate_videos(song, "reactions", "crossed-backoff-0", {'segment_end_backoff': 0, 'segment_combination_threshold': 0})
+        failed = cross_correlate_videos(song, "crossed-backoff-0", {'segment_end_backoff': 0, 'segment_combination_threshold': 0})
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
@@ -224,15 +243,6 @@ if __name__ == '__main__':
         for react_video, e in failed:
             print(f"\n***{react_video} failed with:")
             print(e)
-
-
-    #     # cross_correlate_videos(song, "reactions", "crossed-backoff-20000", {'segment_end_backoff': 20000, 'segment_combination_threshold': .3})
-    #     # cross_correlate_videos(song, "reactions", "crossed-backoff-20000-01", {'segment_end_backoff': 20000, 'segment_combination_threshold': .01})
-    #     # cross_correlate_videos(song, "reactions", "crossed-backoff-20000-0001", {'segment_end_backoff': 20000, 'segment_combination_threshold': .0001})
-
-    #     # cross_correlate_videos(song, "reactions", "crossed-backoff-40000", {'segment_end_backoff': 40000, 'segment_combination_threshold': .3})
-    #     # cross_correlate_videos(song, "reactions", "crossed-backoff-40000-01", {'segment_end_backoff': 40000, 'segment_combination_threshold': .01})
-    #     # cross_correlate_videos(song, "reactions", "crossed-backoff-40000-0001", {'segment_end_backoff': 40000, 'segment_combination_threshold': .0001})
 
 
 

@@ -113,8 +113,6 @@ def create_mask_by_mfcc_difference(song, sr_song, reaction, sr_reaction, percent
 
     diff = calculate_difference(mfcc_song, mfcc_reaction)
 
-    print("diff shape: ", diff.shape)
-
 
     # Calculate the frame energy
     frame_length = 2048  # You may need to adjust this
@@ -429,7 +427,7 @@ def apply_segments(audio, segments):
 
 
 
-def mute_by_deviation(song_path, reaction_path):
+def mute_by_deviation(song_path, reaction_path, output_path):
     min_segment_length = 0.05
     max_gap_frames = 0.15
     percentile_thresh = 90
@@ -484,7 +482,7 @@ def mute_by_deviation(song_path, reaction_path):
     #     # Squeeze the 2D arrays to 1D
     #     suppressed_reaction = np.squeeze(suppressed_reaction)
 
-    output_path = os.path.splitext(reaction_path)[0] + f"_filtered_to_deviations-of-local-loudness{percentile_thresh}-{max_gap_frames * 100}-{min_segment_length}-{do_matching}.wav"
+    
     sf.write(output_path, suppressed_reaction.T, sr_reaction)
 
     # suppressed_reaction = post_process_audio(suppressed_reaction, original_sr_reaction)
@@ -507,47 +505,11 @@ def process_reactor_audio(reaction_audio, base_audio):
 
 
     reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio, post_process=True)
-    subtracted_audio_path = mute_by_deviation(song_vocals_path, reaction_vocals_path)
+    output_path = os.path.splitext(reaction_vocals_path)[0] + f"_isolated_commentary.wav"
+    if not os.path.exists(output_path):
+        mute_by_deviation(song_vocals_path, reaction_vocals_path, output_path)
 
-
-    # subtracted_audio_path = reaction_audio
-    # for i in range(10):
-    #     print(f"Pass {i+1}")
-    #     subtracted_audio_path = subtract_song(base_audio, subtracted_audio_path)
-    
-
-    # subtracted_audio_path = subtract_song(base_audio, reaction_audio)
-
-    # reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio)
-
-    # subtracted_audio_path = subtract_song(song_vocals_path, reaction_vocals_path)
-
-
-
-
-    # print(f"Original reaction shape: {reaction.shape}")
-    # print(f"Original reaction min, max: {np.min(reaction)}, {np.max(reaction)}")
-
-    # # Check if the audio data contains any infinite or NaN values
-    # print(f"Original reaction contains NaNs: {np.isnan(reaction).any()}")
-    # print(f"Original reaction contains infinities: {np.isinf(reaction).any()}")
-
-    # print(f"Original reaction standard deviation: {np.std(reaction)}")
-
-    # # Apply post-processing to the loaded reaction audio
-    # # reaction = pre_process_audio(reaction, sr_reaction)
-
-
-
-    # print(f"Processed reaction shape: {reaction.shape}")
-    # print(f"Processed reaction min, max: {np.min(reaction)}, {np.max(reaction)}")
-
-
-    # print(f"Processed reaction contains NaNs: {np.isnan(reaction).any()}")
-    # print(f"Processed reaction contains infinities: {np.isinf(reaction).any()}")
-
-    # # Check the standard deviation of the audio data
-    # print(f"Processed reaction standard deviation: {np.std(reaction)}")
+    return output_path
 
 
 

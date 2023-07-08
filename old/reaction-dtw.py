@@ -13,7 +13,7 @@ import tempfile
 from typing import List, Tuple
 
 
-from utilities import trim_and_concat_video, prepare_files, extract_audio, get_audio_duration
+from utilities import trim_and_concat_video, prepare_reactions, extract_audio, get_audio_duration
 
 
 def visualize_dtw_path_and_segments(dtw_path, dtw_path_backwards, base_audio, react_audio, hop_length, segments, base_segments, refined_video_segments=None):
@@ -263,10 +263,18 @@ def find_unmatched_segments(base_segments, base_audio_duration):
 
 
 hop_length = 512
-def process_directory(directory: str, reactions_dir: str = 'reactions', output_dir: str = 'aligned', features: list=['mfcc', 'chroma_stft', 'spectral_contrast', 'tonnetz']):
+def process_directory(song: str, output_dir: str = 'aligned', features: list=['mfcc', 'chroma_stft', 'spectral_contrast', 'tonnetz']):
+
+    directory = os.path.join('Media', song)
+    reactions_dir = 'reactions'
 
 
-    directory, output_dir, base_video, react_videos = prepare_files(directory, reactions_dir, output_dir)
+    full_output_dir = os.path.join(directory, output_dir)
+    if not os.path.exists(full_output_dir):
+       # Create a new directory because it does not exist
+       os.makedirs(full_output_dir)
+
+    base_video, react_videos = prepare_reactions(directory)
 
     print("Processing directory", reactions_dir, "Outputting to", output_dir)
     reaction_dir = os.path.join(directory, reactions_dir)
@@ -287,7 +295,7 @@ def process_directory(directory: str, reactions_dir: str = 'reactions', output_d
         print(f"\n\nProcessing {directory} {react_video_name}")
         # Create the output video file name
 
-        output_file = os.path.join(directory, output_dir, os.path.basename(react_video_name) + "-"+output_dir + react_video_ext)
+        output_file = os.path.join(full_output_dir, os.path.basename(react_video_name) + "-"+output_dir + react_video_ext)
 
         if os.path.exists(output_file): # skip if reaction already created
             continue
