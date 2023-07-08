@@ -7,8 +7,23 @@ import subprocess
 import cv2
 import json
 from silence import get_edge_silence
-from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip
+from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, CompositeVideoClip
 from decimal import Decimal, getcontext
+
+
+
+def create_audio_extraction(reaction_audio, base_audio, segments):
+    segmented_audio_data = []
+
+    for reaction_start, reaction_end, current_start, current_end, is_filler in segments:
+        if is_filler:
+            segment = base_audio[current_start:current_end]
+        else: 
+            segment = reaction_audio[reaction_start:reaction_end]
+        segmented_audio_data.append(segment)
+
+    segmented_audio_data = np.concatenate(segmented_audio_data)
+    return segmented_audio_data
 
 
 
@@ -57,11 +72,11 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
 
     # process video  target_resolution=(1080, 1920)
-    video1 = VideoFileClip(video_file)
-    width = video1.w
-    height = video1.h
+    reaction_video = VideoFileClip(video_file)
+    width = reaction_video.w
+    height = reaction_video.h
 
-    video2 = VideoFileClip(filler_video)
+    base_video = VideoFileClip(filler_video)
     
 
     clips = []
@@ -70,9 +85,9 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
         if filler: 
             start_frame = filler_start
             end_frame = filler_end
-            video = video2
+            video = base_video
         else:
-            video = video1
+            video = reaction_video
 
         if end_frame <= start_frame: 
             continue
@@ -92,20 +107,29 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
     # Get the duration of each clip
     final_clip_duration = final_clip.duration
-    video2_duration = video2.duration
+    base_video_duration = base_video.duration
 
-    # If final_clip is longer than video2, trim it
-    if final_clip_duration > video2_duration:
-        final_clip = final_clip.subclip(0, video2_duration)
+    # If final_clip is longer than base_video, trim it
+    if final_clip_duration > base_video_duration:
+        final_clip = final_clip.subclip(0, base_video_duration)
         
-    # If final_clip is shorter than video2, pad it with black frames
-    elif final_clip_duration < video2_duration:
-        # Create a black clip with the remaining duration
-        black_clip = ColorClip((video2.size), col=(0,0,0)).set_duration(video2_duration - final_clip_duration)
+    # If final_clip is shorter than base_video, pad it with black frames
+    elif final_clip_duration < base_video_duration:
+        # # Create a black clip with the remaining duration
+        # black_clip = ColorClip((base_video.size), col=(0,0,0)).set_fps(final_clip.fps).set_duration(base_video_duration - final_clip_duration).without_audio()
         
-        # Concatenate the black clip to the final clip
-        final_clip = concatenate_videoclips([final_clip, black_clip])
+        # print(f'making longer: {black_clip.duration}  {base_video_duration - final_clip_duration}')
+        # # Concatenate the black clip to the final clip
+        # final_clip = concatenate_videoclips([final_clip, black_clip])
 
+        black_clip = (ColorClip((base_video.size), col=(0,0,0))
+                      .set_duration(base_video_duration - final_clip_duration)
+                      .set_fps(final_clip.fps)
+                      .set_start(final_clip_duration)
+                      .without_audio())
+
+        # Combine the final and black clip using CompositeVideoClip
+        final_clip = CompositeVideoClip([final_clip, black_clip])
 
 
     # Generate the final output video
@@ -113,16 +137,20 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
 
     # Close the video files
-    video1.close()
-    video2.close()
+    reaction_video.close()
+    base_video.close()
+
+
+    output_video = VideoFileClip(output_file)
+    print(f'DONE! Duration={output_video.duration} (compare to {base_video_duration})')
 
 
     # Cleanup temp files
     # for temp_file in temp_files:
     #     if os.path.isfile(temp_file):
     #         os.remove(temp_file)
-    # if os.path.isfile(concat_audio_file):
-    #     os.remove(concat_audio_file)
+    if os.path.isfile(concat_audio_file):
+        os.remove(concat_audio_file)
 
     return output_file
 
@@ -138,22 +166,14 @@ def samples_per_frame():
 def universal_frame_rate(): 
     return conversion_frame_rate
 
-def prepare_files(directory: str, reactions_dir: str = 'reactions', output_dir: str = 'aligned'):
+def prepare_reactions(song_directory: str):
 
-    print("Processing directory", reactions_dir, "Outputting to", output_dir)
+    base_audio_path_webm = os.path.join(song_directory, f"{os.path.basename(song_directory)}.webm")
+    base_audio_path_mp4 = os.path.join(song_directory, f"{os.path.basename(song_directory)}.mp4")
 
-    base_audio_path_webm = os.path.join(directory, f"{os.path.basename(directory)}.webm")
-    base_audio_path_mp4 = os.path.join(directory, f"{os.path.basename(directory)}.mp4")
-    # base_audio_path_webm = base_audio_path_mp4 # temporary
+    reaction_dir = os.path.join(song_directory, 'Reactions')
 
-    # directory = os.path.join('Reactions', directory)
-
-    reaction_dir = os.path.join(directory, reactions_dir)
-
-    full_output_dir = os.path.join(directory, output_dir)
-    if not os.path.exists(full_output_dir):
-       # Create a new directory because it does not exist
-       os.makedirs(full_output_dir)
+    print("Processing reactions in: ", reaction_dir)
 
     ############
     # Make sure all webm files have been converted to mp4
@@ -189,84 +209,25 @@ def prepare_files(directory: str, reactions_dir: str = 'reactions', output_dir: 
 
     # Get all reaction video files
     react_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
-    return directory, output_dir, base_audio_path_mp4, react_videos
+    return base_audio_path_mp4, react_videos
 
 
-# def prepare_files(directory: str, reactions_dir: str = 'reactions', output_dir: str = 'aligned'):
-
-#     print("Processing directory", reactions_dir, "Outputting to", output_dir)
-
-#     base_audio_path_webm = os.path.join(directory, f"{os.path.basename(directory)}.webm")
-#     base_audio_path_mp4 = os.path.join(directory, f"{os.path.basename(directory)}.mp4")
-#     # base_audio_path_webm = base_audio_path_mp4 # temporary
-
-#     # directory = os.path.join('Reactions', directory)
-
-#     reaction_dir = os.path.join(directory, reactions_dir)
-
-#     full_output_dir = os.path.join(directory, output_dir)
-#     if not os.path.exists(full_output_dir):
-#        # Create a new directory because it does not exist
-#        os.makedirs(full_output_dir)
-
-#     ############
-#     # Make sure all webm files have been converted to mp4
-#     base_video = glob.glob(base_audio_path_webm)
-#     print(base_audio_path_webm, base_video, len(base_video))
-#     if len(base_video) > 0: 
-#         base_video = base_video[0]
-
-#         # Check if base_video is in webm format, and if corresponding mp4 doesn't exist, convert it
-#         base_video_name, base_video_ext = os.path.splitext(base_video)
-
-#         base_video_mp4 = base_video_name + '.mp4'
-#         if True or not os.path.exists(base_video_mp4):
-#             start, end = get_edge_silence(base_video)
-#             tmp = f"{base_video_name}-tmp{base_video_ext}"
-#             subprocess.run(f"mv \"{base_video}\" \"{tmp}\" ", shell=True, check=True  )            
-#             command = f"ffmpeg -i \"{tmp}\" -y -vcodec libx264 -vf \"setpts=PTS\" -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -ss {start} -to {end} \"{base_video_mp4}\""
-#             subprocess.run(command, shell=True, check=True)
-#         # os.remove(base_video)
-        
-
-#     # Get all reaction video files
-#     react_videos = glob.glob(os.path.join(reaction_dir, "*.webm"))
-#     react_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
-#     print(react_videos)
-#     # Process each reaction video
-#     for react_video in react_videos:
-
-#         react_video_name, react_video_ext = os.path.splitext(react_video)
-
-#         react_video_mp4 = react_video_name + '.mp4'
-#         if True or not os.path.exists(react_video_mp4):
-
-#             tmp = f"{react_video_name}-tmp{react_video_ext}"
-#             subprocess.run(f"mv \"{react_video}\" \"{tmp}\" ", shell=True, check=True  )
-
-#             command = f'ffmpeg -y -i "{tmp}" -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -c:a aac "{react_video_mp4}"'
-#             subprocess.run(command, shell=True, check=True)
-#         # os.remove(react_video)
-#     ################
-
-#     # Get all reaction video files
-#     react_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
-#     return directory, output_dir, base_audio_path_mp4, react_videos
 
 
-def download_and_parse_reactions(song, reactions_dir="reactions"):
+def download_and_parse_reactions(song):
+    song_directory = os.path.join('Media', song)
     
-    if not os.path.exists(song):
+    if not os.path.exists(song_directory):
        # Create a new directory because it does not exist
-       os.makedirs(song)
+       os.makedirs(song_directory)
 
-    manifest_file = os.path.join(song, "manifest.json")
+    manifest_file = os.path.join(song_directory, "manifest.json")
     if not os.path.exists(manifest_file):
         raise f"{manifest_file} does not exist"
 
     song_data = json.load(open(manifest_file))
 
-    song_file = os.path.join(song, song)
+    song_file = os.path.join(song_directory, song)
     
     if not os.path.exists(song_file + '.mp4') and not os.path.exists(song_file + '.webm'):
         v_id = song_data["main_song"]["id"]
@@ -278,7 +239,7 @@ def download_and_parse_reactions(song, reactions_dir="reactions"):
         print(f"{song_file} exists")
 
 
-    full_reactions_path = os.path.join(song, reactions_dir)
+    full_reactions_path = os.path.join(song_directory, 'reactions')
     if not os.path.exists(full_reactions_path):
        # Create a new directory because it does not exist
        os.makedirs(full_reactions_path)
@@ -295,28 +256,14 @@ def download_and_parse_reactions(song, reactions_dir="reactions"):
                 subprocess.run(cmd, shell=True, check=True)
 
 
-
-
-    prepare_files(song, reactions_dir)
-
+    prepare_reactions(song)
 
 
 
+def extract_audio(video_file: str, output_dir: str = None, sample_rate: int = 44100) -> list:
+    if output_dir is None:
+        output_dir = os.path.dirname(video_file)
 
-
-
-import soundfile as sf
-
-def get_audio_duration(filename: str) -> float:
-    # Open the file
-    f = sf.SoundFile(filename)
-
-    # Calculate the duration
-    duration = len(f) / f.samplerate
-
-    return duration
-
-def extract_audio(video_file: str, output_dir: str, sample_rate: int = 44100) -> list:
     # Construct the output file path
     base_name = os.path.splitext(os.path.basename(video_file))[0]
     output_file = os.path.join(output_dir, f"{base_name}.wav")
