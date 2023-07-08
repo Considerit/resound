@@ -503,7 +503,6 @@ def process_reactor_audio(reaction_audio, base_audio):
 
     # straight_mute_path = mute_by_deviation(base_audio, reaction_audio)
 
-
     reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio, post_process=True)
     output_path = os.path.splitext(reaction_vocals_path)[0] + f"_isolated_commentary.wav"
     if not os.path.exists(output_path):
@@ -911,6 +910,9 @@ def pre_process_audio(commentary, sr):
 
 
 
+
+
+
 from spleeter.separator import Separator
 import numpy as np
 from scipy.spatial import distance
@@ -918,9 +920,12 @@ from scipy.signal import correlate
 import librosa
 from scipy.signal import fftconvolve
 
+spleeter_separator = None
 def separate_vocals(song_path, reaction_path, post_process=False):
     # Create a separator with 2 stems (vocals and accompaniment)
-    separator = Separator('spleeter:2stems')
+    global spleeter_separator
+    if spleeter_separator is None:
+        spleeter_separator = Separator('spleeter:2stems')
 
     print(f"reaction {reaction_path}")
 
@@ -934,9 +939,9 @@ def separate_vocals(song_path, reaction_path, post_process=False):
 
     # Perform source separation on song and reaction audio
     if not os.path.exists(song_separation_path):
-        song_sources = separator.separate_to_file(song_path, song_sep)
+        song_sources = spleeter_separator.separate_to_file(song_path, song_sep)
     if not os.path.exists(react_separation_path):
-        reaction_sources = separator.separate_to_file(reaction_path, reaction_sep)
+        reaction_sources = spleeter_separator.separate_to_file(reaction_path, reaction_sep)
 
     # Load the separated tracks
     song_vocals_path = os.path.join(song_separation_path, 'vocals.wav')
