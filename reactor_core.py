@@ -4,7 +4,7 @@ from utilities import trim_and_concat_video, prepare_reactions, extract_audio, c
 from cross_expander import cross_expander_aligner
 from face_finder import create_reactor_view
 from backchannel_isolator import process_reactor_audio
-
+from compositor import compose_reactor_compilation
 from decimal import Decimal, getcontext
 
 import cProfile
@@ -163,15 +163,16 @@ def handle_reaction_video(output_dir: str, react_video, base_video, base_audio_d
     isolated_commentary = process_reactor_audio(aligned_reaction_audio_path, base_audio_path)
     faces = create_reactor_view(output_file, base_video, replacement_audio=isolated_commentary, show_facial_recognition=False)
 
+    return faces
 
 
 
 
 
+from moviepy.editor import VideoFileClip
 
-
-
-def cross_correlate_videos(song: str, output_dir: str = 'aligned', options = {}):
+def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', include_base_video = True, options = {}):
+    song = song_def['title']
     song_directory = os.path.join('Media', song)
     reactions_dir = 'reactions'
 
@@ -192,7 +193,8 @@ def cross_correlate_videos(song: str, output_dir: str = 'aligned', options = {})
     reaction_dir = os.path.join(song_directory, reactions_dir)
 
     failed_reactions = []
-    for react_video in react_videos:
+    reactors = []
+    for i, react_video in enumerate(react_videos):
         # if 'Cliff' not in react_video:
         #     continue
 
@@ -202,8 +204,14 @@ def cross_correlate_videos(song: str, output_dir: str = 'aligned', options = {})
 
 
 
-            handle_reaction_video(full_output_dir, react_video, base_video, base_audio_data, base_audio_path, options)
+            faces = handle_reaction_video(full_output_dir, react_video, base_video, base_audio_data, base_audio_path, options)
+            
+            if len(faces) > 1:
+                outputs = [{'file': f, 'group': i + 1} for f in faces]
+            else:
+                outputs = [{'file': f} for f in faces]
 
+            reactors.extend(outputs)
             # profiler.disable()
             # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
             # stats.print_stats()
@@ -213,22 +221,71 @@ def cross_correlate_videos(song: str, output_dir: str = 'aligned', options = {})
             print(e)
             failed_reactions.append((react_video, e))
 
+    reaction_videos = []
+    for reactor in reactors: 
+        input_file = reactor['file']
+
+        featured = False
+        for featured_r in song_def['featured']:
+          if featured_r in input_file:
+            featured = True
+            break
+
+        reaction = {
+            'key': input_file,
+            'clip': VideoFileClip(input_file),
+            'orientation': get_orientation(input_file),
+            'group': reactor.get('group', None),
+            'featured': featured
+        }
+        reaction_videos.append(reaction)
+
+    base_video_for_compilation = VideoFileClip(base_video)
+    compose_reactor_compilation(song_def, base_video_for_compilation, reaction_videos, os.path.join(song_directory, f"{song} (compilation).mp4"))
+
     return failed_reactions
 
+def get_orientation(input_file):
+    base_name, ext = os.path.splitext(input_file)
+    parts = base_name.split('-')
+    orientation = parts[-1] if len(parts) > 3 else 'center'
+    return orientation
 
 
 import traceback
 if __name__ == '__main__':
 
+    suicide = {
+        'title': "Ren - Suicide",
+        'include_base_video': True,
+        'featured': ['ThatSingerReactions', 'Rosalie', 'JohnReavesLive']
+    }
+
+    fire = {
+        'title': "Ren - Fire",
+        'include_base_video': False,
+        'featured': ['Johnnie Calloway', 'Anthony Ray']
+    }
+
+    hunger = {
+        'title': "Ren - The Hunger",
+        'include_base_video': True,
+        'featured': ['h8tful', 'jamel', '_QlkLhbCeNo']
+    }
+
+    genesis = {
+        'title': "Ren - Genesis",
+        'include_base_video': True,
+        'featured': ['Jamel', 'J Rizzle', 'That singer reacts']
+    }
 
     # download_and_parse_reactions("Ren - Suicide")
 
-    songs = ["Ren - Suicide"] #, "Ren - Hunger", "Ren - Suicide"] 
-    # songs = [ "Ren - Fire"] #, "Ren - Genesis", "Ren - Suicide", "Ren - The Hunger"] 
+    songs = [suicide, fire, hunger, genesis]
 
     failures = []
     for song in songs: 
-        failed = cross_correlate_videos(song, "crossed-backoff-0", {'segment_end_backoff': 0, 'segment_combination_threshold': 0})
+        failed = create_reaction_compilations(song, output_dir = "crossed-backoff-0", options={'segment_end_backoff': 0, 'segment_combination_threshold': 0})
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
