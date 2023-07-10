@@ -97,7 +97,7 @@ def crop_video(input_file, output_file, replacement_audio, x, y, w, h):
 
     if w > 450: 
       w = h = 450
-      cropped_video = cropped_video.resize(width=video.w//2*2, height=video.h//2*2)
+      cropped_video = cropped_video.resize(width=w//2*2, height=h//2*2)
 
     if replacement_audio:
       cropped_video = replace_audio(cropped_video, replacement_audio)
@@ -115,17 +115,30 @@ def create_reactor_view(react_path, base_path, replacement_audio=None, show_faci
   output_files = []
   i = 0
   
+  # # Check if files exist with naming convention
+  # while os.path.exists(f"{base_reaction_path}-cropped-{i}{base_video_ext}"):
+  #     output_files.append(f"{base_reaction_path}-cropped-{i}{base_video_ext}")
+  #     i += 1
+
+  orientations = ["", "-center", "-left", "-right"]
+
   # Check if files exist with naming convention
-  while os.path.exists(f"{base_reaction_path}-cropped-{i}{base_video_ext}"):
-      output_files.append(f"{base_reaction_path}-cropped-{i}{base_video_ext}")
-      i += 1
+  found = True    
+  while found:
+    found = False
+    for orientation in orientations:
+      f = f"{base_reaction_path}-cropped-{i}{orientation}{base_video_ext}"
+      if os.path.exists(f):
+        output_files.append(f)
+        found = True
+
+    i += 1
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0:
       reactors = detect_faces(react_path, base_path, show_facial_recognition)
-      print(reactors)
-      for i, (x,y,w,h) in enumerate(reactors): 
-          output_file = f"{base_reaction_path}-cropped-{i}{base_video_ext}"
+      for i, (x,y,w,h,orientation) in enumerate(reactors): 
+          output_file = f"{base_reaction_path}-cropped-{i}-{orientation}{base_video_ext}"
           crop_video(react_path, output_file, replacement_audio, int(x), int(y), int(w), int(h))
           output_files.append(output_file)
 
@@ -208,7 +221,7 @@ def detect_faces(react_path, base_path, show_facial_recognition=False):
           for tc in top:
             # print('TC', tc)
 
-            (x,y,w,h) = expand_face(tc, width, height)
+            (x,y,w,h,o) = expand_face(tc, width, height)
 
             # print(rect, center)
 
@@ -259,18 +272,21 @@ def is_overlap(x1, y1, w1, h1, x2, y2, w2, h2):
     # Check if two rectangles overlap
     return (x1 < x2 + w2 and x1 + w1 > x2 and y1 < y2 + h2 and y1 + h1 > y2)
 
-def expand_face(group, width, height, expansion=.7, sidedness=.7):
+def expand_face(group, width, height, expansion=.9, sidedness=.7):
   (faces, score, (x,y,w,h), center) = group
 
 
   if (center[0] > x + .65 * w): # facing right
     x = max(0, int(x - expansion * sidedness * w))
+    orientation = 'right'
 
   elif (center[0] < x + .35 * w): # facing left
     x = max(0, int(x - expansion * (1 - sidedness) * w))
+    orientation = 'left'
 
   else: # sorta in the middle
     x = max(0, int(x - expansion / 2 * w))
+    orientation = 'center'
 
 
   y = max(0, int(y - expansion * sidedness * h))
@@ -291,7 +307,7 @@ def expand_face(group, width, height, expansion=.7, sidedness=.7):
 
 
 
-  return (x,y,w,h)
+  return (x,y,w,h,orientation)
 
 
 
@@ -500,171 +516,6 @@ def calculate_total_area(group):
 
 
 
-
-
-
-
-
-
-
-
-
-import cv2
-
-
-
-
-# import tensorflow as tf
-
-
-# # Loads the module from internet, unpacks it and initializes a Tensorflow saved model.
-# def load_model(model_name):
-#     model_url = 'http://download.tensorflow.org/models/object_detection/' + model_name + '.tar.gz'
-    
-#     model_dir = tf.keras.utils.get_file(
-#         fname=model_name, 
-#         origin=model_url,
-#         untar=True,
-#         cache_dir=pathlib.Path('.tmp').absolute()
-#     )
-#     model = tf.saved_model.load(model_dir + '/saved_model')
-    
-#     return model
-
-# MODEL_NAME = 'ssdlite_mobilenet_v2_coco_2018_05_09'
-# saved_model = load_model(MODEL_NAME)
-
-# model = saved_model.signatures['serving_default']
-
-
-# import cv2
-
-# def image_contains_subimage(large_image_path, object_image_path, confidence_threshold=0.5):
-#     # Load the pre-trained SSD model
-#     model_file = 'path/to/ssd_model.pb'
-#     config_file = 'path/to/ssd_config.pbtxt'
-#     net = cv2.dnn.readNetFromTensorflow(model_file, config_file)
-
-#     # Load the larger image and the object image
-#     large_image = large_image_path #cv2.imread(large_image_path)
-#     object_image = object_image_path #cv2.imread(object_image_path)
-
-#     # Prepare the object image for matching
-#     object_blob = cv2.dnn.blobFromImage(object_image, size=(300, 300), swapRB=True, crop=False)
-
-#     # Set the input to the network for object matching
-#     net.setInput(object_blob)
-
-#     # Perform object detection on the object image
-#     object_detections = net.forward()
-
-#     # Prepare the larger image for object detection
-#     large_blob = cv2.dnn.blobFromImage(large_image, size=(300, 300), swapRB=True, crop=False)
-
-#     # Set the input to the network for object detection
-#     net.setInput(large_blob)
-
-#     # Perform object detection on the larger image
-#     large_detections = net.forward()
-
-#     # Loop over the detections in the larger image
-#     for i in range(large_detections.shape[2]):
-#         confidence = large_detections[0, 0, i, 2]
-#         if confidence > confidence_threshold:
-#             class_id = int(large_detections[0, 0, i, 1])
-#             box = large_detections[0, 0, i, 3:7] * [large_image.shape[1], large_image.shape[0], large_image.shape[1], large_image.shape[0]]
-#             (start_x, start_y, end_x, end_y) = box.astype(int)
-
-#             # Extract the region of interest (ROI) from the larger image
-#             roi = large_image[start_y:end_y, start_x:end_x]
-
-#             # Prepare the ROI for matching
-#             roi_blob = cv2.dnn.blobFromImage(roi, size=(300, 300), swapRB=True, crop=False)
-
-#             # Set the input to the network for matching
-#             net.setInput(roi_blob)
-
-#             # Perform object matching on the ROI
-#             roi_detections = net.forward()
-
-#             # Loop over the detections in the ROI
-#             for j in range(roi_detections.shape[2]):
-#                 roi_confidence = roi_detections[0, 0, j, 2]
-#                 if roi_confidence > confidence_threshold:
-#                     roi_class_id = int(roi_detections[0, 0, j, 1])
-
-#                     # Check if the detected class matches the object image class
-#                     if roi_class_id == class_id:
-#                         return True  # Object image found in the larger image
-
-#     return False  # Object image not found in the larger image
-
-
-
-
-
-
-
-
-
-
-
-
-
-# # Initialize SIFT detector
-# sift = cv2.xfeatures2d.SIFT_create()
-# # bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-# bf = cv2.FlannBasedMatcher()
-
-# def image_contains_subimage(large_image, small_image, threshold=1):
-#     # Convert images to grayscale
-#     large_gray = large_image # cv2.cvtColor(large_image, cv2.COLOR_BGR2GRAY)
-#     small_gray = small_image # cv2.cvtColor(small_image, cv2.COLOR_BGR2GRAY)
-
-#     # Detect keypoints and compute descriptors for both images
-#     kp1, des1 = sift.detectAndCompute(large_gray, None)
-#     kp2, des2 = sift.detectAndCompute(small_gray, None)
-
-#     if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
-#       return True
-
-#     # Match descriptors using FLANN matcher
-#     try: 
-#       # matches = bf.match(des1, des2)
-
-#       matches = bf.knnMatch(des1, des2, k=2) # knnMatch is crucial
-
-#     except Exception as e: 
-#       print(e)      
-#       print("MATCHES FAILED", des1, des2)
-#       raise e
-
-
-#     # Print distances of good matches
-#     good_matches = []
-#     for m in matches:  
-#       if m[0].distance < 100:
-#         if len(m) == 1: 
-#           good_matches.append(m)
-#         elif len(m) == 2:
-#           (m1, m2) = m
-#           if m1.distance < 0.7 * m2.distance:
-#             good_matches.append(m1)
-#             print(m1.distance)
-
-#     if len(good_matches) > 0: 
-#       print(f"\nGOOD MATCHES: {len(good_matches)} of {len(des2)} ({len(good_matches) / len(des2)}%)")
-#       for m in good_matches:
-#         print(m.distance)
-
-
-#     # Check if the number of good matches is above the threshold
-#     if len(good_matches) >= threshold:
-#         print("FOUND IN BOTH IMAGES", len(good_matches) / len(des2))
-#         return True
-#     else:
-        
-#         return False
 
 
 

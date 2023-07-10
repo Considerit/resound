@@ -495,7 +495,6 @@ def mute_by_deviation(song_path, reaction_path, output_path):
 
 
 def process_reactor_audio(reaction_audio, base_audio):
-    print(f"Separating commentary from {reaction_audio}")
 
     # if not "Pegasus" in reaction_audio:
     #     print("Skipping...")
@@ -506,6 +505,8 @@ def process_reactor_audio(reaction_audio, base_audio):
     reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio, post_process=True)
     output_path = os.path.splitext(reaction_vocals_path)[0] + f"_isolated_commentary.wav"
     if not os.path.exists(output_path):
+        print(f"Separating commentary from {reaction_audio}")
+
         mute_by_deviation(song_vocals_path, reaction_vocals_path, output_path)
 
     return output_path
@@ -883,37 +884,9 @@ def post_process_audio(commentary, sr):
 
 
 
-def pre_process_audio(commentary, sr):
-    processed_commentary = np.zeros_like(commentary)
-    
-    for channel in range(commentary.shape[0]):
-        # Reduce noise
-        reduced_noise = commentary[channel]
-        # reduced_noise = nr.reduce_noise(commentary[channel], sr=sr)
-        
-        # Apply a highpass filter to remove low-frequency non-speech components
-        sos = scipy.signal.butter(10, 100, 'hp', fs=sr, output='sos')
-        reduced_noise = scipy.signal.sosfilt(sos, reduced_noise)
-
-
-        # Raise the volume
-        # Compute dB scale for volume normalization
-        db_reaction = librosa.amplitude_to_db(np.abs(librosa.stft(reaction[channel])))
-
-        # Normalize volume
-        song_padded[channel] *= 1.1 * np.median(db_reaction) / np.median(db_song)
-
-        
-        processed_commentary[channel] = reduced_noise #filtered
-
-    return processed_commentary
 
 
 
-
-
-
-from spleeter.separator import Separator
 import numpy as np
 from scipy.spatial import distance
 from scipy.signal import correlate
@@ -921,13 +894,15 @@ import librosa
 from scipy.signal import fftconvolve
 
 spleeter_separator = None
-def separate_vocals(song_path, reaction_path, post_process=False):
-    # Create a separator with 2 stems (vocals and accompaniment)
+def get_spleeter(): 
     global spleeter_separator
     if spleeter_separator is None:
+        from spleeter.separator import Separator
         spleeter_separator = Separator('spleeter:2stems')
+    return spleeter_separator
 
-    print(f"reaction {reaction_path}")
+def separate_vocals(song_path, reaction_path, post_process=False):
+    # Create a separator with 2 stems (vocals and accompaniment)
 
     song_sep = os.path.join(os.path.dirname(reaction_path), 'song_output')
     song_separation_path = os.path.join(song_sep, os.path.splitext(song_path)[0].split('/')[-1] )
@@ -935,13 +910,11 @@ def separate_vocals(song_path, reaction_path, post_process=False):
     reaction_sep = os.path.join(os.path.dirname(reaction_path), 'reaction_output')
     react_separation_path = os.path.join(reaction_sep, os.path.splitext(reaction_path)[0].split('/')[-1] )
 
-    print(f"reaction: {reaction_sep}")
-
     # Perform source separation on song and reaction audio
     if not os.path.exists(song_separation_path):
-        song_sources = spleeter_separator.separate_to_file(song_path, song_sep)
+        song_sources = get_spleeter().separate_to_file(song_path, song_sep)
     if not os.path.exists(react_separation_path):
-        reaction_sources = spleeter_separator.separate_to_file(reaction_path, reaction_sep)
+        reaction_sources = get_spleeter().separate_to_file(reaction_path, reaction_sep)
 
     # Load the separated tracks
     song_vocals_path = os.path.join(song_separation_path, 'vocals.wav')
@@ -951,23 +924,25 @@ def separate_vocals(song_path, reaction_path, post_process=False):
     if post_process: 
 
         song_vocals_high_passed_path = os.path.join(song_separation_path, 'vocals-post-high-passed.wav')
-        song_vocals, sr_song = librosa.load( song_vocals_path, sr=None, mono=True )
+        
         if not os.path.exists(song_vocals_high_passed_path):
+            song_vocals, sr_song = librosa.load( song_vocals_path, sr=None, mono=True )
             song_vocals = post_process_audio_with_highpass_filter(song_vocals, sr_song)  
             song_vocals = post_process_audio(song_vocals, sr_song)
             sf.write(song_vocals_high_passed_path, song_vocals.T, sr_song)
         song_vocals_path = song_vocals_high_passed_path
 
         reaction_vocals_high_passed_path = os.path.join(react_separation_path, 'vocals-post-high-passed.wav')
-        reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=None, mono=True )
+        
         
         if not os.path.exists(reaction_vocals_high_passed_path):
+            reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=None, mono=True )
             reaction_vocals = post_process_audio_with_highpass_filter(reaction_vocals, sr_reaction)  
             reaction_vocals = post_process_audio(reaction_vocals, sr_reaction)
             sf.write(reaction_vocals_high_passed_path, reaction_vocals.T, sr_reaction)
         reaction_vocals_path = reaction_vocals_high_passed_path
 
-        assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
+        # assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
 
         # print(f"{reaction_vocals.shape} {len(reaction_vocals)}    {song_vocals.shape}   {len(song_vocals)}")
         # reaction_vocals = match_audio(reaction_vocals, song_vocals, sr_reaction)

@@ -140,7 +140,7 @@ def create_reaction_alignment_bounds(base_audio, base_audio_mfcc, reaction_audio
             print(f"\tCandidates: {candidates}  {max(candidates)}")
 
             # Find the maximum candidate index
-            max_indices.append(ts + max(candidates))
+            max_indices.append(ts + max(candidates) + clip_length * 2)
         
         # Add the maximum of the max indices to the bounds
         bounds.append(max(max_indices))
