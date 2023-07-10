@@ -5,6 +5,8 @@ import os
 import math
 from PIL import Image, ImageDraw, ImageChops
 from itertools import groupby
+import colorsys
+
 
 from moviepy.editor import ImageClip, CompositeVideoClip, CompositeAudioClip
 from moviepy.audio.AudioClip import AudioArrayClip
@@ -108,7 +110,8 @@ def compose_reactor_compilation(song, base_video, reactions, output_path, output
     other_clips = []
 
     base_audio_as_array = base_video.audio.to_soundarray()
-    for (reaction, pos) in positions:
+    reactor_colors = generate_hsv_colors(len(positions), 1, .6)
+    for i, (reaction, pos) in enumerate(positions):
         featured = reaction['featured']
 
         clip = reaction['clip']
@@ -120,7 +123,10 @@ def compose_reactor_compilation(song, base_video, reactions, output_path, output
           size *= 1.15
           size = int(size)
 
-        clip = create_hex_masked_video(clip, width=size, height=size, as_circle=featured)
+
+        hsv_color = reactor_colors[i]
+        color_func = create_color_func(hsv_color, clip)
+        clip = create_masked_video(clip, color_func=color_func, border_thickness=10, width=size, height=size, as_circle=featured)
 
         x,y = pos
 
@@ -133,7 +139,7 @@ def compose_reactor_compilation(song, base_video, reactions, output_path, output
 
 
     duration = base_video.duration
-    # duration = 2 
+    duration = 5 
 
 
     # Create the composite video
@@ -342,62 +348,81 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
     return [(title_map[k], v) for k,v in assignments.items()]
 
 
-def create_hex_masked_video(clip, width, height, border_thickness=10, as_circle=False):
 
 
-    if not as_circle:
-      # Define hexagon vertices for larger hexagon
-      vertices_large = [(0, height*0.25), (width*0.5, 0), (width, height*0.25),
-                  (width, height*0.75), (width*0.5, height), (0, height*0.75)]
+# I’m using the following function to mask a video to a hexagon or circular shape, with 
+# a border. I’d like to make the border dynamic. Specifically:
+#   - Each reaction video should have its own bright saturated HSV color assigned to it
+#   - The HSV color for the respective reaction video should be mixed with white, 
+#     inversely proportional to the volume of the track at that timestamp. That is, 
+#     when there is no volume, the border should be white, and when it is at its 
+#     loudest, it should be the HSV color.
 
-      # Calculate adjustments for smaller hexagon vertices
-      x_adjust = border_thickness * np.sqrt(3) / 2  # trigonometric calculation
-      y_adjust = border_thickness / 2
-
-      # Define hexagon vertices for smaller hexagon
-      vertices_small = [(x_adjust, height*0.25 + y_adjust), 
-                        (width*0.5, y_adjust), 
-                        (width - x_adjust, height*0.25 + y_adjust),
-                        (width - x_adjust, height*0.75 - y_adjust), 
-                        (width*0.5, height - y_adjust), 
-                        (x_adjust, height*0.75 - y_adjust)]
-
-      # Create a new PIL image with the same size as the clip, fill with black color
-      mask_img_large = Image.new('1', (width, height), 0)
-      mask_img_small = Image.new('1', (width, height), 0)
-
-      # Draw the larger and smaller hexagons on the mask images
-      draw_large = ImageDraw.Draw(mask_img_large)
-      draw_small = ImageDraw.Draw(mask_img_small)
-      draw_large.polygon(vertices_large, fill=1)
-      draw_small.polygon(vertices_small, fill=1)
-    else: 
-      # Create new PIL images with the same size as the clip, fill with black color
-      mask_img_large = Image.new('1', (width, height), 0)
-      mask_img_small = Image.new('1', (width, height), 0)
-
-      # Draw larger and smaller circles on the mask images
-      draw_large = ImageDraw.Draw(mask_img_large)
-      draw_small = ImageDraw.Draw(mask_img_small)
-
-      draw_large.ellipse([(0, 0), (width, height)], fill=1)
-      draw_small.ellipse([(border_thickness, border_thickness), ((width - border_thickness), (height - border_thickness))], fill=1)
-
-
+def create_masked_video(clip, width, height, color_func, border_thickness=10, as_circle=False):
 
     # Resize the clip
     clip = clip.resize((width, height))
 
+    # Create new PIL images with the same size as the clip, fill with black color
+    mask_img_large = Image.new('1', (width, height), 0)
+    mask_img_small = Image.new('1', (width, height), 0)
+    draw_large = ImageDraw.Draw(mask_img_large)
+    draw_small = ImageDraw.Draw(mask_img_small)
+
+    if as_circle:
+        # Draw larger and smaller circles on the mask images
+        draw_large.ellipse([(0, 0), (width, height)], fill=1)
+        draw_small.ellipse([(border_thickness, border_thickness), ((width - border_thickness), (height - border_thickness))], fill=1)
+    else:
+        # Define hexagon vertices for larger hexagon
+        vertices_large = [(0, height*0.25), (width*0.5, 0), (width, height*0.25),
+                          (width, height*0.75), (width*0.5, height), (0, height*0.75)]
+
+        # Calculate adjustments for smaller hexagon vertices
+        x_adjust = border_thickness * np.sqrt(3) / 2  # trigonometric calculation
+        y_adjust = border_thickness / 2
+
+        # Define hexagon vertices for smaller hexagon
+        vertices_small = [(x_adjust, height*0.25 + y_adjust), 
+                          (width*0.5, y_adjust), 
+                          (width - x_adjust, height*0.25 + y_adjust),
+                          (width - x_adjust, height*0.75 - y_adjust), 
+                          (width*0.5, height - y_adjust), 
+                          (x_adjust, height*0.75 - y_adjust)]
+
+        # Draw the larger and smaller hexagons on the mask images
+        draw_large.polygon(vertices_large, fill=1)
+        draw_small.polygon(vertices_small, fill=1)
 
     # Subtract smaller mask from larger mask to create border mask
     border_mask = ImageChops.subtract(mask_img_large, mask_img_small)
+    border_mask_np = np.array(border_mask)
+    mask_img_small_np = np.array(mask_img_small)
 
-    # Create border clip by applying the border mask to a solid color clip
-    border_clip = ColorClip((width, height), col=[255, 255, 255])
-    border_clip = border_clip.set_mask(ImageClip(np.array(border_mask), ismask=True))
+    def make_frame(t):
+        img = np.ones((height, width, 3))
+
+        # Convert the color from HSV to RGB, then scale from 0-1 to 0-255
+        color_rgb = np.array(color_func(t)) * 255
+
+        img[border_mask_np > 0] = color_rgb  # apply color to border
+
+        return img
+
+    # Define make_mask function to create mask for the border
+    def make_mask(t):
+        mask = np.zeros((height, width))
+        mask[border_mask_np > 0] = 1
+        return mask
+
+    border_clip = VideoClip(make_frame, duration=clip.duration)
+
+    # Apply mask to the border_clip
+    border_mask_clip = VideoClip(make_mask, ismask=True, duration=clip.duration)
+    border_clip = border_clip.set_mask(border_mask_clip)
 
     # Create video clip by applying the smaller mask to the original video clip
-    clip = clip.set_mask(ImageClip(np.array(mask_img_small), ismask=True))
+    clip = clip.set_mask(ImageClip(mask_img_small_np, ismask=True))
 
     # Overlay the video clip on the border clip
     final_clip = CompositeVideoClip([border_clip, clip])
@@ -405,6 +430,43 @@ def create_hex_masked_video(clip, width, height, border_thickness=10, as_circle=
     return final_clip
 
 
+
+
+
+
+def create_color_func(hsv_color, clip):
+    h, s, v = hsv_color
+    audio_volume = get_audio_volume(clip)
+
+    def color_func(t):
+        # Get the volume at current time
+        volume = audio_volume[int(t * 22000)]
+
+        # If volume is zero, return white
+        if volume == 0:
+            return 1, 1, 1  # White in RGB
+
+        # Calculate the interpolated V value based on audio volume
+        v_modulated = 1 - volume * (1 - v)
+
+        # Convert modulated HSV color back to RGB
+        r, g, b = colorsys.hsv_to_rgb(h, s, v_modulated)
+        return r, g, b
+
+    return color_func
+
+def get_audio_volume(clip, fps=22000):
+    """Calculate the volume of the audio clip"""
+    audio = clip.audio.to_soundarray(fps=fps)
+    audio_volume = np.sqrt(np.mean(np.square(audio), axis=1))  # RMS amplitude
+    audio_volume /= np.max(audio_volume)  # normalize to range [0, 1]
+    return audio_volume
+
+
+
+def generate_hsv_colors(n, s, v):
+    """Generates n evenly distributed HSV colors with the same S and V"""
+    return [(i/n, s, v) for i in range(n)]
 
 
 def is_in_center(cell, width):
