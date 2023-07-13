@@ -27,7 +27,7 @@ def create_audio_extraction(reaction_audio, base_audio, segments):
 
 
 
-def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, ext: str):
+def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, ext: str, extend_by=0, write_audio=False):
 
     print(f"Frame rate: {conversion_frame_rate}, Audio rate: {conversion_audio_sample_rate}")
     temp_dir, _ = os.path.splitext(output_file)
@@ -37,39 +37,38 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
        os.makedirs(temp_dir)
 
 
-    # Process audio
-    temp_audio_files = []    
-    for i, segment in enumerate(video_segments):
-        start, end, filler_start, filler_end, filler = segment
+    if write_audio:
+        # Process audio
+        temp_audio_files = []    
+        for i, segment in enumerate(video_segments):
+            start, end, filler_start, filler_end, filler = segment
 
-        if end <= start: 
-            continue
+            if end <= start: 
+                continue
 
-        temp_audio_file = os.path.join(temp_dir, f"temp_{i}.wav")
-        temp_audio_files.append(temp_audio_file)
+            temp_audio_file = os.path.join(temp_dir, f"temp_{i}.wav")
+            temp_audio_files.append(temp_audio_file)
 
-        if filler: 
-            command = f'ffmpeg -y -i "{filler_video}" -ss {filler_start} -to {filler_end} -vn -ar {conversion_audio_sample_rate} -ac 2 -c:a pcm_s16le "{temp_audio_file}"'
-        else:
-            command = f'ffmpeg -y -i "{video_file}" -ss {start} -to {end} -vn -ar {conversion_audio_sample_rate} -ac 2 -c:a pcm_s16le "{temp_audio_file}"'
+            if filler: 
+                command = f'ffmpeg -y -i "{filler_video}" -ss {filler_start} -to {filler_end} -vn -ar {conversion_audio_sample_rate} -ac 2 -c:a pcm_s16le "{temp_audio_file}"'
+            else:
+                command = f'ffmpeg -y -i "{video_file}" -ss {start} -to {end} -vn -ar {conversion_audio_sample_rate} -ac 2 -c:a pcm_s16le "{temp_audio_file}"'
 
-        subprocess.run(command, shell=True, check=True)
+            subprocess.run(command, shell=True, check=True)
+            
+
+        audio_output_file = os.path.join(temp_dir, f"{os.path.basename(output_file).split('.')[0]}.wav")
+        concat_audio_file = os.path.join(temp_dir, "concat-audio.txt")
+        with open(concat_audio_file, 'w') as f:
+            for temp_file in temp_audio_files:
+                f.write(f"file '{os.path.basename(temp_file)}'\n")
         
+        command = f'ffmpeg -y -f concat -safe 0 -i "{concat_audio_file}" -c copy "{audio_output_file}"'
+        print(command)
+        subprocess.run(command, shell=True, check=True)
 
-    audio_output_file = os.path.join(temp_dir, f"{os.path.basename(output_file).split('.')[0]}.wav")
-    concat_audio_file = os.path.join(temp_dir, "concat-audio.txt")
-    with open(concat_audio_file, 'w') as f:
-        for temp_file in temp_audio_files:
-            f.write(f"file '{os.path.basename(temp_file)}'\n")
-    
-    command = f'ffmpeg -y -f concat -safe 0 -i "{concat_audio_file}" -c copy "{audio_output_file}"'
-    print(command)
-    subprocess.run(command, shell=True, check=True)
-
-
-
-
-
+        if os.path.isfile(concat_audio_file):
+            os.remove(concat_audio_file)
 
     # process video  target_resolution=(1080, 1920)
     reaction_video = VideoFileClip(video_file)
@@ -78,6 +77,17 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
     base_video = VideoFileClip(filler_video)
     
+    #########################################################
+    # Append 15 seconds (or extend_by) of each reaction video
+    fill_length = 0
+    for (start, end, filler_start, filler_end, filler) in reversed(video_segments):
+        if not filler: 
+            break
+        fill_length += filler_end - filler_start
+    ##################
+
+    if end + fill_length + extend_by <= reaction_video.duration:  # Make sure not to exceed the reaction video duration
+        video_segments.append((end, end + fill_length + extend_by, filler_end, filler_end + fill_length + extend_by, False))
 
     clips = []
     for i, segment in enumerate(video_segments):
@@ -104,23 +114,20 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
     # Concatenate the clips together
     final_clip = concatenate_videoclips(clips)
+    final_clip.set_fps(30)
 
     # Get the duration of each clip
     final_clip_duration = final_clip.duration
     base_video_duration = base_video.duration
 
+
     # If final_clip is longer than base_video, trim it
-    if final_clip_duration > base_video_duration:
-        final_clip = final_clip.subclip(0, base_video_duration)
+    if final_clip_duration > base_video_duration + extend_by:
+        final_clip = final_clip.subclip(0, base_video_duration + extend_by)
         
     # If final_clip is shorter than base_video, pad it with black frames
     elif final_clip_duration < base_video_duration:
-        # # Create a black clip with the remaining duration
-        # black_clip = ColorClip((base_video.size), col=(0,0,0)).set_fps(final_clip.fps).set_duration(base_video_duration - final_clip_duration).without_audio()
-        
-        # print(f'making longer: {black_clip.duration}  {base_video_duration - final_clip_duration}')
-        # # Concatenate the black clip to the final clip
-        # final_clip = concatenate_videoclips([final_clip, black_clip])
+        # Create a black clip with the remaining duration
 
         black_clip = (ColorClip((base_video.size), col=(0,0,0))
                       .set_duration(base_video_duration - final_clip_duration)
@@ -130,7 +137,6 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
         # Combine the final and black clip using CompositeVideoClip
         final_clip = CompositeVideoClip([final_clip, black_clip])
-
 
     # Generate the final output video
     final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
@@ -149,8 +155,6 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     # for temp_file in temp_files:
     #     if os.path.isfile(temp_file):
     #         os.remove(temp_file)
-    if os.path.isfile(concat_audio_file):
-        os.remove(concat_audio_file)
 
     return output_file
 
