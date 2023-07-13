@@ -34,141 +34,6 @@ from scipy import signal
 
 
 
-
-
-def calculate_mfcc(audio, sr):
-    # Calculate the MFCCs for the audio
-    mfcc = librosa.feature.mfcc(audio, sr)
-    return mfcc
-
-
-def calculate_difference(mfcc1, mfcc2):
-    # Calculate the difference between the two MFCCs
-    diff = np.abs(mfcc1 - mfcc2)
-    return diff
-
-
-
-
-
-
-##########################
-# We have been trying to solve the following problem:
-
-# I'm trying to isolate the sections of a reaction audio in which one or more commentators are making noise. 
-# We also have the original song, and they are *mostly* aligned in time.  
-
-# In my preprocessing, I’m separating audio by source into a vocal track, and ignoring the accompaniment. 
-# This gets rid of most of the music from consideration, leaving us with vocals. 
-
-# The first step in my algorithm for identifying parts of a reaction audio where commentators are speaking 
-# is to identify the parts of the reaction audio that is most different from the base song (using MFCCs 
-#     to get at perceptual differences). 
-
-# To do this, I'm creating a mask that is true where the absolute difference between the two tracks is 
-# greater than some threshold.
-
-# Setting this threshold in a principled way is tricky. Our first attempt looks like: 
-
-# def create_mask(diff, percentile):
-#     # Calculate the nth percentile of the absolute differences
-#     threshold = np.percentile(np.abs(diff), percentile)
-#     # Create a mask where the absolute difference is greater than the threshold
-#     mask = np.abs(diff) > threshold
-#     return mask
-
-# However, because I have separated out the vocals, much of both of the tracks are nearly silent. 
-# This distorts the percentile approach to setting a threshold. 
-
-# So what we've been working on has been trying to ignore the near-silent sections of the audio when 
-# setting the threshold. We've been first calculating frame energy to identify near-silent parts of 
-# the audio, and then trying to use that (unsucessfully) filter the MFCC diff used to compute a 
-# threshold for masking the reaction audio.  
-
-# We've been running into lots of errors though in the dimensions of the various arrays involved, 
-# and in interpreting the silence threshold as a decibal=>energy mapping. I've included our latest 
-# code below. Please fix it, or identify a different method for achieving the goal outlined above. Thanks!
-
-
-def calculate_frame_energy(audio, frame_length, hop_length):
-    # Frame the audio signal
-    frames = librosa.util.frame(audio, frame_length, hop_length)
-    # Calculate the energy of each frame
-    energy = np.sum(frames**2, axis=0)
-    return energy
-
-def create_mask_by_mfcc_difference(song, sr_song, reaction, sr_reaction, percentile, silence_threshold=.001):
-
-
-    mfcc_song = calculate_mfcc(song, sr_song)
-    mfcc_reaction = calculate_mfcc(reaction, sr_reaction)
-
-    if mfcc_song.shape != mfcc_reaction.shape:
-        print("The shapes of the MFCCs do not match!")
-        return
-        
-
-    print("mfcc_song shape: ", mfcc_song.shape)
-    print("mfcc_reaction shape: ", mfcc_reaction.shape)
-
-    diff = calculate_difference(mfcc_song, mfcc_reaction)
-
-
-    # Calculate the frame energy
-    frame_length = 2048  # You may need to adjust this
-    hop_length = 512  # and this
-    frame_energy = calculate_frame_energy(reaction, frame_length, hop_length)
-
-    # Create a mask where the frame energy is greater than the silence threshold
-    not_silent = frame_energy > silence_threshold
-
-    # Reduce the dimensionality of diff by calculating the Euclidean norm along the MFCC axis
-    diff_norm = np.linalg.norm(diff, axis=0)
-
-    # Check if not_silent contains any True values
-    if not np.any(not_silent):
-        print("All frames are silent. Please check your silence threshold.")
-        return None
-
-    # Reshape not_silent to match diff_norm
-    not_silent_frames = np.reshape(not_silent, (1, len(not_silent)))
-
-    # Repeat the not_silent_frames to match the rows in diff
-    not_silent = np.repeat(not_silent_frames, diff.shape[0], axis=0)
-
-    # Adjust the shape of not_silent to match the size of diff
-    if diff.shape[1] > not_silent.shape[1]:
-        padding = diff.shape[1] - not_silent.shape[1]
-        not_silent = np.pad(not_silent, ((0, 0), (0, padding)), constant_values=False)
-        
-    # Mask diff with not_silent
-    diff_masked = diff.copy()
-    diff_masked[~not_silent] = 0
-
-    # Calculate the percentile of the absolute differences where not silent
-    threshold = np.percentile(np.abs(diff_masked), percentile)
-
-    # Create a mask where the absolute difference is greater than the threshold
-    mask = np.abs(diff) > threshold
-
-    return mask[0]
-
-
-
-
-
-
-# def calculate_perceptual_loudness(audio):
-#     # Calculate the STFT of the audio
-#     stft = librosa.stft(audio)
-
-#     # Calculate the RMS energy, which we'll use as our loudness measure
-#     rms = librosa.feature.rms(S=np.abs(stft))[0]
-
-#     print("lengths should be equal", len(audio), len(rms))
-
-#     return rms
-
 def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=512):
     # Calculate the RMS energy over frames of audio
     rms = np.array([np.sqrt(np.mean(np.square(audio[i:i+frame_length]))) for i in range(0, len(audio), hop_length)])
@@ -177,8 +42,6 @@ def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=512):
     rms_interp = np.interp(np.arange(len(audio)), np.arange(0, len(audio), hop_length), rms)
     
     return rms_interp
-
-
 
 
 def calculate_loudness(audio, window_size=1000):
@@ -196,7 +59,10 @@ def calculate_loudness(audio, window_size=1000):
 
 
 
-def calculate_percentile_loudness(loudness, window_size=1000):
+def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None):
+    if std_dev is None:
+        std_dev = window_size / 4
+
     # Find the maximum loudness value
     max_loudness = np.max(loudness)
     
@@ -205,7 +71,7 @@ def calculate_percentile_loudness(loudness, window_size=1000):
     
 
     # Define a Gaussian window
-    window = signal.windows.gaussian(window_size, std=window_size/10)
+    window = signal.windows.gaussian(window_size, std=std_dev)
     
     # Normalize the window to have sum 1
     window /= window.sum()
@@ -216,39 +82,61 @@ def calculate_percentile_loudness(loudness, window_size=1000):
     return percent_of_max_loudness
 
 
-def create_mask_by_volume_difference(song, sr_song, reaction, sr_reaction, threshold, silence_threshold=.001, plot=False):
-    # Calculate the loudness of each audio
-    song_loudness = calculate_loudness(song)
-    reaction_loudness = calculate_loudness(reaction)
-
-    # Calculate the percentile loudness of each audio
-    song_percentile_loudness = calculate_percentile_loudness(song_loudness)
-    reaction_percentile_loudness = calculate_percentile_loudness(reaction_loudness)
-
-    # Calculate the absolute difference between the percentile loudnesses
-    diff = reaction_percentile_loudness - song_percentile_loudness
-    print("diff shape: ", diff.shape)
-
+def construct_mask(diff, threshold):
     # Create a mask where the absolute difference is greater than the threshold
     mask = diff > threshold
 
     # Create a mask where the difference is greater than zero
     dilated_mask = diff > threshold
 
+
     # dilated_mask should be an expansion of mask. It should be True for all segments of positive values of diff 
     # that contain at least one sample where diff > threshold.
     i = 0
     while i < len(mask):
-        if mask[i]:
+        if mask[i] and diff[i] > 1:
             # find start of positive segment
             start = i
-            while i < len(mask) and diff[i] > 1:
+            while i < len(mask) and diff[i] > threshold / 2:
                 i += 1
             # mark segment in dilated_mask
             dilated_mask[start:i] = True
         else:
             dilated_mask[i] = False
             i += 1
+    return dilated_mask
+
+def create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, threshold, silence_threshold=.001, plot=False, window=1000, std_dev=None):
+    if std_dev is None:
+        std_dev = window / 3
+
+    # Calculate the loudness of each audio
+    print('song loudness')
+    song_loudness = calculate_loudness(song, window_size=100)
+    print('reaction loudness')
+
+    reaction_loudness = calculate_loudness(reaction, window_size=100)
+
+    # Calculate the percentile loudness of each audio
+    print('song percentile loudness')
+
+    song_percentile_loudness = calculate_percentile_loudness(song_loudness, window_size=window, std_dev=std_dev)
+
+    print('reaction percentile loudness')
+
+    reaction_percentile_loudness = calculate_percentile_loudness(reaction_loudness, window_size=window, std_dev=std_dev)
+
+    # Calculate the absolute difference between the percentile loudnesses
+    diff = reaction_percentile_loudness - song_percentile_loudness
+    print("diff shape: ", diff.shape)
+
+    avg_diff = np.average(diff)
+
+    print(f"Average diff={avg_diff}")
+    diff = diff - avg_diff
+
+    dilated_mask = construct_mask(diff, threshold)
+
 
 
     if plot: 
@@ -259,26 +147,25 @@ def create_mask_by_volume_difference(song, sr_song, reaction, sr_reaction, thres
         # Plot the percentile loudnesses
         plt.figure(figsize=(12, 8))
 
-        plt.subplot(3, 1, 1)
-        plt.plot(time_song, song_percentile_loudness, label='Song')
-        plt.plot(time_reaction, reaction_percentile_loudness, label='Reaction')
-        plt.legend()
-        plt.xlabel('Time (s)')
-        plt.ylabel('Percentile Loudness')
-        plt.title('Percentile Loudness of Song and Reaction')
+        # plt.subplot(3, 1, 1)
+        # plt.plot(time_song, song_percentile_loudness, label='Song')
+        # plt.plot(time_reaction, reaction_percentile_loudness, label='Reaction')
+        # plt.legend()
+        # plt.xlabel('Time (s)')
+        # plt.ylabel('Percentile Loudness')
+        # plt.title('Percentile Loudness of Song and Reaction')
 
         # Plot the absolute difference
-        plt.subplot(3, 1, 2)
+        plt.subplot(2, 1, 1)
         plt.plot(time_reaction, diff, label='Absolute Difference')
-        plt.ylim(bottom=0)  # Constrain y-axis to non-negative values    
+        # plt.ylim(bottom=0)  # Constrain y-axis to non-negative values    
         plt.legend()
         plt.xlabel('Time (s)')
         plt.ylabel('Absolute Difference')
         plt.title('Absolute Difference in Percentile Loudness')
 
         # Plot the masks
-        plt.subplot(3, 1, 3)
-        plt.plot(time_reaction, mask, label='Mask')
+        plt.subplot(2, 1, 2)
         plt.plot(time_reaction, dilated_mask, label='Dilated Mask')
         plt.legend()
         plt.xlabel('Time (s)')
@@ -291,9 +178,76 @@ def create_mask_by_volume_difference(song, sr_song, reaction, sr_reaction, thres
 
 
 
-    return dilated_mask
+    return dilated_mask, diff, song_percentile_loudness, reaction_percentile_loudness
 
 
+
+
+
+# def calculate_pitch(audio, sr, frame_length=2048, hop_length=512):
+#     # Calculate the pitch over frames of audio
+#     pitch = librosa.yin(audio, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'),
+#                         sr=sr, frame_length=frame_length, hop_length=hop_length)
+    
+#     # Interpolate the pitch to match the length of audio
+#     # Create a time array for the pitch data, scaled to match the audio length
+#     time_pitch = np.linspace(0, len(audio), num=len(pitch))
+#     pitch_interp = np.interp(np.arange(len(audio)), time_pitch, pitch)
+    
+#     return pitch_interp
+
+
+
+# def calculate_pitch_level(audio, sr, window_size=1000):
+#     pitch = calculate_pitch(audio, sr)
+
+#     # Define a Gaussian window
+#     window = signal.windows.gaussian(window_size, std=window_size/5)
+    
+#     # Normalize the window to have sum 1
+#     window /= window.sum()
+    
+#     pitch = np.convolve(pitch, window, mode='same')  # Convolve audio with window
+
+#     return pitch
+
+# def calculate_percentile_pitch(pitch, window_size=5000):
+#     # Find the maximum pitch value
+#     max_pitch = np.max(pitch)
+    
+#     # Calculate the percentage of the max for each pitch value
+#     percent_of_max_pitch = (pitch / max_pitch) * 100
+    
+#     # Define a Gaussian window
+#     window = signal.windows.gaussian(window_size, std=window_size/10)
+    
+#     # Normalize the window to have sum 1
+#     window /= window.sum()
+    
+#     percent_of_max_pitch = np.convolve(percent_of_max_pitch, window, mode='same')  # Convolve audio with window
+
+#     return percent_of_max_pitch
+
+# def create_mask_by_relative_pitch_difference(song, sr_song, reaction, sr_reaction, threshold, plot=False):
+#     # Calculate the pitch of each audio
+#     print("\tsong pitch")
+#     song_pitch = calculate_pitch_level(song, sr_song)
+#     print("\treaction pitch")
+#     reaction_pitch = calculate_pitch_level(reaction, sr_reaction)
+
+#     # Calculate the percentile pitch of each audio
+#     print("\tpercentile song pitch")
+#     song_percentile_pitch = calculate_percentile_pitch(song_pitch)
+#     print("\tpercentile reaction pitch")
+#     reaction_percentile_pitch = calculate_percentile_pitch(reaction_pitch)
+
+#     # Calculate the absolute difference between the percentile pitches
+#     diff = song_percentile_pitch - reaction_percentile_pitch
+
+#     dilated_mask = construct_mask(diff, threshold)
+
+
+#     return dilated_mask, diff, song_percentile_pitch, reaction_percentile_pitch
 
 
 
@@ -397,16 +351,17 @@ def filter_segments_by_volume(audio, sr, segments, volume_percentile=50):
     return filtered_segments
 
 
-def pad_segments(segments, sr, length, pad_length=0.1):
+def pad_segments(segments, sr, length, pad_beginning=0.1, pad_ending=0.1):
     # Convert padding length from seconds to samples
-    pad_length_samples = int(pad_length * sr)
+    pad_length_beginning = int(pad_beginning * sr)
+    pad_length_end = int(pad_ending * sr)
         
     padded_segments = []
     # For each segment
     for segment in segments:
         # Pad the start and end of the segment
-        start = max(0, segment[0] - pad_length_samples)
-        end = min(length, segment[1] + pad_length_samples)
+        start = max(0, segment[0] - pad_length_beginning)
+        end = min(length, segment[1] + pad_length_end)
         padded_segments.append([start, end])
 
     
@@ -425,27 +380,19 @@ def apply_segments(audio, segments):
 
 
 
-
-
-def mute_by_deviation(song_path, reaction_path, output_path):
-    min_segment_length = 0.05
-    max_gap_frames = 0.15
+def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
+    min_segment_length = 0.01
+    max_gap_frames = 0.5
     percentile_thresh = 90
-    percent_volume_diff_thresh = 10
-    do_matching = False
+    percent_volume_diff_thresh = 8
 
     # Load the song and reaction audio
     song, sr_song = librosa.load(song_path, sr=None, mono=True)
-
-    # Load reaction audio
     reaction, sr_reaction = librosa.load(reaction_path, sr=None, mono=True)
 
+
+
     assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
-
-
-
-    if do_matching:
-        reaction = match_audio(reaction, song, sr_reaction)
 
 
     # if mono:
@@ -457,26 +404,218 @@ def mute_by_deviation(song_path, reaction_path, output_path):
     # assert song.shape == reaction.shape, f"Song and reaction must have the same number of channels (song = {song.shape}, reaction = {reaction.shape})"
 
     delay = 0
+    extra_reaction = None # often a result of extend by
     if len(song) > len(reaction):
         song = song[:len(reaction)]
     else:
-        pad_width = len(reaction) - len(song) - delay
-        song = np.pad(song, (delay, pad_width))
+        original_reaction, sr_reaction = librosa.load(original_reaction, sr=None, mono=True)
+        extra_reaction = original_reaction[len(song):] # extract this from the original reaction audio, not the source separated content
+        reaction = reaction[:len(song)]
 
 
-    mask = create_mask_by_volume_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh)
+
+        # pad_width = len(reaction) - len(song) - delay
+        # song = np.pad(song, (delay, pad_width))
+
+
+    # print("calculating short volume diff")
+    # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh)
+
+    # print("calculating short volume diff")
+    # mask12, diff12 = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, std_dev=1000/4)
+
+    print("calculating long volume diff")
+    long_mask1, long_diff1, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=1 * sr_reaction, plot=False)
+
+    # print("calculating long volume diff")
+    # long_mask12, long_diff12 = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=sr_reaction / 2, std_dev=sr_reaction / 2 /4)
+
+
+
+    # print('calculating pitch diff')
+    # mask2, diff2, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_pitch_difference(song, sr_song, reaction, sr_reaction, threshold=50, plot=False)
+
+
+    # print('calculating diffs and masks')
+
+    # combined_diff = diff1 * diff2
+    # combined_diff = 100 * combined_diff / np.max(combined_diff)
+
+    # mask = combined_diff > 15
+    # dilated_mask = combined_diff > 15
+
+    # confirmed_diff = diff1
+    # confirmed_mask = (diff1 > percent_volume_diff_thresh) & (diff2 > 5)
+    # confirmed_dilated_mask = (diff1 > percent_volume_diff_thresh) & (diff2 > 5)
+
+    # long_confirmed_diff = (diff1 + long_diff1 + diff12 + long_diff12) / 4
+    # long_confirmed_mask = long_confirmed_diff > percent_volume_diff_thresh
+    # long_confirmed_dilated_mask = long_confirmed_diff > percent_volume_diff_thresh
+
+    # print('dialating masks')
+
+    # # dilated_mask should be an expansion of mask. It should be True for all segments of positive values of diff 
+    # # that contain at least one sample where diff > threshold.
+    # i = 0
+    # while i < len(mask):
+    #     if mask[i] and combined_diff[i] > 1:
+    #         # find start of positive segment
+    #         start = i
+    #         while i < len(mask) and combined_diff[i] > 1:
+    #             i += 1
+    #         # mark segment in dilated_mask
+    #         dilated_mask[start:i] = True
+    #     else:
+    #         dilated_mask[i] = False
+    #         i += 1
+
+    # print('\tdialated volume')
+
+    # # dilated_mask should be an expansion of mask. It should be True for all segments of positive values of diff 
+    # # that contain at least one sample where diff > threshold.
+    # i = 0
+    # while i < len(confirmed_mask):
+    #     if confirmed_mask[i] and confirmed_diff[i] > 1:
+    #         # find start of positive segment
+    #         start = i
+    #         while i < len(confirmed_mask) and confirmed_diff[i] > 1:
+    #             i += 1
+    #         # mark segment in dilated_mask
+    #         confirmed_dilated_mask[start:i] = True
+    #     else:
+    #         confirmed_dilated_mask[i] = False
+    #         i += 1
+
+    # print('\tdialated pitch+volume')
+
+    # # dilated_mask should be an expansion of mask. It should be True for all segments of positive values of diff 
+    # # that contain at least one sample where diff > threshold.
+    # i = 0
+    # while i < len(long_mask1):
+    #     print(f"\ti={i} {len(long_mask1)}", end='\r')
+    #     if long_mask1[i] and long_confirmed_diff[i] > 1:
+    #         # find start of positive segment
+    #         start = i
+    #         while i < len(long_mask1) and long_confirmed_diff[i] > 1:
+    #             i += 1
+    #             print(f"\ti={i} {len(long_mask1)}", end='\r')
+    #         # mark segment in dilated_mask
+    #         long_confirmed_dilated_mask[start:i] = True
+    #     else:
+    #         long_confirmed_dilated_mask[i] = False
+    #         i += 1
+
+    # print('\tdialated long_vol+volume')
+
+    print('plotting')
+
+    if False: 
+        # Create a time array for plotting
+        time_song = np.arange(song_percentile_pitch.shape[0]) / sr_song
+        time_reaction = np.arange(reaction_percentile_pitch.shape[0]) / sr_reaction
+
+        # Plot the percentile pitches
+        plt.figure(figsize=(12, 10))  # Increase figure size for 6 subplots
+
+        plots = 6 
+        # # Plot the absolute difference for volume
+        # plt.subplot(plots, 2, 1)
+        # plt.plot(time_reaction, diff1, label='Absolute Difference, volume')
+        # plt.legend()
+        # plt.xlabel('Time (s)')
+        # plt.ylabel('Absolute Difference')
+        # plt.title('Absolute Difference in Percentile Volume')
+
+        # # Plot the volume mask
+        # plt.subplot(plots, 2, 2)
+        # plt.plot(time_reaction, mask1, label='Dilated Mask, volume')
+        # plt.legend()
+        # plt.xlabel('Time (s)')
+        # plt.ylabel('Mask Values')
+        # plt.title('Masks of Commentator Segments (Volume)')
+
+        # # Plot the absolute difference for pitch
+        # plt.subplot(plots, 2, 3)
+        # plt.plot(time_reaction, diff2, label='Absolute Difference, pitch')
+        # plt.legend()
+        # plt.ylabel('Absolute Difference')
+
+        # # Plot the pitch mask
+        # plt.subplot(plots, 2, 4)
+        # plt.plot(time_reaction, mask2, label='Dilated Mask, pitch')
+        # plt.legend()
+        # plt.ylabel('Mask Values')
+
+        # Plot the absolute difference for joint
+        plt.subplot(plots, 2, 5)
+        plt.plot(time_reaction, long_diff1, label='Absolute Difference, long vol')
+        plt.legend()
+        plt.ylabel('Absolute Difference')
+
+        # Plot the joint mask
+        plt.subplot(plots, 2, 6)
+        plt.plot(time_reaction, long_mask1, label='Dilated Mask, long vol')
+        plt.legend()
+        plt.ylabel('Mask Values')
+
+        # # # Plot the absolute difference for joint
+        # # plt.subplot(plots, 2, 5)
+        # # plt.plot(time_reaction, combined_diff, label='Absolute Difference, joint')
+        # # plt.legend()
+        # # plt.ylabel('Absolute Difference')
+
+        # # # Plot the joint mask
+        # # plt.subplot(plots, 2, 6)
+        # # plt.plot(time_reaction, dilated_mask, label='Dilated Mask, joint')
+        # # plt.legend()
+        # # plt.ylabel('Mask Values')
+
+
+        # # Plot the absolute difference for joint
+        # plt.subplot(plots, 2, 7)
+        # plt.plot(time_reaction, confirmed_diff, label='Absolute Difference, confirmed')
+        # plt.legend()
+        # plt.ylabel('Absolute Difference')
+
+        # # Plot the joint mask
+        # plt.subplot(plots, 2, 8)
+        # plt.plot(time_reaction, confirmed_dilated_mask, label='Dilated Mask, confirmed')
+        # plt.legend()
+        # plt.ylabel('Mask Values')
+
+
+        # # Plot the absolute difference for joint
+        # plt.subplot(plots, 2, 9)
+        # plt.plot(time_reaction, long_confirmed_diff, label='Absolute Difference, long confirmed')
+        # plt.legend()
+        # plt.ylabel('Absolute Difference')
+
+        # # Plot the joint mask
+        # plt.subplot(plots, 2, 10)
+        # plt.plot(time_reaction, long_confirmed_dilated_mask, label='Dilated Mask, long confirmed')
+        # plt.legend()
+        # plt.ylabel('Mask Values')
+
+
+
+        plt.tight_layout()
+        plt.show()
+
+
+    # mask = confirmed_dilated_mask
+    mask = long_mask1
+
     segments = process_mask(mask, min_segment_length / 1000, sr_reaction)
 
-    # merged_segments = merge_segments(segments, min_segment_length, max_gap_frames, sr_reaction)  # Maximum gap of 0.1 seconds
-    # merged_segments = filter_segments_by_volume(reaction, sr_reaction, merged_segments)
-
-    padded_segments = pad_segments(segments, sr_reaction, len(reaction), pad_length=0.15)
+    padded_segments = pad_segments(segments, sr_reaction, len(reaction), pad_beginning=0.5, pad_ending=0.1)
     merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames, sr_reaction)
-
-
 
     suppressed_reaction = apply_segments(reaction, merged_segments)
 
+
+    if extra_reaction is not None:
+
+        suppressed_reaction = np.concatenate((suppressed_reaction, extra_reaction))
 
     # if mono:
     #     # Squeeze the 2D arrays to 1D
@@ -494,22 +633,168 @@ def mute_by_deviation(song_path, reaction_path, output_path):
 
 
 
-def process_reactor_audio(reaction_audio, base_audio):
+def process_reactor_audio(reaction_audio, base_audio, extended_by=0):
 
     # if not "Pegasus" in reaction_audio:
     #     print("Skipping...")
     #     return
 
-    # straight_mute_path = mute_by_deviation(base_audio, reaction_audio)
 
     reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio, post_process=True)
     output_path = os.path.splitext(reaction_vocals_path)[0] + f"_isolated_commentary.wav"
     if not os.path.exists(output_path):
         print(f"Separating commentary from {reaction_audio}")
 
-        mute_by_deviation(song_vocals_path, reaction_vocals_path, output_path)
+        mute_by_deviation(song_vocals_path, reaction_vocals_path, output_path, reaction_audio)
+
 
     return output_path
+
+
+
+
+
+
+
+
+
+
+
+####################################
+# Track separation and high pass filtering
+
+
+from scipy.spatial import distance
+from scipy.signal import correlate
+import librosa
+from scipy.signal import fftconvolve
+
+spleeter_separator = None
+def get_spleeter(): 
+    global spleeter_separator
+    if spleeter_separator is None:
+        from spleeter.separator import Separator
+        spleeter_separator = Separator('spleeter:2stems')
+    return spleeter_separator
+
+def separate_vocals(song_path, reaction_path, post_process=False):
+    # Create a separator with 2 stems (vocals and accompaniment)
+
+    song_sep = os.path.join(os.path.dirname(reaction_path), 'song_output')
+    song_separation_path = os.path.join(song_sep, os.path.splitext(song_path)[0].split('/')[-1] )
+
+    reaction_sep = os.path.join(os.path.dirname(reaction_path), 'reaction_output')
+    react_separation_path = os.path.join(reaction_sep, os.path.splitext(reaction_path)[0].split('/')[-1] )
+
+    # Perform source separation on song and reaction audio
+    if not os.path.exists(song_separation_path):
+        song_sources = get_spleeter().separate_to_file(song_path, song_sep)
+    if not os.path.exists(react_separation_path):
+        reaction_sources = get_spleeter().separate_to_file(reaction_path, reaction_sep)
+
+    # Load the separated tracks
+    song_vocals_path = os.path.join(song_separation_path, 'vocals.wav')
+    reaction_vocals_path = os.path.join(react_separation_path, 'vocals.wav')
+
+
+    if post_process: 
+
+        song_vocals_high_passed_path = os.path.join(song_separation_path, 'vocals-post-high-passed.wav')
+        
+        if not os.path.exists(song_vocals_high_passed_path):
+            song_vocals, sr_song = librosa.load( song_vocals_path, sr=None, mono=True )
+            song_vocals = post_process_audio(song_vocals, sr_song)
+            sf.write(song_vocals_high_passed_path, song_vocals.T, sr_song)
+        song_vocals_path = song_vocals_high_passed_path
+
+        reaction_vocals_high_passed_path = os.path.join(react_separation_path, 'vocals-post-high-passed.wav')
+        
+        
+        if not os.path.exists(reaction_vocals_high_passed_path):
+            reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=None, mono=True )
+            reaction_vocals = post_process_audio(reaction_vocals, sr_reaction)
+            sf.write(reaction_vocals_high_passed_path, reaction_vocals.T, sr_reaction)
+        reaction_vocals_path = reaction_vocals_high_passed_path
+
+        # assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
+
+        # print(f"{reaction_vocals.shape} {len(reaction_vocals)}    {song_vocals.shape}   {len(song_vocals)}")
+        # reaction_vocals = match_audio(reaction_vocals, song_vocals, sr_reaction)
+        # reaction_vocals_path = os.path.join(react_separation_path, 'vocals-post-high-passed-volume-matched.wav')
+        # sf.write(reaction_vocals_path, reaction_vocals.T, sr_reaction)
+
+
+    return (reaction_vocals_path, song_vocals_path)
+
+
+from scipy.signal import butter, lfilter
+
+def butter_highpass(cutoff, fs, order=5):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='high', analog=False)
+    return b, a
+
+def highpass_filter(data, cutoff, fs, order=5):
+    b, a = butter_highpass(cutoff, fs, order=order)
+    y = lfilter(b, a, data)
+    return y
+
+import noisereduce as nr
+
+def post_process_audio(commentary, sr):
+
+    # mono = commentary.ndim == 1
+
+    # # If the audio is mono (1D array), add an extra dimension to make it look like single-channel multi-channel
+    # if mono:
+    #     commentary = np.expand_dims(commentary, axis=0)
+
+    # processed_commentary = np.zeros_like(commentary)
+    
+    # for channel in range(commentary.shape[0]):
+    #     # Reduce noise
+    #     reduced_noise = nr.reduce_noise(commentary[channel], sr=sr)
+        
+    #     # Apply a highpass filter to remove low-frequency non-speech components
+    #     sos = scipy.signal.butter(10, 100, 'hp', fs=sr, output='sos')
+    #     filtered = scipy.signal.sosfilt(sos, reduced_noise)
+        
+    #     processed_commentary[channel] = filtered
+
+    # if mono:
+    #     processed_commentary = processed_commentary[0]
+
+    # return processed_commentary
+
+    commentary = highpass_filter(commentary, cutoff=100, fs=sr)
+
+    # Reduce noise
+    commentary = nr.reduce_noise(commentary, sr=sr)
+    
+    # # Apply a highpass filter to remove low-frequency non-speech components
+    # sos = scipy.signal.butter(10, 100, 'hp', fs=sr, output='sos')
+    # commentary = scipy.signal.sosfilt(sos, commentary)
+    
+    return commentary
+
+
+
+
+
+
+
+
+
+####################
+# Old stuff below
+###################
+
+
+
+
+
+
 
 
 
@@ -549,6 +834,121 @@ def match_audio(reaction_audio, song_audio, sr):
 
 
     return reaction_audio
+
+
+
+
+##########################
+# We have been trying to solve the following problem:
+
+# I'm trying to isolate the sections of a reaction audio in which one or more commentators are making noise. 
+# We also have the original song, and they are *mostly* aligned in time.  
+
+# In my preprocessing, I’m separating audio by source into a vocal track, and ignoring the accompaniment. 
+# This gets rid of most of the music from consideration, leaving us with vocals. 
+
+# The first step in my algorithm for identifying parts of a reaction audio where commentators are speaking 
+# is to identify the parts of the reaction audio that is most different from the base song (using MFCCs 
+#     to get at perceptual differences). 
+
+# To do this, I'm creating a mask that is true where the absolute difference between the two tracks is 
+# greater than some threshold.
+
+# Setting this threshold in a principled way is tricky. Our first attempt looks like: 
+
+# def create_mask(diff, percentile):
+#     # Calculate the nth percentile of the absolute differences
+#     threshold = np.percentile(np.abs(diff), percentile)
+#     # Create a mask where the absolute difference is greater than the threshold
+#     mask = np.abs(diff) > threshold
+#     return mask
+
+# However, because I have separated out the vocals, much of both of the tracks are nearly silent. 
+# This distorts the percentile approach to setting a threshold. 
+
+# So what we've been working on has been trying to ignore the near-silent sections of the audio when 
+# setting the threshold. We've been first calculating frame energy to identify near-silent parts of 
+# the audio, and then trying to use that (unsucessfully) filter the MFCC diff used to compute a 
+# threshold for masking the reaction audio.  
+
+# We've been running into lots of errors though in the dimensions of the various arrays involved, 
+# and in interpreting the silence threshold as a decibal=>energy mapping. I've included our latest 
+# code below. Please fix it, or identify a different method for achieving the goal outlined above. Thanks!
+
+# def calculate_mfcc(audio, sr):
+#     # Calculate the MFCCs for the audio
+#     mfcc = librosa.feature.mfcc(audio, sr)
+#     return mfcc
+
+
+# def calculate_difference(mfcc1, mfcc2):
+#     # Calculate the difference between the two MFCCs
+#     diff = np.abs(mfcc1 - mfcc2)
+#     return diff
+
+
+# def calculate_frame_energy(audio, frame_length, hop_length):
+#     # Frame the audio signal
+#     frames = librosa.util.frame(audio, frame_length, hop_length)
+#     # Calculate the energy of each frame
+#     energy = np.sum(frames**2, axis=0)
+#     return energy
+
+# def create_mask_by_mfcc_difference(song, sr_song, reaction, sr_reaction, percentile, silence_threshold=.001):
+
+
+#     mfcc_song = calculate_mfcc(song, sr_song)
+#     mfcc_reaction = calculate_mfcc(reaction, sr_reaction)
+
+#     if mfcc_song.shape != mfcc_reaction.shape:
+#         print("The shapes of the MFCCs do not match!")
+#         return
+        
+
+#     print("mfcc_song shape: ", mfcc_song.shape)
+#     print("mfcc_reaction shape: ", mfcc_reaction.shape)
+
+#     diff = calculate_difference(mfcc_song, mfcc_reaction)
+
+
+#     # Calculate the frame energy
+#     frame_length = 2048  # You may need to adjust this
+#     hop_length = 512  # and this
+#     frame_energy = calculate_frame_energy(reaction, frame_length, hop_length)
+
+#     # Create a mask where the frame energy is greater than the silence threshold
+#     not_silent = frame_energy > silence_threshold
+
+#     # Reduce the dimensionality of diff by calculating the Euclidean norm along the MFCC axis
+#     diff_norm = np.linalg.norm(diff, axis=0)
+
+#     # Check if not_silent contains any True values
+#     if not np.any(not_silent):
+#         print("All frames are silent. Please check your silence threshold.")
+#         return None
+
+#     # Reshape not_silent to match diff_norm
+#     not_silent_frames = np.reshape(not_silent, (1, len(not_silent)))
+
+#     # Repeat the not_silent_frames to match the rows in diff
+#     not_silent = np.repeat(not_silent_frames, diff.shape[0], axis=0)
+
+#     # Adjust the shape of not_silent to match the size of diff
+#     if diff.shape[1] > not_silent.shape[1]:
+#         padding = diff.shape[1] - not_silent.shape[1]
+#         not_silent = np.pad(not_silent, ((0, 0), (0, padding)), constant_values=False)
+        
+#     # Mask diff with not_silent
+#     diff_masked = diff.copy()
+#     diff_masked[~not_silent] = 0
+
+#     # Calculate the percentile of the absolute differences where not silent
+#     threshold = np.percentile(np.abs(diff_masked), percentile)
+
+#     # Create a mask where the absolute difference is greater than the threshold
+#     mask = np.abs(diff) > threshold
+
+#     return mask[0]
 
 
 
@@ -778,21 +1178,6 @@ def adaptive_pitch_matching(song, reaction, segment_length, sr):
 
 
 
-from scipy.signal import butter, lfilter
-
-def butter_highpass(cutoff, fs, order=5):
-    nyq = 0.5 * fs
-    normal_cutoff = cutoff / nyq
-    b, a = butter(order, normal_cutoff, btype='high', analog=False)
-    return b, a
-
-def highpass_filter(data, cutoff, fs, order=5):
-    b, a = butter_highpass(cutoff, fs, order=order)
-    y = lfilter(b, a, data)
-    return y
-
-def post_process_audio_with_highpass_filter(audio, sr, cutoff=100):
-    return highpass_filter(audio, cutoff, sr)
 
 
 
@@ -845,110 +1230,4 @@ def spectral_subtraction_with_stft(audio1, audio2, n_fft=2048, hop_length=512):
 
 
 
-
-import noisereduce as nr
-
-def post_process_audio(commentary, sr):
-
-    # mono = commentary.ndim == 1
-
-    # # If the audio is mono (1D array), add an extra dimension to make it look like single-channel multi-channel
-    # if mono:
-    #     commentary = np.expand_dims(commentary, axis=0)
-
-    # processed_commentary = np.zeros_like(commentary)
-    
-    # for channel in range(commentary.shape[0]):
-    #     # Reduce noise
-    #     reduced_noise = nr.reduce_noise(commentary[channel], sr=sr)
-        
-    #     # Apply a highpass filter to remove low-frequency non-speech components
-    #     sos = scipy.signal.butter(10, 100, 'hp', fs=sr, output='sos')
-    #     filtered = scipy.signal.sosfilt(sos, reduced_noise)
-        
-    #     processed_commentary[channel] = filtered
-
-    # if mono:
-    #     processed_commentary = processed_commentary[0]
-
-    # return processed_commentary
-
-    # Reduce noise
-    reduced_noise = nr.reduce_noise(commentary, sr=sr)
-    
-    # Apply a highpass filter to remove low-frequency non-speech components
-    sos = scipy.signal.butter(10, 100, 'hp', fs=sr, output='sos')
-    filtered = scipy.signal.sosfilt(sos, reduced_noise)
-    
-    return filtered
-
-
-
-
-
-
-import numpy as np
-from scipy.spatial import distance
-from scipy.signal import correlate
-import librosa
-from scipy.signal import fftconvolve
-
-spleeter_separator = None
-def get_spleeter(): 
-    global spleeter_separator
-    if spleeter_separator is None:
-        from spleeter.separator import Separator
-        spleeter_separator = Separator('spleeter:2stems')
-    return spleeter_separator
-
-def separate_vocals(song_path, reaction_path, post_process=False):
-    # Create a separator with 2 stems (vocals and accompaniment)
-
-    song_sep = os.path.join(os.path.dirname(reaction_path), 'song_output')
-    song_separation_path = os.path.join(song_sep, os.path.splitext(song_path)[0].split('/')[-1] )
-
-    reaction_sep = os.path.join(os.path.dirname(reaction_path), 'reaction_output')
-    react_separation_path = os.path.join(reaction_sep, os.path.splitext(reaction_path)[0].split('/')[-1] )
-
-    # Perform source separation on song and reaction audio
-    if not os.path.exists(song_separation_path):
-        song_sources = get_spleeter().separate_to_file(song_path, song_sep)
-    if not os.path.exists(react_separation_path):
-        reaction_sources = get_spleeter().separate_to_file(reaction_path, reaction_sep)
-
-    # Load the separated tracks
-    song_vocals_path = os.path.join(song_separation_path, 'vocals.wav')
-    reaction_vocals_path = os.path.join(react_separation_path, 'vocals.wav')
-
-
-    if post_process: 
-
-        song_vocals_high_passed_path = os.path.join(song_separation_path, 'vocals-post-high-passed.wav')
-        
-        if not os.path.exists(song_vocals_high_passed_path):
-            song_vocals, sr_song = librosa.load( song_vocals_path, sr=None, mono=True )
-            song_vocals = post_process_audio_with_highpass_filter(song_vocals, sr_song)  
-            song_vocals = post_process_audio(song_vocals, sr_song)
-            sf.write(song_vocals_high_passed_path, song_vocals.T, sr_song)
-        song_vocals_path = song_vocals_high_passed_path
-
-        reaction_vocals_high_passed_path = os.path.join(react_separation_path, 'vocals-post-high-passed.wav')
-        
-        
-        if not os.path.exists(reaction_vocals_high_passed_path):
-            reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=None, mono=True )
-            reaction_vocals = post_process_audio_with_highpass_filter(reaction_vocals, sr_reaction)  
-            reaction_vocals = post_process_audio(reaction_vocals, sr_reaction)
-            sf.write(reaction_vocals_high_passed_path, reaction_vocals.T, sr_reaction)
-        reaction_vocals_path = reaction_vocals_high_passed_path
-
-        # assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
-
-        # print(f"{reaction_vocals.shape} {len(reaction_vocals)}    {song_vocals.shape}   {len(song_vocals)}")
-        # reaction_vocals = match_audio(reaction_vocals, song_vocals, sr_reaction)
-        # reaction_vocals_path = os.path.join(react_separation_path, 'vocals-post-high-passed-volume-matched.wav')
-        # sf.write(reaction_vocals_path, reaction_vocals.T, sr_reaction)
-
-
-    return (reaction_vocals_path, song_vocals_path)
 
