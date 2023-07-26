@@ -633,24 +633,35 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
 
 
-def process_reactor_audio(reaction_audio, base_audio, extended_by=0):
 
-    # if not "Pegasus" in reaction_audio:
-    #     print("Skipping...")
-    #     return
+def process_reactor_audio(reaction_audio, base_audio, sr, extended_by=0):
 
+    if extended_by > 0:
+        full_reaction_audio, _ = librosa.load(reaction_audio, sr=sr)
+        extended_audio = full_reaction_audio[-sr * extended_by:]  # Last extended_by seconds of audio
+        truncated_reaction_audio = full_reaction_audio[:-sr * extended_by]  # Except for last extended_by seconds
+
+        reaction_audio_name, ext = os.path.splitext(reaction_audio)
+        reaction_audio = f"{reaction_audio_name}-truncated{ext}"
+
+        sf.write(reaction_audio, truncated_reaction_audio.T, sr)  # Write truncated_reaction_audio to a new file
 
     reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio, post_process=True)
-    output_path = os.path.splitext(reaction_vocals_path)[0] + f"_isolated_commentary.wav"
+    output_path = os.path.splitext(reaction_vocals_path)[0] + "_isolated_commentary.wav"
+    
     if not os.path.exists(output_path):
         print(f"Separating commentary from {reaction_audio}")
-
         mute_by_deviation(song_vocals_path, reaction_vocals_path, output_path, reaction_audio)
 
+    if extended_by > 0:
+        output_audio, _ = librosa.load(output_path, sr=sr)
+        new_output_audio = np.concatenate((output_audio, extended_audio))  # Append truncated_reaction_audio to the end
+        
+        output_path_name, ext = os.path.splitext(output_path)
+        output_path = f"{output_path_name}-truncated{ext}"
+        sf.write(output_path, new_output_audio.T, sr)  # Write new_output_audio to a new file
 
     return output_path
-
-
 
 
 
