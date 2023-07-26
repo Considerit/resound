@@ -111,6 +111,7 @@ def compose_reactor_compilation(song, base_video, reactions, output_path, output
 
     base_audio_as_array = base_video.audio.to_soundarray()
     reactor_colors = generate_hsv_colors(len(positions), 1, .6)
+    clip_length = 0
     for i, (reaction, pos) in enumerate(positions):
         featured = reaction['featured']
 
@@ -136,10 +137,13 @@ def compose_reactor_compilation(song, base_video, reactions, output_path, output
         else: 
           other_clips.append(clip)
 
+        if clip_length < clip.duration:
+          clip_length = clip.duration
 
 
-    duration = base_video.duration
-    duration = 5 
+
+    duration = max(base_video.duration, clip_length)
+    # duration = 30 
 
 
     # Create the composite video
