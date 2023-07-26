@@ -80,9 +80,18 @@ def replace_audio(video, audio_path):
     return video
 
 
-def crop_video(input_file, output_file, replacement_audio, x, y, w, h):
+
+def crop_video(video_file, output_file, replacement_audio, x, y, w, h, centroids):
+
+    # TODO: There is a new argument to this function, centroids, is an array of 
+    #       (x,y) values. Each entry in the array is a frame of the video at video_file. 
+    #       The below function currently crops the whole video at fixed centroid given
+    #       by function parameters x and y. The function needs to be modified such that
+    #       at each frame f the frame is cropped to the centroid given at centroids[f]. 
+
     # Load the video clip
-    video = VideoFileClip(input_file)
+    video = VideoFileClip(video_file)
+
 
     if w != h:
       w = h = min(w,h)
@@ -91,13 +100,25 @@ def crop_video(input_file, output_file, replacement_audio, x, y, w, h):
       w -= 1
       h -= 1
 
+    if x < 0:
+      x = 0
+
+    if x + w > video.w:
+      x -= x + w - video.w
+
+    if y < 0: 
+      y = 0
+
+    if y + h > video.h:
+      y -= y + h - video.h
+
     # Crop the video clip
     cropped_video = video.crop(x1=x, y1=y, x2=x+w, y2=y+h)
 
-
     if w > 450: 
       w = h = 450
-      cropped_video = cropped_video.resize(width=w//2*2, height=h//2*2)
+      cropped_video = cropped_video.resize(width=w, height=h)
+
 
     if replacement_audio:
       cropped_video = replace_audio(cropped_video, replacement_audio)
@@ -136,10 +157,14 @@ def create_reactor_view(react_path, base_path, replacement_audio=None, show_faci
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0:
-      reactors = detect_faces(react_path, base_path, show_facial_recognition)
-      for i, (x,y,w,h,orientation) in enumerate(reactors): 
+      reactors = detect_faces(react_path, base_path, show_facial_recognition = show_facial_recognition)
+      for i, reactor in enumerate(reactors): 
+          (x,y,w,h,orientation) = reactor[0]
+          reactor_captures = reactor[1]
+          # centroids = reactor[2]
+          centroids = []
           output_file = f"{base_reaction_path}-cropped-{i}-{orientation}{base_video_ext}"
-          crop_video(react_path, output_file, replacement_audio, int(x), int(y), int(w), int(h))
+          crop_video(react_path, output_file, replacement_audio, int(x), int(y), int(w), int(h), centroids)
           output_files.append(output_file)
 
   return output_files
@@ -160,11 +185,10 @@ def get_faces_from(img):
   return ret
 
 
-def detect_faces(react_path, base_path, show_facial_recognition=False):
+def detect_faces(react_path, base_path, frames_per_capture=500, show_facial_recognition=False):
 
     # Open the video file
     react_capture = cv2.VideoCapture(react_path)
-    # base_capture = cv2.VideoCapture(base_path)
 
     # Iterate over each frame in the video
     face_matches = []
@@ -178,52 +202,45 @@ def detect_faces(react_path, base_path, show_facial_recognition=False):
 
         try: 
           current_react = react_capture.get(cv2.CAP_PROP_POS_FRAMES)
-          # current_base = base_capture.get(cv2.CAP_PROP_POS_FRAMES)
 
-          react_capture.set(cv2.CAP_PROP_POS_FRAMES, current_react + 500)
-          # base_capture.set(cv2.CAP_PROP_POS_FRAMES, current_base + 500)
+          next_frame = current_react + frames_per_capture
+
+          react_capture.set(cv2.CAP_PROP_POS_FRAMES, next_frame)
 
           ret, react_frame = react_capture.read()
-          # Break the loop if no more frames
+
+
           if not ret:
               break
 
-          # ret, base_frame = base_capture.read()
-          # Break the loop if no more frames
-          # if not ret:
-          #     break
         except Exception as e: 
           print('exception', e)
           break
 
         # Convert the frame to grayscale for face detection
         react_gray = cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB)
-        # base_gray = cv2.cvtColor(base_frame, cv2.COLOR_BGR2RGB)
 
         # Perform face detection
         faces = get_faces_from(react_gray)
 
         # print("FACES:", faces)
         # Draw rectangles around the detected faces
+        faces_this_frame = []
         for ((x, y, w, h), nose) in faces:
             # print( (x,y,w,h), nose)
             if w > .05 * width:
-              # candidate_face = react_gray[y:y+h, x:x+w]  # Extract the candidate face region
-
               if show_facial_recognition:
                 cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-              face_matches.append((x, y, w, h, nose))
+              faces_this_frame.append((x, y, w, h, nose))
 
+        face_matches.append( (current_react + frames_per_capture, faces_this_frame))
         # print("matches:", face_matches)
 
         if show_facial_recognition:
           top, heat_map_color = find_top_candidates(face_matches, width, height)
           for tc in top:
-            # print('TC', tc)
 
             (x,y,w,h,o) = expand_face(tc, width, height)
-
-            # print(rect, center)
 
             rect = tc[2]
             center = tc[3]
@@ -248,24 +265,130 @@ def detect_faces(react_path, base_path, show_facial_recognition=False):
 
     # cv2.waitKey(0)
 
-    print('facematches:', face_matches)
-    tc_final, _ = find_top_candidates(face_matches, width, height)
-    
-
-    # Release the video capture and close the window
     react_capture.release()
-    # base_capture.release()
-
     cv2.destroyAllWindows()
 
 
-    final_set = []
-    for tc in tc_final:
-      reactor = expand_face(tc, width, height) # (x,y,w,h)
-      final_set.append(reactor)
+    print('facematches:', face_matches)
 
-    return final_set
+    # Coarse-grained facial tracking
+    # Now we're going to do some coarse matching to identify the most prominent
+    # face locations. This will set the number of reactors we're dealing with, 
+    # as well as their orientation and size. 
+    coarse_reactors, _ = find_top_candidates(face_matches, width, height)
+    reactors = []
+    for reactor_captures in coarse_reactors:
+      reactor = expand_face(reactor_captures, width, height) # (x,y,w,h,orientation)
+      reactors.append( [reactor, reactor_captures] )
 
+    # Fine-grained facial tracking
+    # for (reactor, (group, total_area, kernel, center, avg_size) ) in reactors:
+    #   #   - group is a list of the face matches in bounds (x,y,w,h)
+    #   #   - total_area is the coverage area of the union of the bounds
+    #   #   - kernel is the (x,y,w,h) bounding box
+    #   #   - center is the (x,y) centroid
+    #   #   - avg_size is the average (w,h) of candidate face matches in group
+
+    #   centroids = find_reactor_centroids(face_matches, center, avg_size, kernel)
+    #   centroids = smooth_and_interpolate_centroids(centroids)
+    #   reactor.append(centroids)
+
+    return reactors
+
+
+
+
+#######
+# Fine-grained face matching. 
+# In the coarse-grained face matching step, we identified how many reactors there are
+# and each of their anchor positions in the video. However, reactors often move their
+# heads as they react. And, during production, sometimes reactors move their faces
+# all over at different times, to create a more engaging experience. 
+#
+# We'd like to be able to track these movements so that we can crop the video in such 
+# a way as to follow each reactors' face through the video. 
+#
+# This can be challenging because facial recognition on a frame-by-frame basis leads
+# to all kinds of false positives and false negatives. Our coarse-grained algorithm 
+# aggregated information in such a way that we could identify dominant facial positions
+# and deal with false positives & negatives. If we get more fine-grained, we run the 
+# risk of being deceived again.
+#
+# Luckily we can use the results of the coarse-grained algorithm to guide the fine-grained
+# algorithm. Specifically, we know the average size (avg_width, avg_height) of the matched 
+# reactor face, and the average centroid. For any given frame, we can examine the candidate 
+# faces identified in a previous step (x,y,w,h), and score them based on their similarity to 
+# the average size of and proximity to the centroid of the coarse matched reactor. We can
+# then greedily select the best match for the reactor face for that frame. The idea is that
+# most of the time, the reactor's face won't be moving far from the coarse centroid, and
+# when it does (because of e.g. production), the size of the face region probably won't be
+# that different, allowing us to find it. 
+# 
+# The find_reaction_centroids function is passed the following data: 
+#    face_matches: An array of sampled frames with face-detection performed on them. Each 
+#                  entry is a tuple (frame_number, faces), where faces is a list of 
+#                  candidate faces (x,y,w,h,nose) }
+#    center: The coarse-match centroid (x,y) for this reactor's face.
+#    avg_size: The average size (width, height) of the facial matches that comprise the
+#              coarse match.
+#    kernel:   The (x,y,w,h) bounding box of the coarse_match. 
+#    
+def find_reactor_centroids(face_matches, center, avg_size, kernel):
+  centroids = []
+  for sampled_frame, faces in face_matches:
+
+    best_score = 0
+    best_centroid = None 
+
+    for (x,y,w,h,nose) in faces:
+      dx = center[0] - x
+      dy = center[1] - y
+      dist = sqrt( dx * dx + dy * dy )
+
+      dw = avg_size[0] - w
+      dh = avg_size[1] - h      
+      size_diff = sqrt ( dw * dw + dh * dh )
+
+      score = 1 / (1 + dist + size_diff)
+      if score > best_score:
+        best_score = score
+        best_centroid = (x,y)
+
+    centroids.append( (sampled_frame, best_centroid ) )
+
+  return centroids
+
+
+
+################
+# Convolves and interpolates centroids
+# sampled_centroids is an array of (frame, (x,y)), where frame is the 
+# sampled frame number (doesn't increase by 1) and (x,y) is 
+# the proposed centroid at that point. 
+def smooth_and_interpolate_centroids(sampled_centroids):
+  # TODO: Identify outliers in the sampled centroids. Replace the outliers
+  #       with linearly interpolated centroid between the nearest non-outliers. 
+  #       Ignore centroids with a value of None.
+  # de_outliered_centroids = ...
+
+  # TODO: Replace centroids with a value of None by linearly interpolating 
+  #       between the closest defined centroid on either side. 
+  # fully_valued_centroids = ...
+
+  # TODO: smooth out the sampled centroids. Use a convolution that samples
+  #       equally from the current frame and the 3 surrounding frames on 
+  #       either side. 
+  # smoothed_centroids = ...
+
+  # TODO: interpolate smoothed_centroids. We want a centroid at each 
+  # actual frame, not just each sampled frame. So fill in the values 
+  # between each sampled centroid. The centroids can be linearly
+  # interpolated between the two nearest sampled centroids, except 
+  # for the first and last, which can just adopt the value of the 
+  # nearest centroid.
+  # interpolated_centroids = ...
+
+  return interpolated_centroids
 
 
 def is_overlap(x1, y1, w1, h1, x2, y2, w2, h2):
@@ -273,7 +396,7 @@ def is_overlap(x1, y1, w1, h1, x2, y2, w2, h2):
     return (x1 < x2 + w2 and x1 + w1 > x2 and y1 < y2 + h2 and y1 + h1 > y2)
 
 def expand_face(group, width, height, expansion=.9, sidedness=.7):
-  (faces, score, (x,y,w,h), center) = group
+  (faces, score, (x,y,w,h), center, avg_size) = group
 
 
   if (center[0] > x + .65 * w): # facing right
@@ -315,17 +438,13 @@ def expand_face(group, width, height, expansion=.9, sidedness=.7):
 
 
 
+
+
+
 # Face Tracking
 # To perform face tracking, we can utilize the face landmarks detected in the initial face 
 # detection step. By tracking the landmarks across subsequent frames, we can estimate 
 # the movement of the face and update the face coordinates
-
-# Example usage
-# video_path = 'path/to/reaction_video.mp4'
-# face_landmarks = [[(x1, y1, w1, h1), (x2, y2, w2, h2)], [(x3, y3, w3, h3), (x4, y4, w4, h4)], ...]  # List of face landmarks from the previous step
-# track_faces(video_path, face_landmarks)
-
-
 
 # I have generated a list of potential faces contained in a video. Each frame, I've identified potential faces and appended them to a list of matches, with each entry being (x,y,width,height). 
 
@@ -336,7 +455,6 @@ def expand_face(group, width, height, expansion=.9, sidedness=.7):
 #   - iterate over the groups. score each of the groups by the total area covered by each square in the group. 
 #   - for each group, identify the smallest square that covers all the squares in the group  
 #   - sort the groups by their score
-
 
 def find_top_candidates(matches, wwidth, hheight):
     # Create a list to store the groups of overlapping faces
@@ -349,8 +467,9 @@ def find_top_candidates(matches, wwidth, hheight):
       heat_map = np.zeros((int(hheight) + 1, int(wwidth) + 1), dtype=int)
 
       # Iterate over the matches and update the heat map
-      for match in matches:
-          x, y, width, height, _ = match
+      for frame, faces in matches:
+        for face in faces:
+          x, y, width, height, _ = face
           heat_map[y:y+height, x:x+width] += 1
 
       # Normalize the heat map to the range [0, 255]
@@ -367,7 +486,7 @@ def find_top_candidates(matches, wwidth, hheight):
       contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
       # Filter contours based on area
-      min_contour_area = int(width * .04 * height * .04)
+      min_contour_area = int(wwidth * .04 * hheight * .04)
       contours = [contour for contour in contours if cv2.contourArea(contour) > min_contour_area]
 
       # Draw bounding boxes around the hot areas
@@ -385,7 +504,11 @@ def find_top_candidates(matches, wwidth, hheight):
         cv2.rectangle(heat_map_color, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
         # Identify faces within the contour
-        group = [match for match in matches if x <= match[0] <= x+w and y <= match[1] <= y+h]
+        group = []
+        for frame, faces in matches:
+          for face in faces:
+            if x <= face[0] <= x+w and y <= face[1] <= y+h:
+              group.append(face)
 
         face_groups.append( ((x, y, w, h), group, heat_sum)   )
 
@@ -395,17 +518,12 @@ def find_top_candidates(matches, wwidth, hheight):
       print("didn'twork!", e)
 
 
-
-
-
     # Calculate the score for each group based on the total area covered
     group_scores = []
     for kernel, group, heat in face_groups:
         total_area = heat # calculate_total_area(group)
-        center = calculate_center(group)
-        group_scores.append((group, total_area, kernel, center))
-
-        # group_scores.append((group, total_area, find_smallest_square(group), center))
+        center,avg_size = calculate_center(group)
+        group_scores.append((group, total_area, kernel, center, avg_size))
 
     # Sort the groups by their score in descending order
     sorted_groups = sorted(group_scores, key=lambda x: x[1], reverse=True)
@@ -423,88 +541,19 @@ def calculate_center(group):
 
     total_x = 0
     total_y = 0
+    total_width = 0 
+    total_height = 0 
     for face in group:
         x, y, w, h, center = face
         total_x += center[0]
         total_y += center[1]
+        if len(center) > 2:
+          total_width += center[2]
+          total_height += center[3]
 
-    return (total_x / len(group), total_y / len(group))
-
-def find_smallest_square(group):
-    min_x = float('inf')
-    min_y = float('inf')
-    max_x = float('-inf')
-    max_y = float('-inf')
-
-    # Iterate over the faces in the group to find the minimum and maximum coordinates
-    for face in group:
-        x, y, w, h, center = face
-        min_x = min(min_x, x)
-        min_y = min(min_y, y)
-        max_x = max(max_x, x + w)
-        max_y = max(max_y, y + h)
-
-    # Calculate the dimensions of the smallest square
-    square_size = max(max_x - min_x, max_y - min_y)
-
-    # Calculate the coordinates of the top-left corner of the square
-    square_x = min_x
-    square_y = min_y
-
-    return square_x, square_y, square_size, square_size
+    return (total_x / len(group), total_y / len(group)), (total_width / len(group), total_height / len(group))
 
 
-def not_outlier(face, group):
-    x1, y1, w1, h1, center = face
-
-    area_without = calculate_total_area(group)
-    aaa = [face]
-    aaa.extend(group)
-    area_with = calculate_total_area(aaa)
-
-    return (area_with - area_without) / area_with < .6
-
-
-
-
-def is_overlapping(face, group):
-    x1, y1, w1, h1, center = face
-
-    for face2 in group:
-        x2, y2, w2, h2, center = face2
-
-        # Calculate the coordinates of the corners for the two faces
-        top_left1 = (x1, y1)
-        top_right1 = (x1 + w1, y1)
-        bottom_left1 = (x1, y1 + h1)
-        bottom_right1 = (x1 + w1, y1 + h1)
-
-        top_left2 = (x2, y2)
-        top_right2 = (x2 + w2, y2)
-        bottom_left2 = (x2, y2 + h2)
-        bottom_right2 = (x2 + w2, y2 + h2)
-
-        # Check if any of the corner points of one face is inside the other face
-        if is_point_inside_face(top_left1, face2) or is_point_inside_face(top_right1, face2) \
-                or is_point_inside_face(bottom_left1, face2) or is_point_inside_face(bottom_right1, face2) \
-                or is_point_inside_face(top_left2, face) or is_point_inside_face(top_right2, face) \
-                or is_point_inside_face(bottom_left2, face) or is_point_inside_face(bottom_right2, face):
-            return True
-
-        # Check if the faces intersect horizontally or vertically
-        if x1 < x2 + w2 and x1 + w1 > x2 and y1 < y2 + h2 and y1 + h1 > y2:
-            return True
-
-    return False
-
-def is_point_inside_face(point, face):
-    x, y, w, h, center = face
-    px, py = point
-
-    if px >= x and px <= x + w and py >= y and py <= y + h:
-        return True
-
-    return False
 
 def calculate_total_area(group):
     total_area = 0
