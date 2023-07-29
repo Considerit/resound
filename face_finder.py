@@ -405,7 +405,6 @@ def get_faces_from(img):
 def expand_face(group, width, height, expansion=.9, sidedness=.7):
   (faces, score, (x,y,w,h), center, avg_size) = group
 
-
   if (center[0] > x + .65 * w): # facing right
     x = max(0, int(x - expansion * sidedness * w))
     orientation = 'right'
@@ -490,7 +489,7 @@ def find_top_candidates(matches, wwidth, hheight):
         group = []
         for frame, faces in matches:
           for face in faces:
-            if x <= face[0] <= x+w and y <= face[1] <= y+h:
+            if x <= face[0] + face[2] / 2 <= x+w and y <= face[1] + face[3] / 2 <= y+h:
               group.append(face)
 
         face_groups.append( ((x, y, w, h), group, heat_sum)   )
@@ -520,7 +519,7 @@ def find_top_candidates(matches, wwidth, hheight):
 
 def calculate_center(group):
     if len(group) == 0:
-      return (0,0)
+      return (0,0), (0,0)
 
     total_x = 0
     total_y = 0
@@ -616,7 +615,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
 
         hist_similarity /= len(rep_histos)
 
-        score = hist_similarity / (1 + size_diff + dist)
+        score = hist_similarity / (1 + size_diff + 0.5 * dist)
         print(f"\t\t{score} ({best_score}) dist={dist} size={size_diff} sim={hist_similarity} {(x,y,w,h)}")
         if score > best_score:
           best_score = score
