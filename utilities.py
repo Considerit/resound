@@ -107,6 +107,7 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
         subclip = video.subclip(float(start_frame), float(end_frame))
         if filler:
             subclip = subclip.resize(height=height, width=width)
+            subclip = subclip.without_audio()
 
         print(f'\nAdding frames from {start_frame}s to {end_frame}s filler? {filler}\n')
         clips.append(subclip)
