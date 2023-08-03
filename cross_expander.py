@@ -41,10 +41,14 @@ from typing import List, Tuple
 import traceback
 import soundfile as sf
 
-from utilities import samples_per_frame, universal_frame_rate, is_close, create_audio_extraction
+from utilities import samples_per_frame, universal_frame_rate, is_close, create_reaction_audio_from_path
 from backchannel_isolator import audio_percentile_loudness
 
 from decimal import Decimal, getcontext
+
+
+import cProfile
+import pstats
 
 
 
@@ -66,13 +70,24 @@ def mfcc_similarity(audio_chunk1, audio_chunk2, sr, mfcc1=None, mfcc2=None):
     # Make sure the MFCCs are the same shape
     len1 = mfcc1.shape[1]
     len2 = mfcc2.shape[1]
-    max_len = max(len1, len2)
-    if len1 < max_len:
-        padding = max_len - len1
-        mfcc1 = np.pad(mfcc1, pad_width=((0, 0), (0, padding)), mode='constant')
-    elif len2 < max_len:
-        padding = max_len - len2
-        mfcc2 = np.pad(mfcc2, pad_width=((0, 0), (0, padding)), mode='constant')
+
+    if len1 != len2:
+        if abs(len1 - len2) > 1:
+            print("MFCC SHAPES NOT EQUAL", len1, len2)
+            # assert(abs(len1 - len2) == 1)
+
+        if len2 > len1:
+            mfcc2 = mfcc2[:, :len1]
+        else:
+            mfcc1 = mfcc1[:, :len2]
+
+        # max_len = max(len1, len2)
+        # if len1 < max_len:
+        #     padding = max_len - len1
+        #     mfcc1 = np.pad(mfcc1, pad_width=((0, 0), (0, padding)), mode='constant')
+        # elif len2 < max_len:
+        #     padding = max_len - len2
+        #     mfcc2 = np.pad(mfcc2, pad_width=((0, 0), (0, padding)), mode='constant')
 
     # Compute mean squared error between MFCCs
     mse = np.mean((mfcc1 - mfcc2)**2)
@@ -80,6 +95,27 @@ def mfcc_similarity(audio_chunk1, audio_chunk2, sr, mfcc1=None, mfcc2=None):
     similarity = 1 / (1 + mse)
     return 10000 * similarity
 
+
+def relative_volume_similarity(audio_chunk1, audio_chunk2, sr, vol_diff1=None, vol_diff2=None):
+    assert(len(audio_chunk1) == len(audio_chunk2))
+
+    # Compute MFCCs for each audio chunk
+    if vol_diff1 is None: 
+        vol_diff1 = audio_percentile_loudness(audio_chunk1, loudness_window_size=100, percentile_window_size=100, std_dev_percentile=None)
+
+    if vol_diff2 is None: 
+        vol_diff2 = audio_percentile_loudness(audio_chunk2, loudness_window_size=100, percentile_window_size=100, std_dev_percentile=None)
+
+    # Calculate the absolute difference between the two volume differences
+    absolute_difference = np.abs(vol_diff1 - vol_diff2)
+
+    # Calculate the sum of absolute_difference
+    difference_magnitude = np.sum(absolute_difference)
+
+
+    # Max difference is for volume inversion, where abs(vol_diff1 - vol_diff2) is always 100 (%)
+    max_difference = 100 * len(audio_chunk1)
+    return max_difference / difference_magnitude
 
 
 
@@ -106,19 +142,24 @@ def mfcc_similarity(audio_chunk1, audio_chunk2, sr, mfcc1=None, mfcc2=None):
 #   bound a to v(b) - (t(b) - t(a)), where v is the value of the bound's latest match in the reaction audio. To 
 #   accomplish the integrity checking, walk backwards from the last timestamp.
 
-def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = None, peak_tolerance=.6):
+def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = None, peak_tolerance=.5):
+    # profiler = cProfile.Profile()
+    # profiler.enable()
 
     base_audio = basics.get('base_audio')
     reaction_audio = basics.get('reaction_audio')
     sr = basics.get('sr')
+    hop_length = basics.get('hop_length')
+    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+    base_audio_mfcc = basics.get('base_audio_mfcc')
 
     clip_length = int(2 * sr)
     base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
 
-    seconds_per_bound = 8
+    seconds_per_checkpoint = 24
 
     if n_timestamps is None:
-        n_timestamps = round(base_length_sec / seconds_per_bound) 
+        n_timestamps = round(base_length_sec / seconds_per_checkpoint) 
     
     timestamps = [i * base_length_sec / (n_timestamps + 1) for i in range(1, n_timestamps + 1)]
     timestamps_samples = [int(t * sr) for t in timestamps]
@@ -131,7 +172,15 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
     # For each timestamp
     for i,ts in enumerate(timestamps_samples):
         # Define the segments on either side of the timestamp
-        segments = [base_audio[max(0, ts - clip_length):ts], base_audio[max(0, ts - int(clip_length / 2)):min(len(base_audio), ts + int(clip_length / 2)  )], base_audio[ts:min(len(base_audio), ts + clip_length)]]
+
+        segment_times = [
+          (max(0, ts - clip_length), ts),
+          (max(0, ts - int(clip_length / 2)), min(len(base_audio), ts + int(clip_length / 2) )),
+          (ts, min(len(base_audio), ts + clip_length))
+        ]
+
+        segments = [  (base_audio[s:e], base_audio_mfcc[:, round(s / hop_length): round(e / hop_length) ]) for s,e in segment_times  ]
+
 
         # for j, segment in enumerate(segments):
         #     filename = f"segment_{i}_{j}.wav"
@@ -142,9 +191,24 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
         
         print(f"ts: {ts / sr}")
         # For each segment
-        for chunk in segments:
+        for chunk, chunk_mfcc in segments:
             # Find the candidate indices for the start of the matching segment in the reaction audio
-            candidates = find_next_segment_start_candidates(reaction_audio[ts:], chunk, clip_length, peak_tolerance, ts, ts, sr, distance=first_n_samples, print_candidates=True, filter_for_similarity=False)
+
+            candidates = find_next_segment_start_candidates(\
+                                    basics=basics, \
+                                    open_chunk=reaction_audio[ts:], \
+                                    open_chunk_mfcc=reaction_audio_mfcc[:, round(ts / hop_length):], \
+                                    closed_chunk=chunk, \
+                                    closed_chunk_mfcc= chunk_mfcc,\
+                                    current_chunk_size=clip_length, \
+                                    peak_tolerance=peak_tolerance, \
+                                    open_start=ts, \
+                                    closed_start=ts, \
+                                    distance=first_n_samples, \
+                                    filter_for_similarity=True, \
+                                    print_candidates=True  )
+
+
 
             print(f"\tCandidates: {candidates}  {max(candidates)}")
 
@@ -167,6 +231,12 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
     print(f"The alignment bounds:")
     for base_ts, last_reaction_match in alignment_bounds:
         print(f"\t{base_ts / sr}  <=  {last_reaction_match / sr}")
+
+
+    # profiler.disable()
+    # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+    # stats.print_stats()
+
     return alignment_bounds
 
 
@@ -179,27 +249,75 @@ def get_bound(alignment_bounds, base_start, reaction_end):
             return last_reaction_match
     return reaction_end
 
-def build_path_scores(alignment_bounds):
-  score = []
-  for base_ts, last_reaction_match in alignment_bounds:
-    score.append(  [base_ts, None, None] )
 
-  return score
+def get_initial_checkpoints(basics): 
+    base_audio = basics.get('base_audio')
+    sr = basics.get('sr')
+
+    samples_per_checkpoint = 10 * sr 
+
+    timestamps = []
+    s = samples_per_checkpoint
+    while s < len(base_audio):
+        timestamps.append(s)
+        s += samples_per_checkpoint
+
+    return timestamps
 
 
 
+def expand_checkpoint(basics, checkpoints, idx):
+
+    if idx == 0 or idx == len(checkpoints) - 1:
+        return
+
+    prev = checkpoints[idx - 1]
+    following = checkpoints[idx + 1]
+    current = checkpoints[idx]
+
+    new_before = int(prev + (current - prev) / 2)
+    new_after = int(current + (following - current) / 2)
+
+    sr = basics.get('sr')
+    if new_after - current > 5000 :
+        checkpoints.append( new_after )
+    if current - new_before > 5000:
+        checkpoints.append( new_before )
+
+    checkpoints.sort()
 
 
 
-def find_correlation_end(current_start, reaction_start, basics, expansion_tolerance, step, scores = [], reaction_end=None, end_at=None, max_score=0, backoff=0, cache={}):
+def get_chunk_score(basics, reaction_start, reaction_end, current_start, current_end):
+    base_audio = basics.get('base_audio')
+    reaction_audio = basics.get('reaction_audio')
+
+    base_audio_mfcc = basics.get('base_audio_mfcc')
+    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+    sr = basics.get('sr')
+    hop_length = basics.get('hop_length')
+
+    chunk = base_audio[current_start:current_end]
+    reaction_chunk = reaction_audio[reaction_start:reaction_end]            
+
+    mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
+    mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
     
+    mfcc_score = mfcc_similarity(reaction_chunk, chunk, sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
+    rel_volume_alignment = relative_volume_similarity(chunk, reaction_chunk, sr, vol_diff1=basics.get('song_percentile_loudness')[current_start:current_end], vol_diff2=basics.get('reaction_percentile_loudness')[reaction_start:reaction_end])
+
+    return math.sqrt(mfcc_score * rel_volume_alignment)
+
+def find_correlation_end(current_start, reaction_start, basics, options, step, scores = [], reaction_end=None, end_at=None, max_score=0, cache={}):
+    expansion_tolerance = options.get('expansion_tolerance')
+    backoff = options.get('segment_end_backoff')
+
     base_audio = basics.get('base_audio')
     base_audio_mfcc = basics.get('base_audio_mfcc')
     reaction_audio = basics.get('reaction_audio')
     reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
     sr = basics.get('sr')
 
-    hop_length = 512
 
     if reaction_end == None:
         current_end = current_start + step
@@ -209,8 +327,6 @@ def find_correlation_end(current_start, reaction_start, basics, expansion_tolera
 
     if end_at == None: 
         end_at = len(reaction_audio)
-
-
 
     assert( reaction_end - reaction_start == current_end - current_start   )
 
@@ -225,10 +341,7 @@ def find_correlation_end(current_start, reaction_start, basics, expansion_tolera
         key = f"{current_start}:{current_end}"
 
         if key not in cache:
-            chunk = base_audio[current_start:current_end]
-            reaction_chunk = reaction_audio[reaction_start:reaction_end]
-            chunk_score = mfcc_similarity(reaction_chunk, chunk, sr, mfcc1=reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)], mfcc2=base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)])
-            cache[key] = chunk_score
+            cache[key] = get_chunk_score(basics, reaction_start, reaction_end, current_start, current_end) 
 
         chunk_score = cache[key]
 
@@ -325,14 +438,11 @@ def find_correlation_end(current_start, reaction_start, basics, expansion_tolera
             break
 
 
-
-
-
     if step > 250:
 
         # print(f"RECURSING AROUND {break_point / sr} - {next_end_at / sr} with neg_slope_avg of {neg_slope_avg}")
 
-        return find_correlation_end(current_start, reaction_start, basics, expansion_tolerance, step = step // 2, scores = scores, reaction_end = break_point, end_at = next_end_at, max_score = max_score, backoff = backoff, cache = cache )
+        return find_correlation_end(current_start, reaction_start, basics, options, step = step // 2, scores = scores, reaction_end = break_point, end_at = next_end_at, max_score = max_score, cache = cache )
     else: 
         reaction_end = break_point
         current_end = current_start + reaction_end - reaction_start
@@ -363,7 +473,10 @@ def find_correlation_end(current_start, reaction_start, basics, expansion_tolera
 
 import math
 
-def find_next_segment_start_candidates(open_chunk, closed_chunk, current_chunk_size, peak_tolerance, open_start, closed_start, sr, distance, upper_bound=None, print_candidates=False, filter_for_similarity=True):
+def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, closed_chunk, closed_chunk_mfcc, current_chunk_size, peak_tolerance, open_start, closed_start, distance, upper_bound=None, print_candidates=False, filter_for_similarity=True):
+    sr = basics.get('sr')
+    hop_length = basics.get('hop_length')
+
     if upper_bound is not None:
         prev = len(open_chunk)
         open_chunk = open_chunk[:int(upper_bound - open_start + 2 * current_chunk_size)]
@@ -385,58 +498,81 @@ def find_next_segment_start_candidates(open_chunk, closed_chunk, current_chunk_s
     scores = []
     max_mfcc_score = 0
     max_correlation_score = 0
-    max_index = None
+    max_relative_volume_score = 0
     for candidate in peak_indices:
         candidate_index = correct_peak_index(candidate, current_chunk_size) 
 
         if upper_bound is not None and not math.isinf(upper_bound) and upper_bound < candidate_index + open_start:
             continue
 
-        mfcc_score = mfcc_similarity(open_chunk[candidate_index:candidate_index + current_chunk_size], closed_chunk, sr)    
-        scores.append( (candidate_index, mfcc_score, correlation[candidate]) ) 
+        open_chunk_here = open_chunk[candidate_index:candidate_index + current_chunk_size]
+        open_chunk_here_mfcc = open_chunk_mfcc[:, round(candidate_index / hop_length): round((candidate_index + current_chunk_size) / hop_length)       ]
+
+        if len(open_chunk_here) != current_chunk_size:
+            # print(f"Skipping because we couldn't make a chunk of size {current_chunk_size} [{current_chunk_size / sr}] starting at {candidate_index} [{candidate_index / sr}] from chunk of length {len(open_chunk) / sr}")
+            continue 
+
+        mfcc_score = mfcc_similarity(open_chunk_here, closed_chunk, sr, mfcc1=open_chunk_here_mfcc, mfcc2=closed_chunk_mfcc)   
+        relative_volume_score = relative_volume_similarity(open_chunk_here, closed_chunk, sr)
+
+        scores.append( (candidate_index, mfcc_score, relative_volume_score, correlation[candidate]) ) 
         
         if correlation[candidate] > max_correlation_score:
             max_correlation_score = correlation[candidate]
 
         if mfcc_score > max_mfcc_score:
             max_mfcc_score = mfcc_score
-            max_index = candidate_index
 
-        if not filter_for_similarity:
-            print(f"[unfiltered] Comparing start at {(closed_start + candidate_index) / sr} with correlation={correlation[candidate]} mfcc_similarity={mfcc_score}")
+        if relative_volume_score > max_relative_volume_score:
+            max_relative_volume_score = relative_volume_score
+
+    if len(scores) == 0:
+        return None
 
     if not filter_for_similarity:
-        candidates = [ (candidate_index, mfcc_score, correlation_score) for candidate_index, mfcc_score, correlation_score in scores ] # first match is really important to get right, so lets just admit all of the correlations
-    else: 
-        candidates = [ (candidate_index, mfcc_score, correlation_score) for candidate_index, mfcc_score, correlation_score in scores \
-                       if mfcc_score >= max_mfcc_score * ((1 - peak_tolerance) / 2 + peak_tolerance) or \
-                          correlation_score >= max_correlation_score * peak_tolerance or \
-                          correlation_score * mfcc_score >= max_correlation_score * max_mfcc_score * peak_tolerance ]
+        candidates = scores
+    else:
+        candidates = []
+        for candidate in scores:
+            (candidate_index, mfcc_score, rel_vol_score, correlation_score) = candidate
 
-    candidates.sort(key=lambda x: x[1] * x[2], reverse=True) # do the best ones first, which might help with pruning the search later on
+            good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + .2)
+            good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + .4)
+            # joint_goodness = (mfcc_score / max_mfcc_score + rel_vol_score / max_relative_volume_score) / 2 > peak_tolerance
+
+            # if (good_by_mfcc or good_by_rel_vol) and not joint_goodness:
+            #     print(f"[restricted] Start at {(closed_start + candidate_index) / sr:.1f} with correlation={100 * correlation_score / max_correlation_score:.1f}% mfcc_similarity={100 * mfcc_score / max_mfcc_score:.1f}% rel_vol_similarity={100 * relative_volume_score / max_relative_volume_score:.1f}%")
+
+            # good_by_mediocrity = (mfcc_score / max_mfcc_score + correlation_score / max_correlation_score + rel_vol_score / max_relative_volume_score) / 3 > peak_tolerance
+            if good_by_mfcc or good_by_rel_vol:
+                candidates.append(candidate)
+
+    # candidates.sort(key=lambda x: x[1] * x[2], reverse=True) # do the best ones first, which might help with pruning the search later on
 
     if print_candidates:
-        for candidate_index, mfcc_score, correlation_score in candidates:
-            print(f"Comparing start at {(closed_start + candidate_index) / sr} with correlation={correlation_score} mfcc_similarity={mfcc_score}")
+        for candidate_index, mfcc_score, relative_volume_score, correlation_score in candidates:
+            print(f"Comparing start at {(closed_start + candidate_index) / sr:.1f} with correlation={100 * correlation_score / max_correlation_score:.1f}% mfcc_similarity={100 * mfcc_score / max_mfcc_score:.1f}% rel_vol_similarity={100 * relative_volume_score / max_relative_volume_score:.1f}%")
 
 
     return [c[0] for c in candidates]
-
-
-def find_next_best_segment_start(open_chunk, closed_chunk, current_chunk_size, peak_tolerance, closed_start, open_start, sr, distance):
-    candidates = find_next_segment_start_candidates(open_chunk, closed_chunk, current_chunk_size, peak_tolerance, open_start, closed_start, sr, distance)
-    if not candidates: 
-      return None
-    return candidates[0]
     
 
 
 
 #####################################################################
 # Given a starting index into the reaction, find a good ending index
-def scope_segment(basics, current_start, reaction_start, candidate_segment_start, current_chunk_size, n_samples, first_n_samples, reverse_search_bound, peak_tolerance, expansion_tolerance, segment_end_backoff): 
+def scope_segment(basics, current_start, reaction_start, candidate_segment_start, current_chunk_size, options):
+
+    reverse_search_bound = options.get('reverse_search_bound')
+    peak_tolerance = options.get('peak_tolerance')
+    n_samples = options.get('n_samples')
+    first_n_samples = options.get('first_n_samples')
+
     base_audio = basics.get('base_audio')
     reaction_audio = basics.get('reaction_audio')
+    base_audio_mfcc = basics.get('base_audio_mfcc')
+    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+    hop_length = basics.get('hop_length')
     sr = basics.get('sr')
 
 
@@ -451,7 +587,9 @@ def scope_segment(basics, current_start, reaction_start, candidate_segment_start
 
     open_end = min(current_start+current_chunk_size+int(reverse_search_bound * sr), len(base_audio))
     reverse_chunk_size = min(current_chunk_size, open_end - current_start)
-    candidate_reaction_chunk = reaction_audio[reaction_start+candidate_segment_start:reaction_start+candidate_segment_start+reverse_chunk_size]
+    candidate_reaction_chunk_start = reaction_start + candidate_segment_start
+    candidate_reaction_chunk_end = reaction_start + candidate_segment_start + reverse_chunk_size
+    candidate_reaction_chunk = reaction_audio[candidate_reaction_chunk_start:candidate_reaction_chunk_end]
     if reverse_chunk_size > len(candidate_reaction_chunk):
         reverse_chunk_size = len(candidate_reaction_chunk)
         open_end = min(open_end, current_start + reverse_chunk_size)
@@ -460,10 +598,26 @@ def scope_segment(basics, current_start, reaction_start, candidate_segment_start
     open_base_chunk = base_audio[current_start:open_end]
 
     # print(f'\nDoing reverse index search  reaction_start={reaction_start+candidate_segment_start}  current_start={current_start}  {reverse_chunk_size} {len(candidate_reaction_chunk)} {len(open_base_chunk)}')
-    reverse_index = find_next_best_segment_start(open_base_chunk, candidate_reaction_chunk, reverse_chunk_size, peak_tolerance, current_start, reaction_start + candidate_segment_start, sr, distance=first_n_samples)
+
+    reverse_index = find_next_segment_start_candidates(\
+                        basics = basics, \
+                        open_chunk=open_base_chunk, \
+                        open_chunk_mfcc=base_audio_mfcc[:, round(current_start / hop_length):round(open_end / hop_length)], \
+                        closed_chunk=candidate_reaction_chunk, \
+                        closed_chunk_mfcc= reaction_audio_mfcc[:, round(candidate_reaction_chunk_start / hop_length):round(candidate_reaction_chunk_end / hop_length) ],\
+                        current_chunk_size=reverse_chunk_size, \
+                        peak_tolerance=peak_tolerance, \
+                        open_start=current_start, \
+                        closed_start=reaction_start + candidate_segment_start, \
+                        distance=first_n_samples)
+
+
+
+    if reverse_index and len(reverse_index) > 0:
+        reverse_index = reverse_index[0]
     # print('reverse index:', reverse_index / sr)
 
-    if reverse_index > 0: 
+    if reverse_index and reverse_index > 0: 
         # print(f"Better match for base segment found later in reaction: using filler from base video from {current_start / sr} to {(current_start + reverse_index) / sr} with {(reaction_start - reverse_index) / sr} to {(reaction_start) / sr}")
         
         # seek to a frame boundary
@@ -482,7 +636,7 @@ def scope_segment(basics, current_start, reaction_start, candidate_segment_start
     # print(f"Start segment {current_start / sr}-{(current_start + n_samples) / sr} at {reaction_start / sr}")
 
 
-    candidate_current_end, candidate_reaction_end, scores = find_correlation_end(current_start, reaction_start, basics, expansion_tolerance, step = n_samples, backoff = segment_end_backoff, cache={})
+    candidate_current_end, candidate_reaction_end, scores = find_correlation_end(current_start, reaction_start, basics, options, step = n_samples, cache={})
     # print(candidate_current_end - current_start, candidate_reaction_end - reaction_start)        
 
 
@@ -551,7 +705,8 @@ def calculate_partial_score(current_path, checkpoint_ts, basics):
             modified_path.append(segment)
 
     if adjusted_reaction_end is None: 
-        raise f"Could not calculate partial score for {checkpoint_ts} {current_path}"
+        return None
+        # raise f"Could not calculate partial score for {checkpoint_ts} {current_path}"
 
     # truncate current path back to current_ts
     score = path_score(modified_path, basics) 
@@ -561,63 +716,82 @@ def calculate_partial_score(current_path, checkpoint_ts, basics):
 
 def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_scores, paths_by_checkpoint, current_start, basics):
     sr = basics.get('sr')
+    new_checkpoint_every_n_prunes = 5
+    checkpoints = basics.get('checkpoints')
 
-    current_checkpoint = None
-    for i, (base_ts, _, _) in enumerate(current_path_checkpoint_scores):
-        if current_start < base_ts: 
+    if len(current_path) == 0:
+        print("Weird zero length path!")
+        return True
+
+
+    # go through all checkpoints we've passed
+    for its, current_ts in enumerate(checkpoints):
+        if current_start < current_ts: 
             break
-        else: 
-            current_checkpoint = i
 
-    if current_checkpoint is None: # haven't gone far enough to evaluate
-        # print(f"Could not find checkpoint for {current_start / sr}")
-        return False
+        if current_ts in current_path_checkpoint_scores:
+            continue
 
-    current_ts, current_score, adjusted_reaction_end = current_path_checkpoint_scores[current_checkpoint]
-    # print(current_ts, current_score, adjusted_reaction_end, current_path, current_start)
+        partial_score = calculate_partial_score(current_path, current_ts, basics)
+        if partial_score is None:
+            return True
 
 
-    add_in_score = current_score is None
-    if not add_in_score: # we've already evaluated at this checkpoint
-        # print(f"We've already evaluated at {current_ts / sr} [{current_start}]")
-        return False
+        adjusted_reaction_end, current_score = partial_score
+
+        current_path_checkpoint_scores[current_ts] = True #[current_ts, current_score, adjusted_reaction_end]
+
+        if current_ts not in paths_by_checkpoint:
+            paths_by_checkpoint[current_ts] = {'prunes_here': 0, 'paths': []}
+
+        prunes_here = paths_by_checkpoint[current_ts]['prunes_here']
 
 
-    if add_in_score:
-        adjusted_reaction_end, current_score = calculate_partial_score(current_path, current_ts, basics)
-        current_path_checkpoint_scores[current_checkpoint][1] = current_score
-        current_path_checkpoint_scores[current_checkpoint][2] = adjusted_reaction_end
+        ts_thresh_contrib = min( current_ts / (3 * 60 * sr), .1)
+        prunes_thresh_contrib = min( .04 * prunes_here / 50, .04 )
 
-    if current_ts not in paths_by_checkpoint:
-        paths_by_checkpoint[current_ts] = []
+        prune_threshold = .85 + ts_thresh_contrib + prunes_thresh_contrib
 
-    should_prune = False
-    full_comp_score = None
-    for comp_reaction_end, comp_score in paths_by_checkpoint[current_ts]:
-        # print(f"\t{comp_reaction_end} <= {adjusted_reaction_end}?")
-        if comp_reaction_end <= adjusted_reaction_end:
-            (cs1,cs2,cs3) = comp_score
-            (s1,s2,s3) = current_score
 
-            m1 = max(cs1,s1); m2 = max(cs2,s2); m3 = max(cs3,s3)
+        full_comp_score = None
+        for comp_reaction_end, comp_score in paths_by_checkpoint[current_ts]['paths']:
+            # print(f"\t{comp_reaction_end} <= {adjusted_reaction_end}?")
+            if comp_reaction_end <= adjusted_reaction_end:
+                # (cs1,cs2,cs3) = comp_score
+                # (s1,s2,s3) = current_score
 
-            full_comp_score = cs1 / m1 + cs2 / m2 + cs3 / m3
-            full_score      =  s1 / m1 +  s2 / m2 +  s3 / m3
-            # print(f"\t\t{full_score} < {.9 * full_comp_score}?")
+                # m1 = max(cs1,s1); m2 = max(cs2,s2); m3 = max(cs3,s3)
 
-            if full_score < .9 * full_comp_score:
-                should_prune = True
-                break
+                # full_comp_score = cs1 / m1 + cs2 / m2 + cs3 / m3
+                # full_score      =  s1 / m1 +  s2 / m2 +  s3 / m3
+                # print(f"\t\t{full_score} < {.9 * full_comp_score}?")
 
-    if not should_prune:
-        if add_in_score:
-            paths_by_checkpoint[current_ts].append( (adjusted_reaction_end, current_score) )        
+                if current_score[0] < prune_threshold * comp_score[0]:
+                    paths_by_checkpoint[current_ts]['prunes_here'] += 1 # increment prunes at this checkpoint
+                    print(f"\tCheckpoint Prune at {current_ts / sr}: {current_score[0]} compared to {comp_score[0]}. Prunes here: {paths_by_checkpoint[current_ts]['prunes_here']} @ thresh {prune_threshold}")
+                    
+
+                    if paths_by_checkpoint[current_ts]['prunes_here'] % new_checkpoint_every_n_prunes == 0:
+                        
+
+                        expand_checkpoint(basics, checkpoints, its)
+
+                    for tss in checkpoints:
+                        if tss in paths_by_checkpoint:
+                            prunes = paths_by_checkpoint[tss]['prunes_here']
+                        else:
+                            prunes = "<nil>"
+                        print(f"\t\t{tss / sr}: {prunes}")
+
+
+                    return True
+
+        paths_by_checkpoint[current_ts]['paths'].append( (adjusted_reaction_end, current_score) )        
         # print("no prune", paths_by_checkpoint[current_ts])
 
-    else: 
-        print(f"\tCheckpoint Prune at {current_ts / sr}: {full_score} compared to {full_comp_score}")
+            
 
-    return should_prune
+    return False
 
 
 
@@ -627,15 +801,27 @@ prune_types = {
     "exact": 0,
     "bounds": 0,
     "length": 0,
-    "cached": 0
+    "cached": 0,
+    "scope_cached": 0
 }
 
-def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpoint, paths_from_current_start, basics, current_start, reaction_start, step, n_samples, first_n_samples, reverse_search_bound, peak_tolerance, expansion_tolerance, segment_end_backoff, path_cache, path_counts, alignment_bounds=None): 
+def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpoint, paths_from_current_start, basics, current_start, reaction_start, options, segment_scope_path, path_counts): 
+
     base_audio = basics.get('base_audio')
     reaction_audio = basics.get('reaction_audio')
     sr = basics.get('sr')
+    base_audio_mfcc = basics.get('base_audio_mfcc')
+    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+    hop_length = basics.get('hop_length')
+
+    step = first_n_samples = options.get('first_n_samples')
 
     depth = len(current_path)
+
+    # if depth == 0:
+    #     profiler = cProfile.Profile()
+    #     profiler.enable()
+
 
     # aggressive prune based on scores after having passed a checkpoint 
     if depth > 0:
@@ -660,16 +846,20 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
                         comp_score = path_score(comp_path, basics)
                         paths_from_current_start[current_start][i][2] = comp_score
 
-                    (cs1,cs2,cs3) = comp_score
-                    (s1,s2,s3) = score
 
-                    m1 = max(cs1,s1); m2 = max(cs2,s2); m3 = max(cs3,s3)
+                    # (cs1,cs2,cs3) = comp_score
+                    # (s1,s2,s3) = score
 
-                    full_comp_score = cs1 / m1 + cs2 / m2 + cs3 / m3
-                    full_score      =  s1 / m1 +  s2 / m2 +  s3 / m3
+                    # m1 = max(cs1,s1); m2 = max(cs2,s2); m3 = max(cs3,s3)
 
-                    if full_score < .9 * full_comp_score:
-                        print(f"\tExact Prune! {comp_reaction_start} {full_comp_score}  >  {reaction_start} {full_score}")
+                    # full_comp_score = cs1 / m1 + cs2 / m2 + cs3 / m3
+                    # full_score      =  s1 / m1 +  s2 / m2 +  s3 / m3
+
+                    ts_thresh_contrib = min( current_start / (2 * 60 * sr), .09)
+                    prune_threshold = .9 + ts_thresh_contrib
+
+                    if score[0] < prune_threshold * comp_score[0]:
+                        print(f"\tExact Prune! {comp_reaction_start} {comp_score[0]}  >  {reaction_start} {score[0]} @ threshold {prune_threshold}")
                         prune_types['exact'] += 1
                         for k,v in prune_types.items():
                             print(f"\t{k}: {v}")                        
@@ -687,6 +877,7 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
 
         return [None]
 
+    alignment_bounds = options.get('alignment_bounds')
     if alignment_bounds is not None:
         upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
         if not in_bounds(upper_bound, current_start, reaction_start):
@@ -732,16 +923,19 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
         # candidate_paths = find_next_best_segment_start(reaction_audio[reaction_start:], chunk, current_chunk_size, peak_tolerance, reaction_start, current_start, sr, distance=first_n_samples)
 
         candidate_starts = find_next_segment_start_candidates(\
+                                basics=basics, \
                                 open_chunk=reaction_audio[reaction_start:], \
+                                open_chunk_mfcc=reaction_audio_mfcc[:, round(reaction_start / hop_length):], \
                                 closed_chunk=chunk, \
+                                closed_chunk_mfcc= base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length) ],\
                                 current_chunk_size=current_chunk_size, \
-                                peak_tolerance=peak_tolerance, \
+                                peak_tolerance=options.get('peak_tolerance'), \
                                 open_start=reaction_start, \
                                 closed_start=current_start, \
-                                sr=sr, \
                                 distance=first_n_samples, \
                                 upper_bound=upper_bound, \
-                                filter_for_similarity=depth > 0  )
+                                filter_for_similarity=depth > 0, \
+                                print_candidates=depth==0  )
 
         # print(f'\tCandidate increments: {candidate_starts}')
 
@@ -752,7 +946,7 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
             }
 
         if candidate_starts is None:
-            current_start += 1
+            current_start += int(sr * .25)
             if (len(base_audio) - step - current_start) / sr < .5:
                 # print(f"Could not find match in remainder of reaction video!!! Stopping.")
                 # print(f"No match in remainder {current_path} {current_start} {reaction_start}")
@@ -764,9 +958,9 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
 
                 return [current_path]
             else:
-                print(f"Could not find match in remainder of reaction video!!! Skipping sample.")
+                print(f"Could not find match in remainder of reaction video!!! Skipping forward.")
                 path_counts[depth]['open'] += 1
-                result = find_pathways(current_path, copy.deepcopy(current_path_checkpoint_scores), paths_by_checkpoint, paths_from_current_start, basics, current_start, reaction_start, first_n_samples, n_samples, first_n_samples, reverse_search_bound, peak_tolerance, expansion_tolerance, segment_end_backoff, path_cache, path_counts, alignment_bounds)
+                result = find_pathways(current_path, copy.deepcopy(current_path_checkpoint_scores), paths_by_checkpoint, paths_from_current_start, basics, current_start, reaction_start, options, segment_scope_path, path_counts)
                 path_counts[depth]['completed'] += 1
                 return result
 
@@ -776,38 +970,44 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
         path_counts[depth]['open'] += len(candidate_starts)
 
         for candidate_segment_start in candidate_starts:
+            if depth == 0:
+                print(f"STARTING DEPTH ZERO from {candidate_segment_start / sr}")
 
-            key = f'({current_start}, {reaction_start + candidate_segment_start})'
-            if key not in path_cache:
-                # print(f'CACHE MISS: {key}')
+            paths_this_direction = []
 
-                paths_this_direction = []
-
-                segment, next_start, next_reaction_start, scores = scope_segment(basics, current_start, reaction_start, candidate_segment_start, current_chunk_size, n_samples, first_n_samples, reverse_search_bound, peak_tolerance, expansion_tolerance, segment_end_backoff)
-
-                my_path = copy.deepcopy(current_path)
-                if segment:
-                    my_path.append(segment)
-                elif next_reaction_start < len(reaction_audio) - 1: 
-                    print("did not find segment", next_start, next_reaction_start)
-
-
-                if next_reaction_start >= len(reaction_audio) - 1:
-                    # end this path
-                    paths_this_direction.append(my_path)
-                else:
-                    continued_paths = find_pathways(my_path, copy.deepcopy(current_path_checkpoint_scores), paths_by_checkpoint, paths_from_current_start, basics, next_start, next_reaction_start, first_n_samples, n_samples, first_n_samples, reverse_search_bound, peak_tolerance, expansion_tolerance, segment_end_backoff, path_cache, path_counts, alignment_bounds)
-                    for full_path in continued_paths:
-                        if full_path is not None:
-                            paths_this_direction.append(full_path)
-
-                path_cache[key] = paths_this_direction
+            scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size})'
+            if scope_key not in segment_scope_path:
+                segment_scope_path[scope_key] = scope_segment(basics, current_start, reaction_start, candidate_segment_start, current_chunk_size, options)
             else: 
-                # print(f'CACHE HIT!!! {key}')
-                prune_types['cached'] += 1
-                paths_this_direction = path_cache[key]
+                prune_types['scope_cached'] += 1
+
+            segment, next_start, next_reaction_start, scores = segment_scope_path[scope_key]
+
+            my_path = copy.deepcopy(current_path)
+            if segment:
+                my_path.append(segment)
+            elif next_reaction_start < len(reaction_audio) - 1: 
+                print("did not find segment", next_start, next_reaction_start)
+
+
+            if next_reaction_start >= len(reaction_audio) - 1:
+                # end this path
+                paths_this_direction.append(my_path)
+            else:
+                continued_paths = find_pathways(my_path, copy.deepcopy(current_path_checkpoint_scores), paths_by_checkpoint, paths_from_current_start, basics, next_start, next_reaction_start, options, segment_scope_path, path_counts)
+                for full_path in continued_paths:
+                    if full_path is not None:
+                        paths_this_direction.append(full_path)
+
 
             path_counts[depth]['completed'] += 1
+
+            if depth == 0:
+                print(f"Len of paths from {candidate_segment_start / sr} is {len(paths_this_direction)}")
+
+                # profiler.disable()
+                # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+                # stats.print_stats()
 
             # Don't add duplicate paths
             for new_path in paths_this_direction:
@@ -818,7 +1018,8 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
                         duplicate = True
                         break
                 if not duplicate:
-                    # print(f"Adding path {new_path}")
+                    # if depth == 0:
+                    #     print(f"Adding path {new_path}")
                     paths.append(new_path)
 
 
@@ -838,7 +1039,7 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
             print("Could not print")
 
         # for path in paths:
-        #     # print(f"\tScore={scores[0]}  Fill={scores[1]}  Completion={scores[2]}  Similarity={scores[3]}")
+        #     # print(f"\tScore={scores[0]}  Earliness={scores[1]}  Similarity={scores[2]}")
         #     scores = path_score(path, base_audio, reaction_audio, sr)
 
         #     print(f"\tSimilarity={scores[2]}")            
@@ -854,37 +1055,157 @@ def find_pathways(current_path, current_path_checkpoint_scores, paths_by_checkpo
         return [None]
 
 
+
+
+def create_reaction_mfcc_from_path(path, reaction_audio_for_path, basics):
+
+    # these mfcc variables are the result of calls to librosa.feature.mfcc, thus
+    # they have a shape of (num_mfcc, length of audio track). The length of the 
+    # reaction_audio_mfcc track is greater than the length of base_audio_mfcc track. 
+    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+    base_audio_mfcc = basics.get('base_audio_mfcc')
+    hop_length = basics.get('hop_length')
+
+    total_length = 0
+    for reaction_start, reaction_end, current_start, current_end, is_filler in path:
+        if not is_filler:
+            reaction_start = round(reaction_start / hop_length)
+            reaction_end = round(reaction_end / hop_length)
+            total_length += reaction_end - reaction_start
+        else:
+            current_start = round(current_start / hop_length)
+            current_end = round(current_end / hop_length)
+            total_length += current_end - current_start
+
+
+
+    # the resulting combined mfcc (path_mfcc) should have the same number of mfccs 
+    # as the input mfccs, and be the length of the reaction_audio_for_path. 
+    path_mfcc = np.zeros((base_audio_mfcc.shape[0], total_length))
+
+
+    # Now we're going to fill up the path_mfcc incrementally, taking from either
+    # base_audio_mfcc or reaction_audio_mfcc
+    start = 0
+    for reaction_start, reaction_end, current_start, current_end, is_filler in path:
+
+        if not is_filler:
+            reaction_start = round(reaction_start / hop_length)
+            reaction_end = round(reaction_end / hop_length)
+
+            length = reaction_end - reaction_start
+            segment = reaction_audio_mfcc[:,reaction_start:reaction_end]
+        else:
+            current_start = round(current_start / hop_length)
+            current_end = round(current_end / hop_length)
+
+            length = current_end - current_start
+            segment = base_audio_mfcc[:,current_start:current_end]
+
+        if length > 0:
+            path_mfcc[:,start:start+length] = segment
+            start += length
+
+    return path_mfcc
+
+def create_reaction_vol_diff_from_path(path, reaction_audio_for_path, basics):
+
+    # these mfcc variables are the result of calls to librosa.feature.mfcc, thus
+    # they have a shape of (num_mfcc, length of audio track). The length of the 
+    # reaction_audio_mfcc track is greater than the length of base_audio_mfcc track. 
+    reaction_audio_mfcc = basics.get('reaction_percentile_loudness')
+    base_audio_mfcc = basics.get('song_percentile_loudness')
+
+    total_length = 0
+    for reaction_start, reaction_end, current_start, current_end, is_filler in path:
+        if not is_filler:
+            total_length += reaction_end - reaction_start
+        else:
+            total_length += current_end - current_start
+
+
+
+    # the resulting combined mfcc (path_mfcc) should have the same number of mfccs 
+    # as the input mfccs, and be the length of the reaction_audio_for_path. 
+    path_mfcc = np.zeros(total_length)
+
+
+    # Now we're going to fill up the path_mfcc incrementally, taking from either
+    # base_audio_mfcc or reaction_audio_mfcc
+    start = 0
+    for reaction_start, reaction_end, current_start, current_end, is_filler in path:
+
+        if not is_filler:
+            length = reaction_end - reaction_start
+            segment = reaction_audio_mfcc[reaction_start:reaction_end]
+        else:
+            length = current_end - current_start
+            segment = base_audio_mfcc[current_start:current_end]
+
+        if length > 0:
+            path_mfcc[start:start+length] = segment
+            start += length
+
+    return path_mfcc
+
+
+
+
+
 def path_score(path, basics): 
     base_audio = basics.get('base_audio')
     base_audio_mfcc = basics.get('base_audio_mfcc')
+    hop_length = basics.get('hop_length')
     reaction_audio = basics.get('reaction_audio')
     reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
     sr = basics.get('sr')
 
-    total_fill = 1
+
+    reaction_audio_for_path = create_reaction_audio_from_path(reaction_audio, base_audio, path)
+    base_audio_for_path = base_audio[:len(reaction_audio_for_path)]
+
     duration = 0
+    fill = 0
 
-    total_reaction_span = 0
+    temporal_center = 0
+    path_mfcc = create_reaction_mfcc_from_path(path, reaction_audio_for_path, basics)
+    path_vol_diff = create_reaction_vol_diff_from_path(path, reaction_audio_for_path, basics)
+
     for reaction_start, reaction_end, current_start, current_end, is_filler in path:
-        if is_filler:
-            total_fill += current_end - current_start
-        else: 
+        if not is_filler:
             duration += (reaction_end - reaction_start)
+        else:
+            fill += current_end - current_start
 
-        total_reaction_span += (reaction_end - reaction_start) * (reaction_start + (reaction_end - reaction_start) / 2)
+        segment_weight = (reaction_end - reaction_start) / len(base_audio)
+        segment_time_center = (reaction_start + (reaction_end - reaction_start) / 2)
+        temporal_center += segment_weight * segment_time_center
 
-    early_completion_score = 1 / total_reaction_span
-    duration_score = 1 / (1 + abs(duration - len(base_audio)) / sr)
+    # Derivation for below:
+    #   earliness = |R| / temporal_center
+    #   best possible earliness =  |R| / (|B| / 2) (when the first part of the reaction is matched with the full base audio)
+    #   normalized earliness = earliness / best_possible_earliness = |B| / (|R| * temporal_center)
+    normalized_earliness_score = len(base_audio) / (len(reaction_audio) * temporal_center)
+    # fill_score = 1 / (1 + abs(duration - len(base_audio)) / sr)
+    fill_score = duration / (duration + fill)
 
-    reaction_audio_for_path = create_audio_extraction(reaction_audio, base_audio, path)
 
-    alignment = mfcc_similarity(base_audio, reaction_audio_for_path, sr, mfcc1=base_audio_mfcc)
-    alignment *= duration / len(base_audio) # don't count toward similarity the sections that were filled
 
-    return [duration_score, early_completion_score, alignment]
+    mfcc_alignment = mfcc_similarity(base_audio_for_path, reaction_audio_for_path, sr, mfcc1=base_audio_mfcc[:,:round(len(base_audio_for_path) / hop_length)], mfcc2=path_mfcc)
+
+    rel_volume_alignment = relative_volume_similarity(base_audio[:len(reaction_audio_for_path)], reaction_audio_for_path, sr, vol_diff1=basics.get('song_percentile_loudness')[:len(reaction_audio_for_path)], vol_diff2=path_vol_diff)
+
+    alignment = mfcc_alignment * math.log(1 + rel_volume_alignment)
+
+    duration_score = (duration + fill) / len(base_audio)
+
+    total_score = duration_score * duration_score * fill_score * normalized_earliness_score * normalized_earliness_score * alignment
+
+    return [total_score, normalized_earliness_score, alignment, fill_score]
 
 
 def find_best_path(candidate_paths, basics):
+    sr = basics.get('sr')
 
     assert( len(candidate_paths) > 0 )
     
@@ -893,53 +1214,60 @@ def find_best_path(candidate_paths, basics):
     for path in candidate_paths:
         paths_with_scores.append([path, path_score(path, basics)])
 
-    best_fill_score = 0 
+    best_score = 0 
     best_early_completion_score = 0
     best_similarity = 0 
+    best_duration = 0
     for path, scores in paths_with_scores:
-        if scores[0] > best_fill_score:
-            best_fill_score = scores[0]
+        if scores[0] > best_score:
+            best_score = scores[0]
         if scores[1] > best_early_completion_score:
             best_early_completion_score = scores[1]
         if scores[2] > best_similarity:
             best_similarity = scores[2]
+        if scores[3] > best_duration:
+            best_duration = scores[3]
 
 
     for path, scores in paths_with_scores:
-        fill_score = scores[0] / best_fill_score
+        total_score = scores[0] / best_score
         completion_score = scores[1] / best_early_completion_score
         similarity_score = scores[2] / best_similarity
+        fill_score = scores[3] / best_duration
 
-        scores[0] = fill_score
+        scores[0] = total_score
         scores[1] = completion_score
         scores[2] = similarity_score
+        scores[3] = fill_score
 
-        score = (fill_score + completion_score + similarity_score) / 3
-        scores.insert(0, score)
+        # score = (fill_score + completion_score + similarity_score) / 3
+        # scores.insert(0, score)
 
     paths_by_score = sorted(paths_with_scores, key=lambda x: x[1][0], reverse=True)
 
     print("Paths by score:")
     for path,scores in paths_by_score:
-        print(f"\tScore={scores[0]}  Duration={scores[1]}  EarlyThrough={scores[2]}  Similarity={scores[3]}")
+        print(f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]}")
         for sequence in path:
-            print(f"\t\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])} ")
+            print(f"\t\t{'*' if sequence[4] else ''}base: {float(sequence[2])/sr:.1f}-{float(sequence[3])/sr:.1f}  reaction: {float(sequence[0])/sr:.1f}-{float(sequence[1])/sr:.1f} ")
 
 
     return paths_by_score[0][0]
 
-def cross_expander_aligner(base_audio, reaction_audio, step_size, min_segment_length_in_seconds, first_match_length_multiplier, reverse_search_bound, peak_tolerance, expansion_tolerance, segment_end_backoff, sr):
+def cross_expander_aligner(base_audio, reaction_audio, sr, options):
+
+    step_size = options.get('step_size')
+    min_segment_length_in_seconds = options.get('min_segment_length_in_seconds')
+
     # Convert seconds to samples
     n_samples = int(step_size * sr)
     first_n_samples = int(min_segment_length_in_seconds * sr)
 
-    step = int(first_n_samples * first_match_length_multiplier)
-
     base_audio_mfcc = librosa.feature.mfcc(y=base_audio, sr=sr, n_mfcc=20)
     reaction_audio_mfcc = librosa.feature.mfcc(y=reaction_audio, sr=sr, n_mfcc=20)
 
-    song_percentile_loudness = audio_percentile_loudness(base_audio, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
-    reaction_percentile_loudness = audio_percentile_loudness(reaction_audio, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
+    song_percentile_loudness = audio_percentile_loudness(base_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None)
+    reaction_percentile_loudness = audio_percentile_loudness(reaction_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None)
 
     basics = {
         "base_audio": base_audio,
@@ -948,15 +1276,21 @@ def cross_expander_aligner(base_audio, reaction_audio, step_size, min_segment_le
         "reaction_audio_mfcc": reaction_audio_mfcc,
         "song_percentile_loudness": song_percentile_loudness,
         "reaction_percentile_loudness": reaction_percentile_loudness,
-        "sr": sr
+        "sr": sr,
+        "hop_length": 512
+        
     }
 
-    alignment_bounds = create_reaction_alignment_bounds(basics, first_n_samples)
-    # alignment_bounds = None
+    basics["checkpoints"] = get_initial_checkpoints(basics)
+
+    options['n_samples'] = n_samples
+    options['first_n_samples'] = first_n_samples
+
+    options['alignment_bounds'] = create_reaction_alignment_bounds(basics, first_n_samples)
 
 
 
-    paths = find_pathways([], build_path_scores(alignment_bounds), {}, {}, basics, 0, 0, step, n_samples, first_n_samples, reverse_search_bound, peak_tolerance, expansion_tolerance, segment_end_backoff, {}, {}, alignment_bounds)
+    paths = find_pathways([], {}, {}, {}, basics, 0, 0, options, {}, {})
 
     # print('FOUND PATHS!', paths)
 

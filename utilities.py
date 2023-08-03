@@ -12,7 +12,7 @@ from decimal import Decimal, getcontext
 
 
 
-def create_audio_extraction(reaction_audio, base_audio, segments):
+def create_reaction_audio_from_path(reaction_audio, base_audio, segments):
     segmented_audio_data = []
 
     for reaction_start, reaction_end, current_start, current_end, is_filler in segments:
