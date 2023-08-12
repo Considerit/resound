@@ -3,7 +3,8 @@ import numpy as np
 
 from scipy.signal import correlate, find_peaks
 from cross_expander.scoring_and_similarity import mfcc_similarity, relative_volume_similarity
-from scipy.signal import correlate, find_peaks
+
+
 
 def correct_peak_index(peak_index, chunk_len):
     # return max(0,peak_index)
@@ -21,7 +22,7 @@ def initialize_segment_start_cache():
     seg_start_cache_effectiveness["misses"] = 0
 
 
-def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_counts=None, upper_bound=None, print_candidates=False, filter_for_similarity=True):
+def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, print_candidates=False, filter_for_similarity=True):
     global seg_start_cache
     global seg_start_cache_effectiveness
 
@@ -135,7 +136,7 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
             # measure it as the best next segment.
             if prune_for_continuity and continuity_found and continuity_score > .98 * max_score:
                 # print("continuity prune")
-                prune_counts['continuity'] += len(candidates) - 1
+                prune_types['continuity'] += len(candidates) - 1
                 return [continuity[0]]
 
         candidates_by_time = [c[0] for c in candidates]

@@ -174,7 +174,19 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, s
 
 #####################################################################
 # Given a starting index into the reaction, find a good ending index
-def scope_segment(basics, current_start, reaction_start, candidate_segment_start, current_chunk_size, options):
+
+segment_scope_cache = {}
+def initialize_segment_end_cache():
+    segment_scope_cache.clear()
+
+def scope_segment(basics, options, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types):
+
+    scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size})'
+    
+    if scope_key in segment_scope_cache:
+        prune_types['scope_cached'] += 1
+        return segment_scope_cache[scope_key]
+
 
     reverse_search_bound = options.get('reverse_search_bound')
     peak_tolerance = options.get('peak_tolerance')
@@ -283,8 +295,36 @@ def scope_segment(basics, current_start, reaction_start, candidate_segment_start
     # print("scores", scores)
     # all_scores.append(scores)
 
+    segment_scope_cache[scope_key] = (segment, current_end, reaction_end, scores)
+    return segment_scope_cache[scope_key]
 
-    return (segment, current_end, reaction_end, scores)
+
+
+
+# def plot_curves(curves):
+#     # Create a new figure
+#     plt.figure(figsize=(10, 6))
+    
+#     # Set the colors you want to cycle through
+#     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
+    
+#     # For each curve
+#     for i, curve in enumerate(curves):
+#         # Select the color for this curve
+#         color = colors[i % len(colors)]
+
+#         times = [end / 44100 for _,end,_ in curve]
+#         scores = [score for _,_,score in curve]
+            
+#         # Plot the curve in the selected color
+#         plt.plot(times, scores, color=color)
+
+#     # Set labels
+#     plt.xlabel('Time')
+#     plt.ylabel('Score')
+
+#     # Display the plot
+#     plt.show()
 
 
 
