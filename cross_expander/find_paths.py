@@ -35,13 +35,16 @@ import os
 import librosa
 import copy
 import matplotlib.pyplot as plt
+from decimal import Decimal, getcontext
+
 
 from typing import List, Tuple
 import traceback
-import random
 
 import cProfile
 import pstats
+
+from utilities import trim_and_concat_video, extract_audio, compute_precision_recall, universal_frame_rate, download_and_parse_reactions, is_close
 
 from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data
 
@@ -210,6 +213,10 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
                                 filter_for_similarity=depth > 0, 
                                 print_candidates=depth==0  )
 
+        # if depth == 0:
+        #     candidate_starts = [candidate_starts[0], candidate_starts[1]]
+        #     # candidate_starts = [0]
+
         #########
         # Could not find match in remainder of reaction video
         if candidate_starts is None:
@@ -241,7 +248,6 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
             if depth == 0:
                 print(f"STARTING DEPTH ZERO from {candidate_segment_start / sr}")
 
-            paths_this_direction = []
 
             segment, next_start, next_reaction_start, scores = scope_segment(basics, options, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types)
 
@@ -251,26 +257,15 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
             elif next_reaction_start < len(reaction_audio) - 1: 
                 print("did not find segment", next_start, next_reaction_start)
 
-
+            paths_this_direction = 0
             continued_paths = find_pathways(basics, options, my_path, copy.deepcopy(current_path_checkpoint_scores), next_start, next_reaction_start)
             for full_path in continued_paths:
                 if full_path is not None:
-                    paths_this_direction.append(full_path)
+                    paths_this_direction += 1
+                    paths.append(full_path)
 
             complete_path(depth)
 
-            # Don't add duplicate paths
-            for new_path in paths_this_direction:
-                duplicate = False
-                for other_path in paths:
-                    if other_path == new_path:
-                        print('SKIPPING DUPLICATE PATH', other_path, new_path)
-                        duplicate = True
-                        break
-                if not duplicate:
-                    # if depth == 0:
-                    #     print(f"Adding path {new_path}")
-                    paths.append(new_path)
 
             if depth < 2 or path_counts[-1]['open'] % 10000 == 5000:
                 print_paths(current_start, reaction_start, depth, paths, path_counts, sr)
@@ -278,7 +273,7 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
 
             if depth == 0: 
                 print("**************")
-                print(f"Len of paths from {candidate_segment_start / sr} is {len(paths_this_direction)}")
+                print(f"Len of paths from {candidate_segment_start / sr} is {paths_this_direction}")
                 # initialize_path_counts() # give each starting point a fair shot
 
             if profile_pathways and path_counts[-1]['completed'] % 1000 == 50:
@@ -299,7 +294,7 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
 
 
 
-def cross_expander_aligner(base_audio, reaction_audio, sr, options):
+def cross_expander_aligner(base_audio, reaction_audio, sr, options, ground_truth=None):
 
     step_size = options.get('step_size')
     min_segment_length_in_seconds = options.get('min_segment_length_in_seconds')
@@ -309,9 +304,10 @@ def cross_expander_aligner(base_audio, reaction_audio, sr, options):
     first_n_samples = int(min_segment_length_in_seconds * sr)
 
     hop_length = 256
+    n_mfcc = 20
 
-    base_audio_mfcc = librosa.feature.mfcc(y=base_audio, sr=sr, n_mfcc=20, hop_length=hop_length)
-    reaction_audio_mfcc = librosa.feature.mfcc(y=reaction_audio, sr=sr, n_mfcc=20, hop_length=hop_length)
+    base_audio_mfcc = librosa.feature.mfcc(y=base_audio, sr=sr, n_mfcc=n_mfcc, hop_length=hop_length)
+    reaction_audio_mfcc = librosa.feature.mfcc(y=reaction_audio, sr=sr, n_mfcc=n_mfcc, hop_length=hop_length)
 
     song_percentile_loudness = audio_percentile_loudness(base_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=hop_length)
     reaction_percentile_loudness = audio_percentile_loudness(reaction_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=hop_length)
@@ -324,7 +320,8 @@ def cross_expander_aligner(base_audio, reaction_audio, sr, options):
         "song_percentile_loudness": song_percentile_loudness,
         "reaction_percentile_loudness": reaction_percentile_loudness,
         "sr": sr,
-        "hop_length": hop_length
+        "hop_length": hop_length,
+        "ground_truth": ground_truth
     }
 
     basics["checkpoints"] = initialize_checkpoints(basics)
@@ -332,21 +329,129 @@ def cross_expander_aligner(base_audio, reaction_audio, sr, options):
     options['n_samples'] = n_samples
     options['first_n_samples'] = first_n_samples
 
-    options['alignment_bounds'] = create_reaction_alignment_bounds(basics, first_n_samples)
 
+    initialize_segment_start_cache()
+    initialize_segment_end_cache()
 
     initialize_path_score()
-    initialize_segment_start_cache()
-    initialize_path_pruning()
-    initialize_segment_end_cache()
     initialize_path_counts()
+    initialize_path_pruning()
 
     best_finished_path.clear()
+
+
+    options['alignment_bounds'] = create_reaction_alignment_bounds(basics, first_n_samples)
 
     paths = find_pathways(basics, options)
 
     path = find_best_path(paths, basics)
 
-    return path
+    sequences = compress_segments(path, sr=sr)
 
+    reaction_sample_rate = Decimal(sr)
+    final_sequences =          [ ( Decimal(s[0]) / reaction_sample_rate, Decimal(s[1]) / reaction_sample_rate, Decimal(s[2]) / reaction_sample_rate, Decimal(s[3]) / reaction_sample_rate, s[4]) for s in sequences ]
+    
+    if ground_truth:
+        compute_precision_recall(sequences, ground_truth, tolerance=1.5)
+
+    return final_sequences
+
+
+
+def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, react_video, base_video, base_audio_data, base_audio_path, options, extend_by = 0):
+
+    gt = song.get('ground_truth', {}).get(os.path.basename(react_video) )
+    # if not gt: 
+    #     return
+
+    options.setdefault("step_size", 1)
+    options.setdefault("min_segment_length_in_seconds", 3)
+    options.setdefault("reverse_search_bound", options['min_segment_length_in_seconds'])
+    options.setdefault("segment_end_backoff", 20000)
+    options.setdefault("peak_tolerance", .5)
+    options.setdefault("expansion_tolerance", .7)
+
+
+    # Extract the reaction audio
+    reaction_audio_data, reaction_sample_rate, reaction_audio_path = extract_audio(react_video)
+
+
+    # Determine the number of decimal places to try avoiding frame boundary errors given python rounding issues
+    fr = Decimal(universal_frame_rate())
+    precision = Decimal(1) / fr
+    precision_str = str(precision)
+    getcontext().prec = len(precision_str.split('.')[-1])
+
+
+    print(f"\n*******{options}")
+    final_sequences = cross_expander_aligner(base_audio_data, reaction_audio_data, sr=reaction_sample_rate, options=options, ground_truth=gt)
+    
+
+    print("\nsequences:")
+
+    for sequence in final_sequences:
+        print(f"\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])}")
+
+
+    if options["output_alignment_video"]:
+        # Trim and align the reaction video
+        trim_and_concat_video(react_video, final_sequences, base_video, output_file, react_video_ext, extend_by = extend_by)
+    return output_file
+
+def compress_segments(match_segments, sr):
+    compressed_subsequences = []
+
+    idx = 0 
+    segment_groups = []
+    current_group = []
+    current_filler = match_segments[0][4]
+    for current_start, current_end, current_base_start, current_base_end, filler in match_segments:
+        if filler != current_filler:
+            if len(current_group) > 0:
+                segment_groups.append(current_group)
+                current_group = []
+            segment_groups.append([(current_start, current_end, current_base_start, current_base_end, filler)])
+            current_filler = filler
+        else: 
+            current_group.append((current_start, current_end, current_base_start, current_base_end, filler))
+
+    if len(current_group) > 0:
+        segment_groups.append(current_group)
+
+
+    for group in segment_groups:
+
+        if len(group) == 1:
+            compressed_subsequences.append(group[0])
+            continue
+
+        current_start, current_end, current_base_start, current_base_end, filler = group[0]
+        for i, (start, end, base_start, base_end, filler) in enumerate(group[1:]):
+
+            if start == current_end:
+                # This subsequence is continuous with the current one, extend it
+                # print("***COMBINING SEGMENT", current_end, start, (start - current_end), (start - current_end) / sr   )
+                current_end = end
+                current_base_end = base_end
+
+                result = (current_base_end - current_base_start) / sr * universal_frame_rate()
+                # print(f"is new segment whole? Is {current_base_end - current_base_start} [{(result)}] divisible by frame rate? {is_close(result, round(result))} ")
+            else:
+                # This subsequence is not continuous, add the current one to the list and start a new one
+                compressed_segment = (current_start, current_end, current_base_start, current_base_end, filler)
+                if not filler:
+                    print(current_end, current_start, current_base_end, current_base_start)
+                    # assert( is_close(current_end - current_start, current_base_end - current_base_start) )
+                compressed_subsequences.append( compressed_segment )
+                current_start, current_end, current_base_start, current_base_end, _ = start, end, base_start, base_end, filler
+
+        # Add the last subsequence
+        compressed_subsequences.append((current_start, current_end, current_base_start, current_base_end, filler))
+        # print(f"{end - start} vs {base_end - base_start}"      )
+        if not filler:
+            if not is_close(current_end - current_start, current_base_end - current_base_start):
+                print("NOT CLOSE!!!! Possible error", current_start, current_end - current_start, current_base_end - current_base_start)
+
+    # compressed_subsequences = match_segments
+    return compressed_subsequences
 
