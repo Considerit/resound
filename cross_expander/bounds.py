@@ -25,7 +25,7 @@ from cross_expander.find_segment_start import find_next_segment_start_candidates
 #   accomplish the integrity checking, walk backwards from the last timestamp.
 
 
-def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = None, peak_tolerance=.5):
+def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = None, peak_tolerance=.45):
     # profiler = cProfile.Profile()
     # profiler.enable()
 
@@ -47,6 +47,11 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
         n_timestamps = round(base_length_sec / seconds_per_checkpoint) 
     
     timestamps = [i * base_length_sec / (n_timestamps + 1) for i in range(1, n_timestamps + 1)]
+
+    if base_length_sec - timestamps[-1] > 15:
+        timestamps.append(base_length_sec - 10)
+
+
     timestamps_samples = [int(t * sr) for t in timestamps]
     
     # Initialize the list of bounds
@@ -92,29 +97,49 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
                                     open_start=start,
                                     closed_start=start, 
                                     distance=first_n_samples, 
-                                    filter_for_similarity=True, 
+                                    filter_for_similarity=False, 
                                     print_candidates=True  )
 
 
 
             print(f"\tCandidates: {candidates}  {max(candidates)}")
 
-            # Find the maximum candidate index
-            max_indices.append(ts + max(candidates) + clip_length * 2)
+            for c in candidates:
+                max_indices.append(ts + c + clip_length * 2)
         
-        # Add the maximum of the max indices to the bounds
-        bounds.append(max(max_indices))
+        bounds.append( max_indices )
 
         timestamps_samples[i] -= clip_length
     
     # Now, ensure the integrity of the bounds
-    for i in range(len(bounds) - 2, -1, -1):  # Start from the second last element and go backward
-        # If the current bound doesn't satisfy the integrity condition
-        if bounds[i] >= bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i]):
-            # Update the current bound
-            bounds[i] = bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i])
+    smoothed_bounds = [max(b) for b in bounds]
+    for i in range(len(bounds) - 1, -1, -1):  # Start from the last element and go backward
+        
 
-    alignment_bounds = list(zip(timestamps_samples, bounds))
+        if i < len(bounds) - 1:
+            previous_bound = smoothed_bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i])
+
+            # # If the current bound doesn't satisfy the integrity condition
+            # if bounds[i] >= previous_bound:
+            #     # Update the current bound
+            #     bounds[i] = bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i])
+
+        else: 
+            previous_bound = 99999999999999999999999999999999
+
+        # enforce integrity condition
+        # find the latest match that happens before the next bound 
+        candidates = [ b for b in bounds[i] if b <= previous_bound ]
+        if len(candidates) == 0:
+            new_bound = previous_bound
+            print("Could not find bound with integrity!!!!", timestamps_samples[i] / sr)
+        else:
+            # print(f"New bound for {timestamps[i]} is {max(candidates)}", candidates, bounds[i])
+            new_bound = max( candidates  )
+
+        smoothed_bounds[i] = new_bound
+
+    alignment_bounds = list(zip(timestamps_samples, smoothed_bounds))
     print(f"The alignment bounds:")
     for base_ts, last_reaction_match in alignment_bounds:
         print(f"\t{base_ts / sr}  <=  {last_reaction_match / sr}")
