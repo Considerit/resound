@@ -11,7 +11,8 @@ def correct_peak_index(peak_index, chunk_len):
     return max(0, peak_index - (chunk_len - 1))
 
 seg_start_cache = {}
-seg_start_cache_effectiveness = {"hits": 0, "misses": 0}
+seg_start_cache_effectiveness = {}
+seg_starts = {}
 def initialize_segment_start_cache():
     global seg_start_cache
     global seg_start_cache_effectiveness
@@ -20,6 +21,8 @@ def initialize_segment_start_cache():
     seg_start_cache.clear()
     seg_start_cache_effectiveness["hits"] = 0
     seg_start_cache_effectiveness["misses"] = 0
+
+    seg_starts.clear()
 
 
 def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, print_candidates=False, filter_for_similarity=True):
@@ -31,6 +34,12 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
 
     key = f"{open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
     
+    # key2 = f"{open_start} {open_start / sr} {closed_start} {closed_start / sr}"
+    # if prune_for_continuity:
+    #     if key2 not in seg_starts:
+    #         seg_starts[key2] = 0
+    #     seg_starts[key2] += 1
+
     if key not in seg_start_cache:
 
         # print(key)
@@ -44,7 +53,7 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
         peak_indices, _ = find_peaks(correlation, height=np.max(correlation)*peak_tolerance, distance=distance)
         peak_indices = sorted( peak_indices.tolist() )
 
-        seg_start_cache_effectiveness["misses"] += 1
+        
         # if random.random() < .01:
         #     print(seg_start_cache_effectiveness)
 
@@ -161,11 +170,16 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
 
 
         seg_start_cache[key] = candidates
+        seg_start_cache_effectiveness["misses"] += 1
     else:
         candidates = seg_start_cache[key]
         seg_start_cache_effectiveness["hits"] += 1
 
+    if random.random() < .001:
+        print(seg_start_cache_effectiveness)
 
+        # for k,v in seg_starts.items():
+        #     print(k,v)
 
     return candidates
     

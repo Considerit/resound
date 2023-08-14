@@ -1,2 +1,2 @@
-from cross_expander.find_paths import cross_expander_aligner
+from cross_expander.find_paths import create_aligned_reaction_video
 
