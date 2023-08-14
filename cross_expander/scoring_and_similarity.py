@@ -87,22 +87,10 @@ def mfcc_similarity(sr, audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=
     len2 = mfcc2.shape[1]
 
     if len1 != len2:
-        # if abs(len1 - len2) > 1:
-        #     print("MFCC SHAPES NOT EQUAL", len1, len2)
-        #     # assert(abs(len1 - len2) == 1)
-
         if len2 > len1:
             mfcc2 = mfcc2[:, :len1]
         else:
             mfcc1 = mfcc1[:, :len2]
-
-        # max_len = max(len1, len2)
-        # if len1 < max_len:
-        #     padding = max_len - len1
-        #     mfcc1 = np.pad(mfcc1, pad_width=((0, 0), (0, padding)), mode='constant')
-        # elif len2 < max_len:
-        #     padding = max_len - len2
-        #     mfcc2 = np.pad(mfcc2, pad_width=((0, 0), (0, padding)), mode='constant')
 
     # Compute mean squared error between MFCCs
     mse = np.mean((mfcc1 - mfcc2)**2)
@@ -308,6 +296,10 @@ def path_score(path, basics, relative_to=None):
             current_end += -1 * current_start
             current_start = 0
 
+        segment_weight = (current_end - current_start) / relative_to
+        segment_time_center = (reaction_start + (reaction_end - reaction_start) / 2)
+        temporal_center += segment_weight * segment_time_center
+
         if not is_filler:
             duration += (reaction_end - reaction_start)
             reaction_start = round(reaction_start / hop_length)
@@ -321,9 +313,6 @@ def path_score(path, basics, relative_to=None):
             total_length += current_end - current_start
 
 
-        segment_weight = (reaction_end - reaction_start) / relative_to
-        segment_time_center = (reaction_start + (reaction_end - reaction_start) / 2)
-        temporal_center += segment_weight * segment_time_center
 
     # Derivation for below:
     #   earliness = |R| / temporal_center
@@ -336,22 +325,25 @@ def path_score(path, basics, relative_to=None):
     # normalized_earliness_score = len(base_audio) / (len(reaction_audio) * temporal_center)
     # fill_score = 1 / (1 + abs(duration - len(base_audio)) / sr)
 
-    earliness = len(reaction_audio) / temporal_center
-    earliness = math.log(1 + earliness)
+    # earliness = len(reaction_audio) / temporal_center
+    # earliness = math.log(1 + earliness)
+
+    earliness = len(base_audio) / temporal_center
+
     fill_score = duration / (duration + fill)
 
 
     path_mfcc = create_reaction_mfcc_from_path(path, basics)
-    path_vol_diff = create_reaction_vol_diff_from_path(path, basics)
+    # path_vol_diff = create_reaction_vol_diff_from_path(path, basics)
 
     mfcc_alignment = mfcc_similarity(sr, mfcc1=base_audio_mfcc[:,:total_length], mfcc2=path_mfcc)
-    rel_vol_alignment = relative_volume_similarity(sr, vol_diff1=base_audio_vol_diff[:total_length], vol_diff2=path_vol_diff)
+    # rel_vol_alignment = relative_volume_similarity(sr, vol_diff1=base_audio_vol_diff[:total_length], vol_diff2=path_vol_diff)
 
-    alignment = math.log(1 + 100 * mfcc_alignment) * math.log(1 + rel_vol_alignment)
+    alignment = 100 * mfcc_alignment #* math.log10(1 + rel_vol_alignment)
 
     duration_score = (duration + fill) / relative_to
 
-    total_score = duration_score * duration_score * fill_score * fill_score * earliness * alignment
+    total_score = duration_score * duration_score * fill_score * fill_score * math.log(1 + earliness) * alignment
     if duration == 0:
         total_score = alignment = 0
 
@@ -361,6 +353,16 @@ def path_score(path, basics, relative_to=None):
 
 def find_best_path(candidate_paths, basics):
     sr = basics.get('sr')
+    base_audio_mfcc = basics.get('base_audio_mfcc')
+    base_audio_vol_diff = basics.get('song_percentile_loudness')
+    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+    reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
+    hop_length = basics.get('hop_length')
+    gt = basics.get('ground_truth')
+    if gt: 
+        gt = [ (int(s * sr), int(e * sr)) for (s,e) in gt]
+
+
 
     assert( len(candidate_paths) > 0 )
     
@@ -402,10 +404,51 @@ def find_best_path(candidate_paths, basics):
 
     print("Paths by score:")
     for path,scores in paths_by_score:
-        print(f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]}")
-        for sequence in path:
-            print(f"\t\t{'*' if sequence[4] else ''}base: {float(sequence[2])/sr:.1f}-{float(sequence[3])/sr:.1f}  reaction: {float(sequence[0])/sr:.1f}-{float(sequence[1])/sr:.1f} ")
+        if scores[0] > 0.9:
+            if gt:
+                gtp = f"Ground Truth: {ground_truth_overlap(path, gt)}%"
+            else:
+                gtp = ""
+            print(f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]} {gtp}")
+            for sequence in path:
+                reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+
+                mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
+                mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
+
+                voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
+                voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
+
+                if is_filler: 
+                    mfcc_react_chunk = mfcc_song_chunk
+                    voldiff_react_chunk = voldiff_song_chunk
+
+                mfcc_score = mfcc_similarity(sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
+                rel_volume_alignment = relative_volume_similarity(sr, vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
+                print(f"\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}]")
 
 
     return paths_by_score[0][0]
 
+
+def calculate_overlap(interval1, interval2):
+    """Calculate overlap between two intervals."""
+    return max(0, min(interval1[1], interval2[1]) - max(interval1[0], interval2[0]))
+
+def ground_truth_overlap(path, gt):
+    total_overlap = 0
+
+    for p_interval in path:
+        for gt_interval in gt:
+            total_overlap += calculate_overlap(p_interval, gt_interval)
+
+    # Calculate total duration of both paths
+    path_duration = sum(end - start for start, end, cstart, cend, filler in path)
+    gt_duration = sum(end - start for start, end in gt)
+    
+    # If the sum of both durations is zero, there's no meaningful percentage overlap to return
+    if path_duration + gt_duration == 0:
+        return 0
+
+    # Calculate the percentage overlap
+    return (total_overlap * 2) / (path_duration + gt_duration) * 100  # Percentage overlap
