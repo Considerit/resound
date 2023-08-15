@@ -1,4 +1,3 @@
-from cross_expander.find_segment_start import find_next_segment_start_candidates
 
 
 
@@ -25,7 +24,9 @@ from cross_expander.find_segment_start import find_next_segment_start_candidates
 #   accomplish the integrity checking, walk backwards from the last timestamp.
 
 
-def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = None, peak_tolerance=.45):
+def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
+    from cross_expander.find_segment_start import find_next_segment_start_candidates
+
     # profiler = cProfile.Profile()
     # profiler.enable()
 
@@ -41,10 +42,7 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
     clip_length = int(2 * sr)
     base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
 
-    seconds_per_checkpoint = 24
-
-    if n_timestamps is None:
-        n_timestamps = round(base_length_sec / seconds_per_checkpoint) 
+    n_timestamps = round(base_length_sec / seconds_per_checkpoint) 
     
     timestamps = [i * base_length_sec / (n_timestamps + 1) for i in range(1, n_timestamps + 1)]
 
@@ -57,7 +55,7 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
     # Initialize the list of bounds
     bounds = []
 
-    print(f"Creating alignment bounds at {timestamps}")
+    print(f"Creating alignment bounds with tolerance {peak_tolerance} every {seconds_per_checkpoint} seconds at {timestamps} ")
     
     # For each timestamp
     for i,ts in enumerate(timestamps_samples):
@@ -132,7 +130,9 @@ def create_reaction_alignment_bounds(basics, first_n_samples, n_timestamps = Non
         candidates = [ b for b in bounds[i] if b <= previous_bound ]
         if len(candidates) == 0:
             new_bound = previous_bound
-            print("Could not find bound with integrity!!!!", timestamps_samples[i] / sr)
+            print ("**********")
+            print("Could not find bound with integrity!!!! Trying again with higher tolerance and shifted checkpoints.", timestamps_samples[i] / sr)
+            return create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkpoint=seconds_per_checkpoint+10, peak_tolerance=peak_tolerance * .9)
         else:
             # print(f"New bound for {timestamps[i]} is {max(candidates)}", candidates, bounds[i])
             new_bound = max( candidates  )
