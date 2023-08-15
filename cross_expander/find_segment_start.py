@@ -3,7 +3,7 @@ import numpy as np
 
 from scipy.signal import correlate, find_peaks
 from cross_expander.scoring_and_similarity import mfcc_similarity, relative_volume_similarity
-
+from cross_expander.pruning_search import check_for_prune_at_segment_start
 
 
 def correct_peak_index(peak_index, chunk_len):
@@ -12,7 +12,7 @@ def correct_peak_index(peak_index, chunk_len):
 
 seg_start_cache = {}
 seg_start_cache_effectiveness = {}
-seg_starts = {}
+paths_at_segment_start = {}
 def initialize_segment_start_cache():
     global seg_start_cache
     global seg_start_cache_effectiveness
@@ -22,23 +22,27 @@ def initialize_segment_start_cache():
     seg_start_cache_effectiveness["hits"] = 0
     seg_start_cache_effectiveness["misses"] = 0
 
-    seg_starts.clear()
+    paths_at_segment_start.clear()
 
 
-def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, print_candidates=False, filter_for_similarity=True):
+def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, print_candidates=False, filter_for_similarity=True, current_path=None):
     global seg_start_cache
     global seg_start_cache_effectiveness
+    global paths_at_segment_start
 
     sr = basics.get('sr')
     hop_length = basics.get('hop_length')
 
     key = f"{open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
     
-    # key2 = f"{open_start} {open_start / sr} {closed_start} {closed_start / sr}"
-    # if prune_for_continuity:
-    #     if key2 not in seg_starts:
-    #         seg_starts[key2] = 0
-    #     seg_starts[key2] += 1
+    if current_path is not None:
+        if key not in paths_at_segment_start:
+            paths_at_segment_start[key] = [[list(current_path), None]]
+        else: 
+            if check_for_prune_at_segment_start(basics, paths_at_segment_start[key], current_path, closed_start):
+                seg_start_cache_effectiveness["hits"] += 1        
+                return -1
+
 
     if key not in seg_start_cache:
 
@@ -177,9 +181,6 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
 
     if random.random() < .001:
         print(seg_start_cache_effectiveness)
-
-        # for k,v in seg_starts.items():
-        #     print(k,v)
 
     return candidates
     

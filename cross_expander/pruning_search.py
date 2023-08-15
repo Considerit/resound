@@ -1,5 +1,4 @@
 import random, copy
-from typing import List, Tuple
 
 from cross_expander.scoring_and_similarity import calculate_partial_score, path_score
 from cross_expander.bounds import in_bounds, get_bound
@@ -17,6 +16,7 @@ def initialize_path_pruning():
                 "exact",
                 "bounds",
                 "scope_cached",
+                "seg_start_cached",
                 "combinatorial",
                 "continuity",
                 'duplicate_path_prune'
@@ -39,6 +39,7 @@ def initialize_path_pruning():
 def should_prune_path(basics, options, current_path, current_path_checkpoint_scores, best_finished_path, current_start, reaction_start, path_counts):
     global paths_by_checkpoint
     global paths_from_current_start
+    global prune_types
 
     checkpoints = basics.get('checkpoints')
     reaction_audio = basics.get('reaction_audio')
@@ -132,6 +133,29 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
 
     return False
 
+def check_for_prune_at_segment_start(basics, paths_at_segment_start, current_path, current_start):
+    global prune_types
+
+    score = path_score(current_path, basics, relative_to = current_start)
+    confidence = 1
+
+    for i, (path, prior_score) in enumerate(paths_at_segment_start):
+        if prior_score is None: 
+            prior_score = path_score(path, basics, relative_to = current_start)
+            paths_at_segment_start[i][1] = prior_score
+
+        if confidence * prior_score[0] >= score[0]: # or (prior_score[1] >= score[1] and prior_score[2] > score[2] and prior_score[3] > score[3]):
+            prune_types['seg_start_cached'] += 1
+            # print("pruning!")
+            return True
+
+    if paths_at_segment_start[0][1][0] < score[0]:
+        # print(f"replacing! {paths_at_segment_start[0][1][0]} with {score[0]} at {current_start}")
+        paths_at_segment_start[0] = [list(current_path), score]
+        assert(paths_at_segment_start[0][1][0] == score[0])
+
+    return False
+    
 
 def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_scores, best_finished_path, current_start, basics):
     base_audio = basics.get('base_audio')
