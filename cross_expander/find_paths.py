@@ -34,6 +34,7 @@
 import os
 import librosa
 import copy
+import pickle
 import matplotlib.pyplot as plt
 from decimal import Decimal, getcontext
 
@@ -211,11 +212,17 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
                                 prune_types=prune_types,
                                 upper_bound=upper_bound, 
                                 filter_for_similarity=depth > 0, 
-                                print_candidates=depth==0  )
+                                print_candidates=depth==0,
+                                current_path=current_path  )
 
         # if depth == 0:
         #     candidate_starts = [candidate_starts[0], candidate_starts[1]]
         #     # candidate_starts = [0]
+
+        #########
+        # segment start pruned
+        if candidate_starts == -1:
+            return [None]
 
         #########
         # Could not find match in remainder of reaction video
@@ -372,31 +379,54 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
     options.setdefault("expansion_tolerance", .7)
 
 
+
     # Extract the reaction audio
     reaction_audio_data, reaction_sample_rate, reaction_audio_path = extract_audio(react_video)
 
+    alignment_metadata_file = os.path.splitext(output_file)[0] + '.pckl'
+    if not os.path.exists(alignment_metadata_file):
 
-    # Determine the number of decimal places to try avoiding frame boundary errors given python rounding issues
-    fr = Decimal(universal_frame_rate())
-    precision = Decimal(1) / fr
-    precision_str = str(precision)
-    getcontext().prec = len(precision_str.split('.')[-1])
-
-
-    print(f"\n*******{options}")
-    final_sequences = cross_expander_aligner(base_audio_data, reaction_audio_data, sr=reaction_sample_rate, options=options, ground_truth=gt)
-    
-
-    print("\nsequences:")
-
-    for sequence in final_sequences:
-        print(f"\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])}")
+        # Determine the number of decimal places to try avoiding frame boundary errors given python rounding issues
+        fr = Decimal(universal_frame_rate())
+        precision = Decimal(1) / fr
+        precision_str = str(precision)
+        getcontext().prec = len(precision_str.split('.')[-1])
 
 
-    if options["output_alignment_video"]:
+        print(f"\n*******{options}")
+        final_sequences = cross_expander_aligner(base_audio_data, reaction_audio_data, sr=reaction_sample_rate, options=options, ground_truth=gt)
+        
+
+        print("\nsequences:")
+
+        for sequence in final_sequences:
+            print(f"\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])}")
+
+        if options['output_alignment_metadata']:
+            output_alignment_metadata(alignment_metadata_file, final_sequences)
+    else: 
+        final_sequences = read_alignment_metadata(alignment_metadata_file)
+
+    if not os.path.exists(output_file) and options["output_alignment_video"]:
         # Trim and align the reaction video
         trim_and_concat_video(react_video, final_sequences, base_video, output_file, react_video_ext, extend_by = extend_by)
     return output_file
+
+
+def output_alignment_metadata(output_file, final_sequences):
+    temp_dir, _ = os.path.splitext(output_file)
+
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    with open(output_file, 'wb') as f:
+        pickle.dump(final_sequences, f)
+
+def read_alignment_metadata(input_file):
+    with open(input_file, 'rb') as f:
+        data = pickle.load(f)
+    return data
+
 
 def compress_segments(match_segments, sr):
     compressed_subsequences = []

@@ -28,8 +28,7 @@ def handle_reaction_video(song:dict, output_dir: str, react_video, base_video, b
     # Create the output video file name
 
 
-    if not os.path.exists(output_file):
-        create_aligned_reaction_video(song, react_video_ext, output_file, react_video, base_video, base_audio_data, base_audio_path, options, extend_by=extend_by)
+    create_aligned_reaction_video(song, react_video_ext, output_file, react_video, base_video, base_audio_data, base_audio_path, options, extend_by=extend_by)
 
     if not options["isolate_commentary"]:
         return []
@@ -52,7 +51,8 @@ from moviepy.editor import VideoFileClip
 
 def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', include_base_video = True, options = {}):
 
-    options.setdefault("output_alignment_video", True)
+    options.setdefault("output_alignment_metadata", True)
+    options.setdefault("output_alignment_video", False)
     options.setdefault("isolate_commentary", False)
     options.setdefault("create_reactor_view", False)
     options.setdefault("create_compilation", False)
