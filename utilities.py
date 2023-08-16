@@ -12,18 +12,31 @@ from decimal import Decimal, getcontext
 
 
 
-def create_reaction_audio_from_path(reaction_audio, base_audio, segments):
-    segmented_audio_data = []
+# def create_reaction_audio_from_path(reaction_audio, base_audio, segments):
+#     # Calculate the total length required for the new audio data
 
-    for reaction_start, reaction_end, current_start, current_end, is_filler in segments:
-        if is_filler:
-            segment = base_audio[current_start:current_end]
-        else: 
-            segment = reaction_audio[reaction_start:reaction_end]
-        segmented_audio_data.append(segment)
+#     total_length = 0
+#     for reaction_start, reaction_end, current_start, current_end, is_filler in segments:
+#         if not is_filler:
+#             total_length += reaction_end - reaction_start
+#         else:
+#             total_length += current_end - current_start
+    
+#     # Preallocate the array
+#     segmented_audio_data = np.empty(total_length, dtype=base_audio.dtype)  # Assuming both audios are of the same dtype
+#     insert_at = 0
 
-    segmented_audio_data = np.concatenate(segmented_audio_data)
-    return segmented_audio_data
+#     for reaction_start, reaction_end, current_start, current_end, is_filler in segments:
+#         if is_filler:
+#             segment_len = current_end - current_start
+#             segmented_audio_data[insert_at:insert_at+segment_len] = base_audio[current_start:current_end]
+#         else: 
+#             segment_len = reaction_end - reaction_start
+#             segmented_audio_data[insert_at:insert_at+segment_len] = reaction_audio[reaction_start:reaction_end]
+        
+#         insert_at += segment_len
+
+#     return segmented_audio_data
 
 
 
@@ -33,7 +46,6 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     temp_dir, _ = os.path.splitext(output_file)
 
     if not os.path.exists(temp_dir):
-       # Create a new directory because it does not exist
        os.makedirs(temp_dir)
 
 
