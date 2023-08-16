@@ -44,7 +44,7 @@ def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=512):
     return rms_interp
 
 
-def calculate_loudness(audio, window_size=1000):
+def calculate_loudness(audio, window_size=100):
     loudness = calculate_perceptual_loudness(audio)
 
     # Define a Gaussian window
@@ -59,9 +59,9 @@ def calculate_loudness(audio, window_size=1000):
 
 
 
-def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None):
+def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None, hop_length=1):
     if std_dev is None:
-        std_dev = window_size / 4
+        std_dev = window_size / 3
 
     # Find the maximum loudness value
     max_loudness = np.max(loudness)
@@ -69,7 +69,6 @@ def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None):
     # Calculate the percentage of the max for each loudness value
     percent_of_max_loudness = (loudness / max_loudness) * 100
     
-
     # Define a Gaussian window
     window = signal.windows.gaussian(window_size, std=std_dev)
     
@@ -78,8 +77,21 @@ def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None):
     
     percent_of_max_loudness = np.convolve(percent_of_max_loudness, window, mode='same')  # Convolve audio with window
 
+    if hop_length > 1:
+        # Sub-sample the percent_of_max_loudness array using the hop_length
+        percent_of_max_loudness = percent_of_max_loudness[::hop_length]
 
     return percent_of_max_loudness
+
+
+def audio_percentile_loudness(audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=1 ):
+
+    loudness = calculate_loudness(audio, window_size=loudness_window_size)
+
+    percentile_loudness = calculate_percentile_loudness(loudness, window_size=percentile_window_size, std_dev=std_dev_percentile, hop_length=hop_length)
+
+    return percentile_loudness
+
 
 
 def construct_mask(diff, threshold):
@@ -107,28 +119,15 @@ def construct_mask(diff, threshold):
     return dilated_mask
 
 def create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, threshold, silence_threshold=.001, plot=False, window=1000, std_dev=None):
-    if std_dev is None:
-        std_dev = window / 3
 
-    # Calculate the loudness of each audio
-    print('song loudness')
-    song_loudness = calculate_loudness(song, window_size=100)
-    print('reaction loudness')
-
-    reaction_loudness = calculate_loudness(reaction, window_size=100)
-
-    # Calculate the percentile loudness of each audio
     print('song percentile loudness')
-
-    song_percentile_loudness = calculate_percentile_loudness(song_loudness, window_size=window, std_dev=std_dev)
-
+    song_percentile_loudness = audio_percentile_loudness(song, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
     print('reaction percentile loudness')
-
-    reaction_percentile_loudness = calculate_percentile_loudness(reaction_loudness, window_size=window, std_dev=std_dev)
+    reaction_percentile_loudness = audio_percentile_loudness(reaction, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
 
     # Calculate the absolute difference between the percentile loudnesses
     diff = reaction_percentile_loudness - song_percentile_loudness
-    print("diff shape: ", diff.shape)
+    # print("diff shape: ", diff.shape)
 
     avg_diff = np.average(diff)
 
@@ -636,30 +635,28 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
 def process_reactor_audio(reaction_audio, base_audio, sr, extended_by=0):
 
-    if extended_by > 0:
-        full_reaction_audio, _ = librosa.load(reaction_audio, sr=sr)
-        extended_audio = full_reaction_audio[-sr * extended_by:]  # Last extended_by seconds of audio
-        truncated_reaction_audio = full_reaction_audio[:-sr * extended_by]  # Except for last extended_by seconds
-
-        reaction_audio_name, ext = os.path.splitext(reaction_audio)
-        reaction_audio = f"{reaction_audio_name}-truncated{ext}"
-
-        sf.write(reaction_audio, truncated_reaction_audio.T, sr)  # Write truncated_reaction_audio to a new file
 
     reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio, post_process=True)
     output_path = os.path.splitext(reaction_vocals_path)[0] + "_isolated_commentary.wav"
-    
+
     if not os.path.exists(output_path):
-        print(f"Separating commentary from {reaction_audio}")
+
+        if extended_by > 0:
+            reaction_audio_name, ext = os.path.splitext(reaction_audio)
+            new_reaction_audio = f"{reaction_audio_name}-truncated{ext}"
+            full_reaction_audio, _ = librosa.load(reaction_audio, sr=sr)
+            extended_audio = full_reaction_audio[-sr * extended_by:]  # Last extended_by seconds of audio
+            truncated_reaction_audio = full_reaction_audio[:-sr * extended_by]  # Except for last extended_by seconds
+            sf.write(new_reaction_audio, truncated_reaction_audio.T, sr)  # Write truncated_reaction_audio to a new file
+            reaction_audio = new_reaction_audio
+
+        print(f"Separating commentary from {reaction_audio} to {output_path}")
         mute_by_deviation(song_vocals_path, reaction_vocals_path, output_path, reaction_audio)
 
-    if extended_by > 0:
-        output_audio, _ = librosa.load(output_path, sr=sr)
-        new_output_audio = np.concatenate((output_audio, extended_audio))  # Append truncated_reaction_audio to the end
-        
-        output_path_name, ext = os.path.splitext(output_path)
-        output_path = f"{output_path_name}-truncated{ext}"
-        sf.write(output_path, new_output_audio.T, sr)  # Write new_output_audio to a new file
+        if extended_by > 0:
+            output_audio, _ = librosa.load(output_path, sr=sr)
+            new_output_audio = np.concatenate((output_audio, extended_audio))  # Append truncated_reaction_audio to the end
+            sf.write(output_path, new_output_audio.T, sr)  # Write new_output_audio to a new file
 
     return output_path
 
