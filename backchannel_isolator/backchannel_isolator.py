@@ -8,7 +8,6 @@ import librosa
 import soundfile as sf
 
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error
 from scipy import signal
 
 
@@ -671,11 +670,6 @@ def process_reactor_audio(reaction_audio, base_audio, sr, extended_by=0):
 ####################################
 # Track separation and high pass filtering
 
-
-from scipy.spatial import distance
-from scipy.signal import correlate
-import librosa
-from scipy.signal import fftconvolve
 
 spleeter_separator = None
 def get_spleeter(): 
