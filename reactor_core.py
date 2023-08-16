@@ -51,11 +51,6 @@ from moviepy.editor import VideoFileClip
 
 def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', include_base_video = True, options = {}):
 
-    options.setdefault("output_alignment_metadata", True)
-    options.setdefault("output_alignment_video", False)
-    options.setdefault("isolate_commentary", False)
-    options.setdefault("create_reactor_view", False)
-    options.setdefault("create_compilation", False)
 
 
     song = song_def['title']
@@ -182,7 +177,7 @@ if __name__ == '__main__':
 
     # download_and_parse_reactions("Ren - Suicide")
 
-    songs = [hunger, genesis, suicide, fire]
+    songs = [hunger, genesis, fire, suicide]
 
 
 
@@ -197,9 +192,20 @@ if __name__ == '__main__':
     output_dir = "cheetah"
     # output_dir = "processed"
 
+
+    options = {
+        "output_alignment_metadata": True,
+        "output_alignment_video": True,
+        "isolate_commentary": True,
+        "create_reactor_view": True,
+        "create_compilation": True
+    }
+
+
+
     failures = []
     for song in songs: 
-        failed = create_reaction_compilations(song, output_dir = output_dir, options={'segment_end_backoff': 0})
+        failed = create_reaction_compilations(song, output_dir = output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
 

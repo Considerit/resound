@@ -54,7 +54,7 @@ from cross_expander.find_segment_end import scope_segment, initialize_segment_en
 from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score
 from cross_expander.bounds import create_reaction_alignment_bounds, get_bound
 
-from backchannel_isolator import audio_percentile_loudness
+from utilities.audio_processing import audio_percentile_loudness
 
 
 ####################
@@ -374,7 +374,6 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
     options.setdefault("step_size", 1)
     options.setdefault("min_segment_length_in_seconds", 3)
     options.setdefault("reverse_search_bound", options['min_segment_length_in_seconds'])
-    options.setdefault("segment_end_backoff", 20000)
     options.setdefault("peak_tolerance", .5)
     options.setdefault("expansion_tolerance", .7)
 

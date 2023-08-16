@@ -2,7 +2,7 @@ import numpy as np
 import librosa
 import math
 
-from backchannel_isolator import audio_percentile_loudness
+from utilities.audio_processing import audio_percentile_loudness
 
 
 def get_chunk_score(basics, reaction_start, reaction_end, current_start, current_end):

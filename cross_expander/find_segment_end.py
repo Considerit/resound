@@ -7,7 +7,6 @@ from utilities import samples_per_frame, universal_frame_rate, is_close
 
 def find_correlation_end(current_start, reaction_start, basics, options, step, scores = [], reaction_end=None, end_at=None, max_score=0, cache={}):
     expansion_tolerance = options.get('expansion_tolerance')
-    backoff = options.get('segment_end_backoff')
 
     base_audio = basics.get('base_audio')
     base_audio_mfcc = basics.get('base_audio_mfcc')
@@ -143,17 +142,6 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, s
     else: 
         reaction_end = break_point
         current_end = current_start + reaction_end - reaction_start
-
-        if backoff > 0:
-
-            if reaction_end - reaction_start >= 2 * backoff:
-                reaction_end -= backoff
-                current_end -= backoff
-            else: 
-                decrement = int((reaction_end - reaction_start) / 2)
-                if reaction_end - reaction_start >= 2 * decrement:
-                    reaction_end -= decrement
-                    current_end -= decrement
 
         # seek to a frame boundary
         while (current_end - current_start) % samples_per_frame() > 0 and reaction_end < len(reaction_audio) and current_end < len(base_audio):

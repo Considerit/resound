@@ -311,7 +311,6 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False)
     width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    print(f'\nDetecting faces for {react_path}')
 
 
     for current_react in frames_to_read: 
@@ -372,6 +371,7 @@ def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=
 
     # Open the video file
     video = cv2.VideoCapture(react_path)
+    print(f'\nDetecting faces for {react_path}')
 
     if frames_to_read is None:
       frames_to_read = []
@@ -382,6 +382,7 @@ def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=
         frames_to_read.append(ts)
         ts += frames_per_capture
       frames_to_read.append(total_frames - 1)
+
 
     face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition)
 

@@ -179,7 +179,7 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
         candidates = seg_start_cache[key]
         seg_start_cache_effectiveness["hits"] += 1
 
-    if random.random() < .001:
+    if seg_start_cache_effectiveness["hits"] + seg_start_cache_effectiveness["misses"] % 1000 == 500:
         print(seg_start_cache_effectiveness)
 
     return candidates
