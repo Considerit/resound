@@ -104,7 +104,7 @@ def create_reactor_view(react_path, base_path, replacement_audio=None, show_faci
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0:
-      reactors = detect_faces(react_path, base_path, show_facial_recognition = show_facial_recognition)
+      reactors = detect_faces(react_path, base_path, show_facial_recognition=show_facial_recognition)
       for i, reactor in enumerate(reactors): 
           (x,y,w,h,orientation) = reactor[0]
           reactor_captures = reactor[1]
@@ -129,7 +129,7 @@ def replace_audio(video, audio_path, num_reactors):
     return video
 
 
-# TODO: There is a new argument to the below crop_video function, centroids, is an array of 
+#       There is a new argument to the below crop_video function, centroids, is an array of 
 #       (x,y) values. Each entry in the array is a frame of the video at video_file. 
 #       The below function currently crops the whole video at fixed centroid given
 #       by function parameters x and y. The function needs to be modified such that
@@ -266,27 +266,59 @@ def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, c
 
 detector = None
 
-def detect_faces(react_path, base_path, frames_per_capture=60, show_facial_recognition=False):
+def get_faces_from(img):
+  global detector
+  if detector is None: 
+    from mtcnn import MTCNN
+    detector = MTCNN()
 
-    # Open the video file
-    react_capture = cv2.VideoCapture(react_path)
+  faces = detector.detect_faces(img)
+
+  ret = [ (face['box'], face['keypoints']['nose']) for face in faces ]
+  return ret
+
+def detect_faces_in_frame(react_frame):
+
+    # Convert the frame to grayscale for face detection
+    react_gray = cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB)
+
+    # Perform face detection
+    faces = get_faces_from(react_gray)
+
+    # print("FACES:", faces)
+    # Draw rectangles around the detected faces
+    faces_this_frame = []
+    for ((x, y, w, h), nose) in faces:
+        # print( (x,y,w,h), nose)
+        if w > .05 * width:
+          if show_facial_recognition:
+            cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+          faces_this_frame.append([x, y, w, h, nose])
+
+    # compute histogram of grays for later fine-grained matching
+    for face in faces_this_frame:
+      hist = get_face_histogram(react_gray, face)
+      face.append(hist)
+
+    return faces_this_frame
+
+
+def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False):
 
     # Iterate over each frame in the video
     face_matches = []
 
-    width = int(react_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(react_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     print(f'\nDetecting faces for {react_path}')
 
-    total_frames = react_capture.get(cv2.CAP_PROP_FRAME_COUNT)
 
-    current_react = 0
-    while current_react < total_frames - 1:
+    for current_react in frames_to_read: 
 
         try: 
-          current_react = react_capture.get(cv2.CAP_PROP_POS_FRAMES)
-          ret, react_frame = react_capture.read()
+          video.set(cv2.CAP_PROP_POS_FRAMES, current_react)
+          ret, react_frame = video.read()
 
           if not ret:
             raise 
@@ -296,30 +328,8 @@ def detect_faces(react_path, base_path, frames_per_capture=60, show_facial_recog
           print('exception', e)
           break
 
-        # Convert the frame to grayscale for face detection
-        react_gray = cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB)
-
-        # Perform face detection
-        faces = get_faces_from(react_gray)
-
-        # print("FACES:", faces)
-        # Draw rectangles around the detected faces
-        faces_this_frame = []
-        for ((x, y, w, h), nose) in faces:
-            # print( (x,y,w,h), nose)
-            if w > .05 * width:
-              if show_facial_recognition:
-                cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-              faces_this_frame.append([x, y, w, h, nose])
-
-        # compute histogram of grays for later fine-grained matching
-        for face in faces_this_frame:
-          hist = get_face_histogram(react_gray, face)
-          face.append(hist)
-
-
-
-        face_matches.append( (current_react, faces_this_frame))
+        frame_faces = detect_faces_in_frame(react_frame)
+        face_matches.append( (current_react, frame_faces) )
         # print("matches:", face_matches)
 
         if show_facial_recognition and len(face_matches[-1][1]) > 0:
@@ -350,16 +360,30 @@ def detect_faces(react_path, base_path, frames_per_capture=60, show_facial_recog
           if cv2.waitKey(1) & 0xFF == ord('q'):
               break
 
-        current_react += frames_per_capture
-        if current_react >= total_frames:
-          current_react = total_frames - 1
-        react_capture.set(cv2.CAP_PROP_POS_FRAMES, current_react)
+
 
     # cv2.waitKey(0)
 
-    react_capture.release()
-    cv2.destroyAllWindows()
 
+    return face_matches
+
+
+def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=180, show_facial_recognition=False):
+
+    # Open the video file
+    video = cv2.VideoCapture(react_path)
+
+    if frames_to_read is None:
+      frames_to_read = []
+
+      total_frames = video.get(cv2.CAP_PROP_FRAME_COUNT)
+      ts = 0
+      while ts < total_frames - 1:
+        frames_to_read.append(ts)
+        ts += frames_per_capture
+      frames_to_read.append(total_frames - 1)
+
+    face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition)
 
     # print('facematches:', [(frame, x,y,w,h) for frame, (x,y,w,nose,hist) in face_matches])
 
@@ -389,18 +413,12 @@ def detect_faces(react_path, base_path, frames_per_capture=60, show_facial_recog
 
       reactor.append(centroids)
 
+
+    video.release()
+    cv2.destroyAllWindows()
+
     return reactors
 
-def get_faces_from(img):
-  global detector
-  if detector is None: 
-    from mtcnn import MTCNN
-    detector = MTCNN()
-
-  faces = detector.detect_faces(img)
-
-  ret = [ (face['box'], face['keypoints']['nose']) for face in faces ]
-  return ret
 
 def expand_face(group, width, height, expansion=.9, sidedness=.7):
   (faces, score, (x,y,w,h), center, avg_size) = group
@@ -513,7 +531,7 @@ def find_top_candidates(matches, wwidth, hheight):
     max_score = sorted_groups[0][1]
     accepted_groups = [grp for grp in sorted_groups if grp[1] >= .5 * max_score]
 
-    print(sorted_groups)
+    # print(sorted_groups)
     # Return the sorted groups
     return (accepted_groups, heat_map_color)
 
@@ -581,7 +599,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
 
   assert(len(coarse_matches) > 0)
 
-  print(f"coarse_samples {len(coarse_matches)}", coarse_matches)
+  # print(f"coarse_samples {len(coarse_matches)}", coarse_matches)
 
   if len(coarse_matches) > 3:
     coarse_samples = [0, int(len(coarse_matches)/2), len(coarse_matches) - 1 ]
@@ -629,26 +647,24 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
   return centroids
 
 def get_face_img(image, bbox):
-    # Get the face image from the bounding box
-    x, y, w, h, nose = bbox
-    face_img = image[y:y+h, x:x+w]
-    return face_img
+  # Get the face image from the bounding box
+  x, y, w, h, nose = bbox
+  face_img = image[y:y+h, x:x+w]
+  return face_img
 
 def preprocess_face(face): #assuming already gray
-    # Convert image to grayscale, equalize histogram and resize
-    face_gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
-    face_equalized = cv2.equalizeHist(face_gray)
-    face_resized = cv2.resize(face_equalized, (128, 128))  # Standard size
-    return face_resized
+  # Convert image to grayscale, equalize histogram and resize
+  face_gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+  face_equalized = cv2.equalizeHist(face_gray)
+  face_resized = cv2.resize(face_equalized, (128, 128))  # Standard size
+  return face_resized
 
 def compute_histogram(face):
-    # Compute histogram of pixel intensities
-    hist = cv2.calcHist([face],[0],None,[256],[0,256])
-    cv2.normalize(hist, hist)
-    hist = hist.astype(np.float32)  # Ensure the histogram is float32
-    return hist
-
-
+  # Compute histogram of pixel intensities
+  hist = cv2.calcHist([face],[0],None,[256],[0,256])
+  cv2.normalize(hist, hist)
+  hist = hist.astype(np.float32)  # Ensure the histogram is float32
+  return hist
 
 def get_face_histogram(image, face):
   (x,y,w,h,nose) = face
@@ -658,11 +674,11 @@ def get_face_histogram(image, face):
   return hist
 
 def compare_faces(hist1, hist2):
-    # Compare two faces using histogram correlation
-    # hist1 = hist1.astype('float32')
-    # hist2 = hist2.astype('float32')    
-    correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-    return correlation
+  # Compare two faces using histogram correlation
+  # hist1 = hist1.astype('float32')
+  # hist2 = hist2.astype('float32')    
+  correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+  return correlation
 
 
 
@@ -731,10 +747,10 @@ def smooth_and_interpolate_centroids(sampled_centroids):
     if nans_y.size > 0:
         y[nans_y] = np.interp(frames[nans_y], frames[~np.isnan(y)], y[~np.isnan(y)])
 
-    # Smooth out the sampled centroids with convolution
-    kernel = np.array([1/18, 1/9, 2/9, 2/9, 2/9, 1/9, 1/18])
-    x = convolve1d(x, kernel, mode='nearest')
-    y = convolve1d(y, kernel, mode='nearest')
+    # # Smooth out the sampled centroids with convolution
+    # kernel = np.array([1/18, 1/9, 2/9, 2/9, 2/9, 1/9, 1/18])
+    # x = convolve1d(x, kernel, mode='nearest')
+    # y = convolve1d(y, kernel, mode='nearest')
 
     # Interpolate to get a centroid for each frame
     interp_func_x = interpolate.interp1d(frames, x, kind='linear', fill_value="extrapolate")
