@@ -14,3 +14,4 @@ pygetwindow
 traceback
 noisereduce
 spleeter
+objgraph

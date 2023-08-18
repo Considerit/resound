@@ -256,7 +256,7 @@ def prune_paths_at_checkpoint(checkpoint, paths_by_checkpoint):
         paths[:] = [path for i,path in enumerate(paths) if i == 0 or path[1] > paths[i-1][1]]
         new_path_length = len(paths)
 
-    # print(f"\t{ts}: from {original_path_length} to {new_path_length}")
+    # print(f"\t{checkpoint}: from {original_path_length} to {new_path_length}")
 
 def prune_paths_at_checkpoints():
     global paths_by_checkpoint
