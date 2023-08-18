@@ -31,6 +31,28 @@ def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None, hop_
     if std_dev is None:
         std_dev = window_size / 3
 
+    # Find the maximum loudness value and compute the percent_of_max_loudness directly
+    factor = 100.0 / np.max(loudness)
+    percent_of_max_loudness = loudness * factor
+    
+    # Define a Gaussian window and normalize it
+    window = signal.windows.gaussian(window_size, std=std_dev)
+    window /= window.sum()
+
+    # Convolve audio with window using fftconvolve
+    percent_of_max_loudness = signal.fftconvolve(percent_of_max_loudness, window, mode='same')
+
+    if hop_length > 1:
+        # Sub-sample the percent_of_max_loudness array using the hop_length
+        percent_of_max_loudness = percent_of_max_loudness[::hop_length]
+
+    return percent_of_max_loudness
+
+
+def calculate_percentile_loudness2(loudness, window_size=1000, std_dev=None, hop_length=1):
+    if std_dev is None:
+        std_dev = window_size / 3
+
     # Find the maximum loudness value
     max_loudness = np.max(loudness)
     

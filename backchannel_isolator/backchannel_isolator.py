@@ -32,6 +32,15 @@ from utilities.audio_processing import audio_percentile_loudness
 # of the song. Can you augment your code with a best-effort attempt to normalize some of these 
 # differences between the song and reaction audio?
 
+import cProfile
+import pstats
+
+
+profile_isolator = False
+if profile_isolator:
+    profiler = cProfile.Profile()
+
+
 
 def construct_mask(diff, threshold):
     # Create a mask where the absolute difference is greater than the threshold
@@ -182,6 +191,9 @@ def process_mask(mask, min_segment_length, sr):
     return segments
 
 def merge_segments(segments, min_segment_length, max_gap_length, sr):
+    if len(segments) == 0:
+        return []
+
     # Number of frames corresponding to the minimum segment length
     min_segment_frames = int(min_segment_length * sr / 512)  # 512 is the default hop length in librosa's mfcc function
 
@@ -241,6 +253,12 @@ def apply_segments(audio, segments):
 
 
 def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
+
+    if profile_isolator:
+        global profiler
+        profiler.enable()
+
+
     min_segment_length = 0.01
     max_gap_frames = 0.5
     percentile_thresh = 90
@@ -488,6 +506,12 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     # # Now you can save suppressed_reaction into a file
     # output_path = os.path.splitext(reaction_path)[0] + "_commentary.wav"
     # sf.write(output_path, suppressed_reaction.T, original_sr_reaction)  # Transpose the output because soundfile expects shape (n_samples, n_channels)
+
+    if profile_isolator:
+        profiler.disable()
+        stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+        stats.print_stats()
+        profiler.enable()
 
     return output_path
 
