@@ -216,15 +216,11 @@ def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, c
         cropped_frame = frame[y:y+h, x:x+w]
 
         if w > 450: 
-            w = h = 450
-            cropped_frame = cv2.resize(cropped_frame, (w, h))
+            cropped_frame = cv2.resize(cropped_frame, (450, 450))
 
         return cropped_frame
 
     cropped_video = VideoClip(make_frame, duration=video.duration)
-    if cropped_video.w > 450: 
-      w = h = 450
-      cropped_video = cropped_video.resize(width=w, height=h)
 
     if replacement_audio:
         cropped_video = replace_audio(cropped_video, replacement_audio, num_reactors)
@@ -277,8 +273,7 @@ def get_faces_from(img):
   ret = [ (face['box'], face['keypoints']['nose']) for face in faces ]
   return ret
 
-def detect_faces_in_frame(react_frame):
-
+def detect_faces_in_frame(react_frame, show_facial_recognition, width):
     # Convert the frame to grayscale for face detection
     react_gray = cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB)
 
@@ -327,7 +322,7 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False)
           print('exception', e)
           break
 
-        frame_faces = detect_faces_in_frame(react_frame)
+        frame_faces = detect_faces_in_frame(react_frame, show_facial_recognition, width)
         face_matches.append( (current_react, frame_faces) )
         # print("matches:", face_matches)
 
@@ -367,11 +362,14 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False)
     return face_matches
 
 
-def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=180, show_facial_recognition=False):
+def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=30, show_facial_recognition=False):
 
     # Open the video file
     video = cv2.VideoCapture(react_path)
     print(f'\nDetecting faces for {react_path}')
+
+    width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     if frames_to_read is None:
       frames_to_read = []
@@ -421,7 +419,7 @@ def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=
     return reactors
 
 
-def expand_face(group, width, height, expansion=.9, sidedness=.7):
+def expand_face(group, width, height, expansion=.7, sidedness=.7):
   (faces, score, (x,y,w,h), center, avg_size) = group
 
   if (center[0] > x + .65 * w): # facing right
@@ -454,7 +452,7 @@ def expand_face(group, width, height, expansion=.9, sidedness=.7):
       y = 0
 
 
-
+  print("Expanded face from ", group[2], " to ", (x,y,w,h))
   return (x,y,w,h,orientation)
 
 def find_top_candidates(matches, wwidth, hheight):
@@ -748,7 +746,7 @@ def smooth_and_interpolate_centroids(sampled_centroids):
     if nans_y.size > 0:
         y[nans_y] = np.interp(frames[nans_y], frames[~np.isnan(y)], y[~np.isnan(y)])
 
-    # # Smooth out the sampled centroids with convolution
+    # # # Smooth out the sampled centroids with convolution
     # kernel = np.array([1/18, 1/9, 2/9, 2/9, 2/9, 1/9, 1/18])
     # x = convolve1d(x, kernel, mode='nearest')
     # y = convolve1d(y, kernel, mode='nearest')
