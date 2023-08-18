@@ -32,6 +32,7 @@
 
 
 import os
+import gc
 import librosa
 import copy
 import pickle
@@ -45,7 +46,7 @@ import traceback
 import cProfile
 import pstats
 
-from utilities import trim_and_concat_video, extract_audio, compute_precision_recall, universal_frame_rate, download_and_parse_reactions, is_close
+from utilities import trim_and_concat_video, extract_audio, compute_precision_recall, universal_frame_rate, download_and_parse_reactions, is_close, print_memory_consumption
 
 from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data
 
@@ -289,6 +290,12 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
                 stats.print_stats()
                 profiler.enable()
 
+                # print_memory_consumption()
+
+            if path_counts[-1]['completed'] % 50000 == 49999:
+                print('...invoking garbage collector')
+                gc.collect()
+
         return paths
 
     except Exception as e: 
@@ -408,7 +415,7 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
 
     if not os.path.exists(output_file) and options["output_alignment_video"]:
         # Trim and align the reaction video
-        trim_and_concat_video(react_video, final_sequences, base_video, output_file, react_video_ext, extend_by = extend_by)
+        trim_and_concat_video(react_video, final_sequences, base_video, output_file, react_video_ext, extend_by = extend_by, use_fill = song.get('include_base_video', True))
     return output_file
 
 

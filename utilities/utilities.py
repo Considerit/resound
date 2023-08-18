@@ -40,7 +40,7 @@ from decimal import Decimal, getcontext
 
 
 
-def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, ext: str, extend_by=0, write_audio=False):
+def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, ext: str, extend_by=0, use_fill=True):
 
     print(f"Frame rate: {conversion_frame_rate}, Audio rate: {conversion_audio_sample_rate}")
     temp_dir, _ = os.path.splitext(output_file)
@@ -48,39 +48,9 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     if not os.path.exists(temp_dir):
        os.makedirs(temp_dir)
 
+    check_compatibility(filler_video, video_file)
 
-    if write_audio:
-        # Process audio
-        temp_audio_files = []    
-        for i, segment in enumerate(video_segments):
-            start, end, filler_start, filler_end, filler = segment
-
-            if end <= start: 
-                continue
-
-            temp_audio_file = os.path.join(temp_dir, f"temp_{i}.wav")
-            temp_audio_files.append(temp_audio_file)
-
-            if filler: 
-                command = f'ffmpeg -y -i "{filler_video}" -ss {filler_start} -to {filler_end} -vn -ar {conversion_audio_sample_rate} -ac 2 -c:a pcm_s16le "{temp_audio_file}"'
-            else:
-                command = f'ffmpeg -y -i "{video_file}" -ss {start} -to {end} -vn -ar {conversion_audio_sample_rate} -ac 2 -c:a pcm_s16le "{temp_audio_file}"'
-
-            subprocess.run(command, shell=True, check=True)
-            
-
-        audio_output_file = os.path.join(temp_dir, f"{os.path.basename(output_file).split('.')[0]}.wav")
-        concat_audio_file = os.path.join(temp_dir, "concat-audio.txt")
-        with open(concat_audio_file, 'w') as f:
-            for temp_file in temp_audio_files:
-                f.write(f"file '{os.path.basename(temp_file)}'\n")
-        
-        command = f'ffmpeg -y -f concat -safe 0 -i "{concat_audio_file}" -c copy "{audio_output_file}"'
-        print(command)
-        subprocess.run(command, shell=True, check=True)
-
-        if os.path.isfile(concat_audio_file):
-            os.remove(concat_audio_file)
+    video_segments = [list(s) for s in video_segments if ((not s[4]) and s[0] < s[1]) or (s[4] and s[2] < s[3] )] # integrity check
 
     # process video  target_resolution=(1080, 1920)
     reaction_video = VideoFileClip(video_file)
@@ -88,40 +58,47 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     height = reaction_video.h
 
     base_video = VideoFileClip(filler_video)
-    
+
     #########################################################
     # Append 15 seconds (or extend_by) of each reaction video
-    fill_length = 0
-    for (start, end, filler_start, filler_end, filler) in reversed(video_segments):
-        if not filler: 
-            break
-        fill_length += filler_end - filler_start
+    if extend_by > 0:
+        fill_length = 0
+        for (start, end, filler_start, filler_end, filler) in reversed(video_segments):
+            if not filler: 
+                break
+            fill_length += filler_end - filler_start
+
+        if end + fill_length + extend_by <= reaction_video.duration:  # Make sure not to exceed the reaction video duration
+            video_segments.append((end + fill_length, end + fill_length + extend_by, filler_end, filler_end + fill_length + extend_by, False))
+    
     ##################
 
-    if end + fill_length + extend_by <= reaction_video.duration:  # Make sure not to exceed the reaction video duration
-        video_segments.append((end, end + fill_length + extend_by, filler_end, filler_end + fill_length + extend_by, False))
-
     clips = []
-    for i, segment in enumerate(video_segments):
+    for segment in video_segments:
+
         start_frame, end_frame, filler_start, filler_end, filler = segment
-        if filler: 
-            start_frame = filler_start
-            end_frame = filler_end
-            video = base_video
-        else:
-            video = reaction_video
 
-        if end_frame <= start_frame: 
-            continue
+        if (filler and use_fill) or not filler:
+            if filler: 
+                start_frame = filler_start
+                end_frame = filler_end
+                video = base_video
+            else:
+                video = reaction_video
 
-        end_frame = min(end_frame, video.duration)
+            end_frame = min(end_frame, video.duration)
 
-        subclip = video.subclip(float(start_frame), float(end_frame))
-        if filler:
-            subclip = subclip.resize(height=height, width=width)
-            subclip = subclip.without_audio()
+            subclip = video.subclip(float(start_frame), float(end_frame))
+            if filler:
+                subclip = subclip.resize(height=height, width=width)
+                subclip = subclip.without_audio()
+                subclip = subclip.set_fps(reaction_video.fps)
+        else: 
+            clip_duration = float(filler_end - filler_start)
+            subclip = ColorClip(size=(width, height), color=(0,0,0)).set_duration(clip_duration).set_fps(reaction_video.fps)
 
-        print(f'\nAdding frames from {start_frame}s to {end_frame}s filler? {filler}\n')
+
+        print(f'Adding frames from {start_frame}s to {end_frame}s filler? {filler}')
         clips.append(subclip)
 
 
@@ -136,12 +113,13 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
     # If final_clip is longer than base_video, trim it
     if final_clip_duration > base_video_duration + extend_by:
+        print("...chopping down final clip")
         final_clip = final_clip.subclip(0, base_video_duration + extend_by)
         
     # If final_clip is shorter than base_video, pad it with black frames
     elif final_clip_duration < base_video_duration:
         # Create a black clip with the remaining duration
-
+        print("...adding black clip to end")
         black_clip = (ColorClip((base_video.size), col=(0,0,0))
                       .set_duration(base_video_duration - final_clip_duration)
                       .set_fps(final_clip.fps)
@@ -150,6 +128,9 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
         # Combine the final and black clip using CompositeVideoClip
         final_clip = CompositeVideoClip([final_clip, black_clip])
+
+
+    final_clip.resize(height=height, width=width)
 
     # Generate the final output video
     final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
@@ -163,13 +144,78 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     output_video = VideoFileClip(output_file)
     print(f'DONE! Duration={output_video.duration} (compare to {base_video_duration})')
 
-
-    # Cleanup temp files
-    # for temp_file in temp_files:
-    #     if os.path.isfile(temp_file):
-    #         os.remove(temp_file)
-
     return output_file
+
+
+import json
+
+def extract_video_info(video_file):
+    command = [
+        'ffprobe', '-i', video_file, 
+        '-hide_banner', 
+        '-print_format', 'json', 
+        '-show_format', 
+        '-show_streams'
+    ]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    
+    json_start_idx = result.stdout.find('{')
+    json_output = result.stdout[json_start_idx:]
+    
+    try:
+        video_info = json.loads(json_output)
+    except json.JSONDecodeError:
+        print("Error while extracting information from video. FFprobe says:")
+        print(result.stdout)
+        return None
+    
+    return video_info
+
+def check_compatibility(video1, video2):
+    video1_info = extract_video_info(video1)
+    video2_info = extract_video_info(video2)
+
+    if not video1_info or not video2_info:
+        return
+
+    video1_video_stream = next(s for s in video1_info['streams'] if s['codec_type'] == 'video')
+    video2_video_stream = next(s for s in video2_info['streams'] if s['codec_type'] == 'video')
+
+    video1_audio_stream = next(s for s in video1_info['streams'] if s['codec_type'] == 'audio')
+    video2_audio_stream = next(s for s in video2_info['streams'] if s['codec_type'] == 'audio')
+
+    video_attributes_to_check = [
+        'codec_name', 'width', 'height', 'pix_fmt', 
+        'avg_frame_rate', 'color_range', 'color_space', 
+        'color_transfer', 'color_primaries', 'level', 
+        'profile', 'sample_aspect_ratio', 'display_aspect_ratio',
+        'field_order'
+    ]
+
+    audio_attributes_to_check = [
+        'codec_name', 'sample_rate', 'channels', 
+        'channel_layout', 'sample_fmt'
+    ]
+
+    for attribute in video_attributes_to_check:
+        v1_attr = video1_video_stream.get(attribute, "Unavailable")
+        v2_attr = video2_video_stream.get(attribute, "Unavailable")
+        if v1_attr != v2_attr:
+            print(f"Different {attribute}: {video1} has {v1_attr}, while {video2} has {v2_attr}")
+
+    if video1_audio_stream and video2_audio_stream:
+        for attribute in audio_attributes_to_check:
+            v1_attr = video1_audio_stream.get(attribute, "Unavailable")
+            v2_attr = video2_audio_stream.get(attribute, "Unavailable")
+            if v1_attr != v2_attr:
+                print(f"Different {attribute}: {video1} has {v1_attr}, while {video2} has {v2_attr}")
+    elif not video1_audio_stream:
+        print(f"{video1} does not contain an audio stream.")
+    elif not video2_audio_stream:
+        print(f"{video2} does not contain an audio stream.")
+
+
+
 
 
 
@@ -219,9 +265,37 @@ def prepare_reactions(song_directory: str):
 
         react_video_mp4 = react_video_name + '.mp4'
         if not os.path.exists(react_video_mp4):
+
+
+            with VideoFileClip(react_video) as clip:
+                width, height = clip.size
+
+            resize_command = ""
+            if width > 1920 or height > 1080:
+                # Calculate aspect ratio
+                aspect_ratio = width / height
+                if width > height:
+                    new_width = 1920
+                    new_height = int(new_width / aspect_ratio)
+                else:
+                    new_height = 1080
+                    new_width = int(new_height * aspect_ratio)
+                
+                resize_command = f"-vf scale={new_width}:{new_height}"
+
+            # Generate the ffmpeg command
+            command = f'ffmpeg -y -i "{react_video}" {resize_command} -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -c:a aac "{react_video_mp4}"'
+
+
+
+            # TODO: if video is also greater than 1920x1080 resolution, resize it while maintaining aspect ratio            
             command = f'ffmpeg -y -i "{react_video}" -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -c:a aac "{react_video_mp4}"'
             subprocess.run(command, shell=True, check=True)
+        
+
+
         os.remove(react_video)
+
     ################
 
     # Get all reaction video files
@@ -375,5 +449,61 @@ def is_close(a, b, rel_tol=None, abs_tol=None):
     difference = abs(a - b)
     # print(f"difference={difference}  of a {a} and b {b}")
     return difference <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
+
+
+
+
+
+
+from pympler import muppy, summary
+
+import sys
+
+def get_size(obj, seen=None):
+    """Recursively find the size of an object and its attributes."""
+    # Keep track of objects we've already seen to avoid infinite recursion
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+
+    size = sys.getsizeof(obj)
+
+    # If the object is a container, add the sizes of its items
+    if isinstance(obj, (list, tuple, set, dict)):
+        size += sum(get_size(i, seen) for i in obj)
+    elif hasattr(obj, '__dict__') and isinstance(obj.__dict__, dict):
+        size += sum(get_size(v, seen) for v in obj.__dict__.values())
+
+    return size
+
+def print_memory_consumption():
+    # Get all objects currently in memory
+    all_objects = muppy.get_objects()
+
+    # Now, sort individual objects by their size
+    largest_objs = sorted(all_objects, key=lambda x: get_size(x), reverse=True)
+
+    for obj in largest_objs[:5]:
+        print(object_description(obj), get_size(obj))
+
+def object_description(obj):
+    """Provide a short description of the object along with a small part of its content."""
+    if isinstance(obj, (list, tuple)):
+        preview = ", ".join([str(x) for x in obj[:3]])
+        return f"{type(obj).__name__} of length {len(obj)}: [{preview}]..."
+    elif isinstance(obj, dict):
+        preview_items = list(obj.items())[:3]
+        preview = ", ".join([f"{k}: {v}" for k, v in preview_items])
+        return f"Dict of size {len(obj)}: {{{preview}}}..."
+    elif isinstance(obj, str):
+        return f"String of length {len(obj)}: {obj[:100]}..."  # Print only first 100 chars
+    elif isinstance(obj, bytes):
+        # For simplicity, display the first few bytes in hexadecimal
+        return f"Bytes of length {len(obj)}: {obj[:10].hex()}..."
+    else:
+        return str(type(obj))
 
 
