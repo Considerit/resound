@@ -283,6 +283,8 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
     # print("scores", scores)
     # all_scores.append(scores)
 
+    scores.clear() # respond to memory issue
+
     segment_scope_cache[scope_key] = (segment, current_end, reaction_end, scores)
     return segment_scope_cache[scope_key]
 
