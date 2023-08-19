@@ -74,6 +74,7 @@ from scipy import interpolate
 from scipy.ndimage import convolve1d
 import math
 import matplotlib.pyplot as plt
+import pickle
 
 
 
@@ -104,7 +105,7 @@ def create_reactor_view(react_path, base_path, replacement_audio=None, show_faci
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0:
-      reactors = detect_faces(react_path, base_path, show_facial_recognition=show_facial_recognition)
+      reactors = detect_faces(react_path, base_reaction_path, show_facial_recognition=show_facial_recognition)
       for i, reactor in enumerate(reactors): 
           (x,y,w,h,orientation) = reactor[0]
           reactor_captures = reactor[1]
@@ -118,6 +119,8 @@ def create_reactor_view(react_path, base_path, replacement_audio=None, show_faci
 
 def replace_audio(video, audio_path, num_reactors):
     audio = AudioFileClip(audio_path)
+
+    audio = audio.volumex(1.5) # so we hear the reactor backchannel better
 
     if num_reactors > 1: 
         # Divide the volume of the audio by the number of reactors
@@ -273,27 +276,33 @@ def get_faces_from(img):
   ret = [ (face['box'], face['keypoints']['nose']) for face in faces ]
   return ret
 
-def detect_faces_in_frame(react_frame, show_facial_recognition, width):
-    # Convert the frame to grayscale for face detection
-    react_gray = cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB)
+def detect_faces_in_frame(react_frame, show_facial_recognition, width, reduction_factor=0.5):
+    # Resize the frame for faster face detection
+    reduced_frame = cv2.resize(react_frame, (int(react_frame.shape[1] * reduction_factor), 
+                                             int(react_frame.shape[0] * reduction_factor)))
+
+    react_gray = cv2.cvtColor(reduced_frame, cv2.COLOR_BGR2RGB)
 
     # Perform face detection
     faces = get_faces_from(react_gray)
 
-    # print("FACES:", faces)
+    # Scale the detected bounding boxes and keypoints back to original size
+    scaled_faces = [((int(x/reduction_factor), int(y/reduction_factor), 
+                      int(w/reduction_factor), int(h/reduction_factor)), 
+                     (int(nose[0]/reduction_factor), int(nose[1]/reduction_factor))) for (x, y, w, h), nose in faces]
+
     # Draw rectangles around the detected faces
     faces_this_frame = []
-    for ((x, y, w, h), nose) in faces:
-        # print( (x,y,w,h), nose)
+    for ((x, y, w, h), nose) in scaled_faces:
         if w > .05 * width:
-          if show_facial_recognition:
-            cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-          faces_this_frame.append([x, y, w, h, nose])
+            if show_facial_recognition:
+                cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+            faces_this_frame.append([x, y, w, h, nose])
 
     # compute histogram of grays for later fine-grained matching
     for face in faces_this_frame:
-      hist = get_face_histogram(react_gray, face)
-      face.append(hist)
+        hist = get_face_histogram(cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB), face)  # use the original frame here
+        face.append(hist)
 
     return faces_this_frame
 
@@ -351,8 +360,8 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False)
           cv2.moveWindow('Heat map', 0, int(540) ) 
 
           # Exit if 'q' is pressed
-          if cv2.waitKey(1) & 0xFF == ord('q'):
-              break
+          # if cv2.waitKey(1) & 0xFF == ord('q'):
+          #     break
 
 
 
@@ -381,8 +390,12 @@ def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=
         ts += frames_per_capture
       frames_to_read.append(total_frames - 1)
 
-
-    face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition)
+    coarse_face_metadata = f"{base_reaction_path}-coarse_face_position_metadata.pckl"
+    if os.path.exists(coarse_face_metadata):
+      face_matches = read_coarse_face_metadata(course_face_metadata)
+    else:
+      face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition)
+      output_coarse_face_metadata(coarse_face_metadata, face_matches)
 
     # print('facematches:', [(frame, x,y,w,h) for frame, (x,y,w,nose,hist) in face_matches])
 
@@ -419,7 +432,24 @@ def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=
     return reactors
 
 
-def expand_face(group, width, height, expansion=.7, sidedness=.7):
+def output_coarse_face_metadata(output_file, metadata):
+    temp_dir, _ = os.path.splitext(output_file)
+
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    with open(output_file, 'wb') as f:
+        pickle.dump(metadata, f)
+
+def read_coarse_face_metadata(input_file):
+    with open(input_file, 'rb') as f:
+        data = pickle.load(f)
+    return data
+
+
+
+
+def expand_face(group, width, height, expansion=.8, sidedness=.7):
   (faces, score, (x,y,w,h), center, avg_size) = group
 
   if (center[0] > x + .65 * w): # facing right
@@ -746,10 +776,10 @@ def smooth_and_interpolate_centroids(sampled_centroids):
     if nans_y.size > 0:
         y[nans_y] = np.interp(frames[nans_y], frames[~np.isnan(y)], y[~np.isnan(y)])
 
-    # # # Smooth out the sampled centroids with convolution
-    # kernel = np.array([1/18, 1/9, 2/9, 2/9, 2/9, 1/9, 1/18])
-    # x = convolve1d(x, kernel, mode='nearest')
-    # y = convolve1d(y, kernel, mode='nearest')
+    # # Smooth out the sampled centroids with convolution
+    kernel = np.array([1/32, 1/16, 1/8 + 1/32, 1/2, 1/8 + 1/32, 1/16, 1/32])
+    x = convolve1d(x, kernel, mode='nearest')
+    y = convolve1d(y, kernel, mode='nearest')
 
     # Interpolate to get a centroid for each frame
     interp_func_x = interpolate.interp1d(frames, x, kind='linear', fill_value="extrapolate")
