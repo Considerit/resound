@@ -95,7 +95,7 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
                 subclip = subclip.set_fps(reaction_video.fps)
         else: 
             clip_duration = float(filler_end - filler_start)
-            subclip = ColorClip(size=(width, height), color=(0,0,0)).set_duration(clip_duration).set_fps(reaction_video.fps)
+            subclip = ColorClip(size=(width, height), color=(0,0,0)).set_duration(clip_duration).set_fps(reaction_video.fps).without_audio()
 
 
         print(f'Adding frames from {start_frame}s to {end_frame}s filler? {filler}')
@@ -117,11 +117,11 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
         final_clip = final_clip.subclip(0, base_video_duration + extend_by)
         
     # If final_clip is shorter than base_video, pad it with black frames
-    elif final_clip_duration < base_video_duration:
+    elif final_clip_duration < base_video_duration + extend_by:
         # Create a black clip with the remaining duration
         print("...adding black clip to end")
         black_clip = (ColorClip((base_video.size), col=(0,0,0))
-                      .set_duration(base_video_duration - final_clip_duration)
+                      .set_duration(base_video_duration + extend_by - final_clip_duration)
                       .set_fps(final_clip.fps)
                       .set_start(final_clip_duration)
                       .without_audio())
