@@ -46,7 +46,7 @@ import traceback
 import cProfile
 import pstats
 
-from utilities import trim_and_concat_video, extract_audio, compute_precision_recall, universal_frame_rate, download_and_parse_reactions, is_close, print_memory_consumption
+from utilities import trim_and_concat_video, extract_audio, compute_precision_recall, universal_frame_rate, is_close, print_memory_consumption
 
 from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data
 
@@ -389,29 +389,29 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
     # Extract the reaction audio
     reaction_audio_data, reaction_sample_rate, reaction_audio_path = extract_audio(react_video)
 
-    alignment_metadata_file = os.path.splitext(output_file)[0] + '.pckl'
-    if not os.path.exists(alignment_metadata_file):
+    if options['output_alignment_metadata']:
+        alignment_metadata_file = os.path.splitext(output_file)[0] + '.pckl'
+        if not os.path.exists(alignment_metadata_file):
 
-        # Determine the number of decimal places to try avoiding frame boundary errors given python rounding issues
-        fr = Decimal(universal_frame_rate())
-        precision = Decimal(1) / fr
-        precision_str = str(precision)
-        getcontext().prec = len(precision_str.split('.')[-1])
+            # Determine the number of decimal places to try avoiding frame boundary errors given python rounding issues
+            fr = Decimal(universal_frame_rate())
+            precision = Decimal(1) / fr
+            precision_str = str(precision)
+            getcontext().prec = len(precision_str.split('.')[-1])
 
 
-        print(f"\n*******{options}")
-        final_sequences = cross_expander_aligner(base_audio_data, reaction_audio_data, sr=reaction_sample_rate, options=options, ground_truth=gt)
-        
+            print(f"\n*******{options}")
+            final_sequences = cross_expander_aligner(base_audio_data, reaction_audio_data, sr=reaction_sample_rate, options=options, ground_truth=gt)
+            
 
-        print("\nsequences:")
+            print("\nsequences:")
 
-        for sequence in final_sequences:
-            print(f"\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])}")
+            for sequence in final_sequences:
+                print(f"\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])}")
 
-        if options['output_alignment_metadata']:
             output_alignment_metadata(alignment_metadata_file, final_sequences)
-    else: 
-        final_sequences = read_alignment_metadata(alignment_metadata_file)
+        else: 
+            final_sequences = read_alignment_metadata(alignment_metadata_file)
 
     if not os.path.exists(output_file) and options["output_alignment_video"]:
         # Trim and align the reaction video

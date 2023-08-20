@@ -371,7 +371,7 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False)
     return face_matches
 
 
-def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=30, show_facial_recognition=False):
+def detect_faces(react_path, base_reaction_path, frames_to_read=None, frames_per_capture=30, show_facial_recognition=False):
 
     # Open the video file
     video = cv2.VideoCapture(react_path)
@@ -433,11 +433,6 @@ def detect_faces(react_path, base_path, frames_to_read=None, frames_per_capture=
 
 
 def output_coarse_face_metadata(output_file, metadata):
-    temp_dir, _ = os.path.splitext(output_file)
-
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
-
     with open(output_file, 'wb') as f:
         pickle.dump(metadata, f)
 

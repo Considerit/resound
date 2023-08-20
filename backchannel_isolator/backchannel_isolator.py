@@ -11,7 +11,6 @@ from scipy import signal
 
 from backchannel_isolator.track_separation import separate_vocals
 
-
 from utilities.audio_processing import audio_percentile_loudness
 
 
@@ -303,10 +302,16 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     # mask12, diff12 = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, std_dev=1000/4)
 
     print("calculating long volume diff")
-    long_mask1, long_diff1, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=1 * sr_reaction, plot=False)
+    percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=1 * sr_reaction, plot=False)
+    long_mask1, long_diff1, song_percentile_pitch, reaction_percentile_pitch = percep_mask
+    
+    # print("calculating long volume diff2")
+    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=sr_reaction / 2)
+    # long_mask12, long_diff12, song_percentile_pitch, reaction_percentile_pitch = percep_mask
 
     # print("calculating long volume diff")
-    # long_mask12, long_diff12 = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=sr_reaction / 2, std_dev=sr_reaction / 2 /4)
+    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=4 * sr_reaction, plot=False)
+    # long_mask2, long_diff2, song_percentile_pitch, reaction_percentile_pitch = percep_mask
 
 
 
@@ -385,9 +390,10 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
     # print('\tdialated long_vol+volume')
 
-    print('plotting')
 
     if False: 
+        print('plotting')
+
         # Create a time array for plotting
         time_song = np.arange(song_percentile_pitch.shape[0]) / sr_song
         time_reaction = np.arange(reaction_percentile_pitch.shape[0]) / sr_reaction
@@ -425,14 +431,38 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
         # plt.ylabel('Mask Values')
 
         # Plot the absolute difference for joint
+        plt.subplot(plots, 2, 1)
+        plt.plot(time_reaction, long_diff12, label='Absolute Difference, long vol 12')
+        plt.legend()
+        plt.ylabel('Absolute Difference')
+
+        # Plot the joint mask
+        plt.subplot(plots, 2, 2)
+        plt.plot(time_reaction, long_mask12, label='Dilated Mask, long vol 12')
+        plt.legend()
+        plt.ylabel('Mask Values')
+
+        # Plot the absolute difference for joint
+        plt.subplot(plots, 2, 3)
+        plt.plot(time_reaction, long_diff1, label='Absolute Difference, long vol 1')
+        plt.legend()
+        plt.ylabel('Absolute Difference')
+
+        # Plot the joint mask
+        plt.subplot(plots, 2, 4)
+        plt.plot(time_reaction, long_mask1, label='Dilated Mask, long vol 1')
+        plt.legend()
+        plt.ylabel('Mask Values')
+
+        # Plot the absolute difference for joint
         plt.subplot(plots, 2, 5)
-        plt.plot(time_reaction, long_diff1, label='Absolute Difference, long vol')
+        plt.plot(time_reaction, long_diff2, label='Absolute Difference, long vol 2')
         plt.legend()
         plt.ylabel('Absolute Difference')
 
         # Plot the joint mask
         plt.subplot(plots, 2, 6)
-        plt.plot(time_reaction, long_mask1, label='Dilated Mask, long vol')
+        plt.plot(time_reaction, long_mask2, label='Dilated Mask, long vol 2')
         plt.legend()
         plt.ylabel('Mask Values')
 
