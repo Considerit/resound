@@ -343,7 +343,7 @@ def path_score(path, basics, relative_to=None):
 
     duration_score = (duration + fill) / relative_to
 
-    total_score = duration_score * duration_score * fill_score * fill_score * math.log(1 + earliness) * alignment
+    total_score = duration_score * duration_score * fill_score * fill_score * earliness * alignment
     if duration == 0:
         total_score = alignment = 0
 
