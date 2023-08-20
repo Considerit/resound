@@ -1,7 +1,8 @@
 import os
 import copy
 
-from utilities import prepare_reactions, extract_audio, download_and_parse_reactions
+from utilities import prepare_reactions, extract_audio
+from inventory import download_and_parse_reactions
 from cross_expander import create_aligned_reaction_video
 from face_finder import create_reactor_view
 from backchannel_isolator import process_reactor_audio
@@ -53,7 +54,7 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
 
 
 
-    song = song_def['title']
+    song = f"{song_def['artist']} - {song_def['song']}"
     song_directory = os.path.join('Media', song)
     reactions_dir = 'reactions'
 
@@ -138,54 +139,94 @@ def get_orientation(input_file):
 import traceback
 if __name__ == '__main__':
 
+
     suicide = {
-        'title': "Ren - Suicide",
         'include_base_video': True,
-        'featured': ['ThatSingerReactions', 'Rosalie', 'JohnReavesLive'],
+        'featured': ['ThatSingerReactions', 'Rosalie Reacts', 'JohnReavesLive', 'Dicodec'],
         'ground_truth': {
             "Black Pegasus.mp4": [(241, 306.4), (7*60+5, 7*60+54), (8*60+2, 10*60 + 14)],
             "That’s Not Acting Either.mp4": [(75, 129), (192, 282), (7*60+30, 9*60 + 7)]            
-        }
+        },
+        'song': 'Suicide',
+        'artist': 'Ren',
+        'search': ['Suicide', 'Su!cIde', 'Su!cide', 'suicide']
 
     }
 
     fire = {
-        'title': "Ren - Fire",
         'include_base_video': False,
-        'featured': ['Johnnie Calloway', 'Anthony Ray']
+        'featured': ['Johnnie Calloway Sr', 'Anthony Ray Reacts', 'DuaneTV'],
+        'song': 'Fire',
+        'artist': 'Ren',
+        'search': 'Fire'
+
     }
 
     hunger = {
-        'title': "Ren - The Hunger",
         'include_base_video': True,
-        'featured': ['h8tful', 'jamel', '_QlkLhbCeNo'],
+        'featured': ['H8TFUL JAY', 'Stevie Knight', 'Jamel_AKA_Jamal', 'Knox Hill'],
         'ground_truth': {
-            "CAN HE RAP THO？! ｜ Ren - The Hunger knox-truncated.mp4": [(0.0, 12.6), (80, 89), (123, 131), (156, 160), (173, 176), (189, 193), (235, 239), (247, 254.5), (286, 290), (342, 346), (373, 377), (442, 445), (477, 483), (513, 517), (546, 552), (570, 578), (599, 600), (632, 639), (645, 651), (662, 665), (675, 680), (694, 707), (734, 753)],
-            "Rapper REACTS to REN - THE HUNGER anthony ray-truncated.mp4": [(0.5, 75), (604, 613), (658, 680), (724, 737), (760, 781), (1236, 1241)],
-            "REN-HUNGER [REACTION] h8tful jay-truncated.mp4": [(0, 12.75), (28, 36), (49, 51), (88, 90), (104, 112), (135, 140), (160, 178), (195, 200), (227, 238), (254, 260), (284, 298), (319, 330), (355, 361), (371, 408)],
+            "Knox Hill.mp4": [(0.0, 12.6), (80, 89), (123, 131), (156, 160), (173, 176), (189, 193), (235, 239), (247, 254.5), (286, 290), (342, 346), (373, 377), (442, 445), (477, 483), (513, 517), (546, 552), (570, 578), (599, 600), (632, 639), (645, 651), (662, 665), (675, 680), (694, 707), (734, 753)],
+            "RAP CATALOG by Anthony Ray.mp4": [(0.5, 75), (604, 613), (658, 680), (724, 737), (760, 781), (1236, 1241)],
+            "H8TFUL JAY.mp4": [(0, 12.75), (28, 36), (49, 51), (88, 90), (104, 112), (135, 140), (160, 178), (195, 200), (227, 238), (254, 260), (284, 298), (319, 330), (355, 361), (371, 408)],
 
-        }
-
+        },
+        'song': 'The Hunger',
+        'artist': 'Ren',
+        'search': 'Hunger'
     }
 
     genesis = {
-        'title': "Ren - Genesis",
         'include_base_video': True,
-        'featured': ['Jamel', 'J Rizzle', 'That singer reacts']
+        'featured': ['Jamel_AKA_Jamal', 'J Rizzle', 'ThatSingerReactions'],
+        'song': 'Genesis',
+        'artist': 'Ren',
+        'search': 'Genesis'
     }
 
 
-    # download_and_parse_reactions("Ren - Suicide")
+    humble = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'Humble',
+        'artist': 'Ren',
+        'search': 'Humble'
+    }
 
-    songs = [hunger, genesis, fire, suicide]
-
-
-
-    fired = {
-        'title': "Ren - Fired",
+    ocean = {
         'include_base_video': False,
-        'featured': ['Johnnie Calloway', 'Anthony Ray']
+        'featured': ["RAP CATALOG by Anthony Ray", "Black Pegasus"],
+        'song': 'Ocean',
+        'artist': 'Ren',
+        'search': 'Ocean'
     }
+
+    diazepam = {
+        'include_base_video': True,
+        'featured': ["Neurogal MD"],
+        'song': 'Diazepam',
+        'artist': 'Ren',
+        'search': 'Diazepam'
+    }
+
+    time_will_fly = {
+        'include_base_video': True,
+        'featured': ["ThatSingerReactions", "Black Pegasus"],
+        'song': 'Time Will Fly',
+        'artist': 'Sam Tompkins',
+        'search': 'Time Will Fly'
+    }
+
+    handy = {
+        'include_base_video': True,
+        'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
+        'song': 'Handy',
+        'artist': 'Weird Al',
+        'search': 'Handy'
+    }
+
+
+    songs = [hunger, fire, handy, time_will_fly, genesis, suicide, diazepam, ocean]
 
     # songs = [suicide]
 
@@ -198,13 +239,16 @@ if __name__ == '__main__':
         "output_alignment_video": True,
         "isolate_commentary": True,
         "create_reactor_view": True,
-        "create_compilation": True
+        "create_compilation": True,
+        "download_and_parse": True
     }
 
 
 
     failures = []
     for song in songs: 
+        if options.get('download_and_parse'):
+            download_and_parse_reactions(song['artist'], song['song'], song['search'])
         failed = create_reaction_compilations(song, output_dir = output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 

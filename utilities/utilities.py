@@ -291,10 +291,9 @@ def prepare_reactions(song_directory: str):
             # TODO: if video is also greater than 1920x1080 resolution, resize it while maintaining aspect ratio            
             command = f'ffmpeg -y -i "{react_video}" -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -c:a aac "{react_video_mp4}"'
             subprocess.run(command, shell=True, check=True)
-        
 
-
-        os.remove(react_video)
+            if os.path.exists(react_video):
+                os.remove(react_video)
 
     ################
 
@@ -305,49 +304,6 @@ def prepare_reactions(song_directory: str):
 
 
 
-def download_and_parse_reactions(song):
-    song_directory = os.path.join('Media', song)
-    
-    if not os.path.exists(song_directory):
-       # Create a new directory because it does not exist
-       os.makedirs(song_directory)
-
-    manifest_file = os.path.join(song_directory, "manifest.json")
-    if not os.path.exists(manifest_file):
-        raise f"{manifest_file} does not exist"
-
-    song_data = json.load(open(manifest_file))
-
-    song_file = os.path.join(song_directory, song)
-    
-    if not os.path.exists(song_file + '.mp4') and not os.path.exists(song_file + '.webm'):
-        v_id = song_data["main_song"]["id"]
-
-        cmd = f"yt-dlp -o \"{song_file + '.webm'}\" https://www.youtube.com/watch\?v\={v_id}\;"
-        print(cmd)
-        subprocess.run(cmd, shell=True, check=True)
-    else: 
-        print(f"{song_file} exists")
-
-
-    full_reactions_path = os.path.join(song_directory, 'reactions')
-    if not os.path.exists(full_reactions_path):
-       # Create a new directory because it does not exist
-       os.makedirs(full_reactions_path)
-
-    for _, reaction in song_data["reactions"].items():
-        if reaction.get("download"):
-            v_id = reaction["id"]
-            output = os.path.join(full_reactions_path, reaction['reactor'] + '.webm')
-            extracted_output = os.path.join(full_reactions_path, reaction['reactor'] + '.mp4')
-
-            if not os.path.exists(output) and not os.path.exists(extracted_output) and not os.path.exists(os.path.join(full_reactions_path, 'tofix', reaction['reactor'] + '.mp4')):
-                cmd = f"yt-dlp -o \"{output}\" https://www.youtube.com/watch\?v\={v_id}\;"
-                print(cmd)
-                subprocess.run(cmd, shell=True, check=True)
-
-
-    prepare_reactions(song)
 
 
 
