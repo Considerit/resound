@@ -40,6 +40,11 @@ from moviepy.video.fx.all import crop
 # be any size up to the resolution of a modern macbook pro. These constraints are soft. 
 
 def compose_reactor_compilation(song, base_video, reactions, output_path, output_size=(1792, 1120)):
+
+    if os.path.exists(output_path):
+      print("Compilation already exists", output_path)
+      return
+
     print(f"Creating compilation for {output_path}")
 
     width, height = output_size
