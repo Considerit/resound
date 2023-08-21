@@ -2,3 +2,4 @@ from utilities.utilities import prepare_reactions, extract_audio
 from utilities.utilities import trim_and_concat_video, extract_audio, compute_precision_recall, universal_frame_rate, is_close
 from utilities.utilities import samples_per_frame, universal_frame_rate, is_close
 from utilities.utilities import print_memory_consumption
+from utilities.utilities import conversion_audio_sample_rate

@@ -304,9 +304,7 @@ def prepare_reactions(song_directory: str):
 
 
 
-
-
-def extract_audio(video_file: str, output_dir: str = None, sample_rate: int = 44100) -> list:
+def extract_audio(video_file: str, output_dir: str = None, sample_rate: int = 44100, preserve_silence: bool = False) -> list:
     if output_dir is None:
         output_dir = os.path.dirname(video_file)
 
@@ -317,7 +315,16 @@ def extract_audio(video_file: str, output_dir: str = None, sample_rate: int = 44
     # If the file has already been extracted, return the existing path
     if not os.path.exists(output_file):
         # Construct the ffmpeg command
-        command = f'ffmpeg -i "{video_file}" -vn -acodec pcm_s16le -ar {sample_rate} -ac 2 "{output_file}"'
+        command = f'ffmpeg -i "{video_file}" -vn -acodec pcm_s16le -ar {sample_rate} -ac 2'
+        
+        # If preserving silence is desired, get the video duration and apply the atrim filter
+        if preserve_silence:
+            duration_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_file}"'
+            duration = float(subprocess.check_output(duration_command, shell=True).decode('utf-8').strip())
+            pad_duration = int(duration * sample_rate)  # Calculate the number of samples to pad
+            command += f" -af apad=whole_len={pad_duration}"
+        
+        command += f' "{output_file}"'
         print(command)
         # Execute the command
         subprocess.run(command, shell=True, check=True)    
