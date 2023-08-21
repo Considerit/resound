@@ -197,20 +197,27 @@ def download_and_parse_reactions(artist, song, search):
        # Create a new directory because it does not exist
        os.makedirs(full_reactions_path)
 
+    reaction_inventory = {}
     for _, reaction in song_data["reactions"].items():
-        if reaction.get("download"):
-            v_id = reaction["id"]
-            output = os.path.join(full_reactions_path, reaction['reactor'] + '.webm')
-            extracted_output = os.path.join(full_reactions_path, reaction['reactor'] + '.mp4')
+        if reaction.get("download"):    
+            key = reaction['reactor']
+            if key in reaction_inventory:
+                key = reaction['reactor'] + '_' + reaction["id"] # handle multiple reactions for a single channel
+            reaction_inventory[key] = reaction
 
-            if not os.path.exists(output) and not os.path.exists(extracted_output) and not os.path.exists(os.path.join(full_reactions_path, 'tofix', reaction['reactor'] + '.mp4')):
-                cmd = f"yt-dlp -o \"{output}\" https://www.youtube.com/watch\?v\={v_id}\;"
-                print(cmd)
+    for name, reaction in reaction_inventory.items():
+        v_id = reaction["id"]
+        output = os.path.join(full_reactions_path, name + '.webm')
+        extracted_output = os.path.splitext(output)[0] + '.mp4'
 
-                try:
-                    subprocess.run(cmd, shell=True, check=True)
-                except:
-                    print(f"Failed to download {output} {cmd}")
+        if not os.path.exists(output) and not os.path.exists(extracted_output) and not os.path.exists(os.path.join(full_reactions_path, 'tofix', reaction['reactor'] + '.mp4')):
+            cmd = f"yt-dlp -o \"{output}\" https://www.youtube.com/watch\?v\={v_id}\;"
+            print(cmd)
+
+            try:
+                subprocess.run(cmd, shell=True, check=True)
+            except:
+                print(f"Failed to download {output} {cmd}")
 
     prepare_reactions(song_directory)
 
