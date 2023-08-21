@@ -28,10 +28,13 @@ def separate_vocals(output_dir, song_path, reaction_path, post_process=False):
     reaction_sep = song_sep 
     react_separation_path = os.path.join(reaction_sep, os.path.splitext(reaction_path)[0].split('/')[-1] )
 
+    song_vocals_high_passed_path = os.path.join(song_separation_path, 'vocals-post-high-passed.wav')
+    reaction_vocals_high_passed_path = os.path.join(react_separation_path, 'vocals-post-high-passed.wav')
+
     # Perform source separation on song and reaction audio
-    if not os.path.exists(song_separation_path):
+    if not os.path.exists(song_vocals_high_passed_path):
         song_sources = get_spleeter().separate_to_file(song_path, song_sep)
-    if not os.path.exists(react_separation_path):
+    if not os.path.exists(reaction_vocals_high_passed_path):
         reaction_sources = get_spleeter().separate_to_file(reaction_path, reaction_sep)
 
     # Load the separated tracks
@@ -41,7 +44,6 @@ def separate_vocals(output_dir, song_path, reaction_path, post_process=False):
 
     if post_process: 
 
-        song_vocals_high_passed_path = os.path.join(song_separation_path, 'vocals-post-high-passed.wav')
         
         if not os.path.exists(song_vocals_high_passed_path):
             song_vocals, sr_song = librosa.load( song_vocals_path, sr=None, mono=True )
@@ -49,7 +51,6 @@ def separate_vocals(output_dir, song_path, reaction_path, post_process=False):
             sf.write(song_vocals_high_passed_path, song_vocals.T, sr_song)
         song_vocals_path = song_vocals_high_passed_path
 
-        reaction_vocals_high_passed_path = os.path.join(react_separation_path, 'vocals-post-high-passed.wav')
         
         
         if not os.path.exists(reaction_vocals_high_passed_path):
