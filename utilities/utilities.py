@@ -229,6 +229,8 @@ def samples_per_frame():
 def universal_frame_rate(): 
     return conversion_frame_rate
 
+
+
 def prepare_reactions(song_directory: str):
 
     base_audio_path_webm = os.path.join(song_directory, f"{os.path.basename(song_directory)}.webm")
@@ -256,8 +258,11 @@ def prepare_reactions(song_directory: str):
         
 
     # Get all reaction video files
-    react_videos = glob.glob(os.path.join(reaction_dir, "*.webm"))
+    webm_videos = glob.glob(os.path.join(reaction_dir, "*.webm"))
+    mp4_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
+    react_videos = webm_videos + mp4_videos
 
+    
     # Process each reaction video
     for react_video in react_videos:
 
@@ -304,9 +309,11 @@ def prepare_reactions(song_directory: str):
 
 
 
-def extract_audio(video_file: str, output_dir: str = None, sample_rate: int = 44100, preserve_silence: bool = False) -> list:
+def extract_audio(video_file, output_dir=None, sample_rate=None, preserve_silence=False):
     if output_dir is None:
         output_dir = os.path.dirname(video_file)
+    if sample_rate is None:
+        sample_rate = conversion_audio_sample_rate
 
     # Construct the output file path
     base_name = os.path.splitext(os.path.basename(video_file))[0]
