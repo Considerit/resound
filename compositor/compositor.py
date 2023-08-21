@@ -182,9 +182,12 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
     # Calculate a starting size for the hexagons based on the width and height
     a = min(width / ((min_cells / 2) ** 0.5), height / ((min_cells / (2 * np.sqrt(3))) ** 0.5))
     a *= 2
+
+
     # Calculate the center of the grid
     if center is None:  
-      center = (outside_bounds[2] + 50, outside_bounds[3] + 50)
+      main_padding = max(0, 220 - 8.25 * min_cells)
+      center = (outside_bounds[2] + main_padding, outside_bounds[3] + main_padding)
     
     # Create an empty list to hold the hexagon center coordinates
     coords = []
@@ -464,7 +467,12 @@ def create_color_func(hsv_color, clip):
 
     return color_func
 
-def get_audio_volume(clip, fps=22000):
+
+from utilities import conversion_audio_sample_rate
+def get_audio_volume(clip, fps=None):
+    if fps is None:
+      fps = conversion_audio_sample_rate
+      
     """Calculate the volume of the audio clip"""
     audio = clip.audio.to_soundarray(fps=fps)
     audio_volume = np.sqrt(np.mean(np.square(audio), axis=1))  # RMS amplitude
