@@ -19,13 +19,13 @@ def get_spleeter():
         spleeter_separator = Separator('spleeter:2stems')
     return spleeter_separator
 
-def separate_vocals(song_path, reaction_path, post_process=False):
+def separate_vocals(output_dir, song_path, reaction_path, post_process=False):
     # Create a separator with 2 stems (vocals and accompaniment)
 
-    song_sep = os.path.join(os.path.dirname(reaction_path), 'song_output')
+    song_sep = output_dir
     song_separation_path = os.path.join(song_sep, os.path.splitext(song_path)[0].split('/')[-1] )
 
-    reaction_sep = os.path.join(os.path.dirname(reaction_path), 'reaction_output')
+    reaction_sep = song_sep 
     react_separation_path = os.path.join(reaction_sep, os.path.splitext(reaction_path)[0].split('/')[-1] )
 
     # Perform source separation on song and reaction audio

@@ -548,10 +548,10 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
 
 
-def process_reactor_audio(reaction_audio, base_audio, sr, extended_by=0):
+def process_reactor_audio(output_dir, reaction_audio, base_audio, sr, extended_by=0):
 
 
-    reaction_vocals_path, song_vocals_path = separate_vocals(base_audio, reaction_audio, post_process=True)
+    reaction_vocals_path, song_vocals_path = separate_vocals(output_dir, base_audio, reaction_audio, post_process=True)
     output_path = os.path.splitext(reaction_vocals_path)[0] + "_isolated_commentary.wav"
 
     if not os.path.exists(output_path):

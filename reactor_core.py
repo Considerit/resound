@@ -35,7 +35,7 @@ def handle_reaction_video(song:dict, output_dir: str, react_video, base_video, b
         return []
 
     _,sr,aligned_reaction_audio_path = extract_audio(output_file)
-    isolated_commentary = process_reactor_audio(aligned_reaction_audio_path, base_audio_path, extended_by=extend_by, sr=sr)
+    isolated_commentary = process_reactor_audio(output_dir, aligned_reaction_audio_path, base_audio_path, extended_by=extend_by, sr=sr)
     
     if not options["create_reactor_view"]:
         return []
@@ -155,16 +155,15 @@ if __name__ == '__main__':
 
     fire = {
         'include_base_video': False,
-        'featured': ['Johnnie Calloway Sr', 'Anthony Ray Reacts', 'DuaneTV'],
+        'featured': ['Johnnie Calloway Sr', 'Anthony Ray Reacts', 'DuaneTV', "SheaWhatNow"],
         'song': 'Fire',
         'artist': 'Ren',
         'search': 'Fire'
-
     }
 
     hunger = {
         'include_base_video': True,
-        'featured': ['H8TFUL JAY', 'Stevie Knight', 'Jamel_AKA_Jamal', 'Knox Hill'],
+        'featured': ['H8TFUL JAY', 'Stevie Knight', 'Jamel_AKA_Jamal', 'Knox Hill', "TheWolfJohnson", "Lilly Jane Reacts", "ThatSingerReactions"],
         'ground_truth': {
             "Knox Hill.mp4": [(0.0, 12.6), (80, 89), (123, 131), (156, 160), (173, 176), (189, 193), (235, 239), (247, 254.5), (286, 290), (342, 346), (373, 377), (442, 445), (477, 483), (513, 517), (546, 552), (570, 578), (599, 600), (632, 639), (645, 651), (662, 665), (675, 680), (694, 707), (734, 753)],
             "RAP CATALOG by Anthony Ray.mp4": [(0.5, 75), (604, 613), (658, 680), (724, 737), (760, 781), (1236, 1241)],
@@ -228,8 +227,8 @@ if __name__ == '__main__':
 
     songs = [hunger, fire, handy, time_will_fly, genesis, suicide, diazepam, ocean]
 
-    # songs = [suicide]
-
+    songs = [handy, time_will_fly, diazepam, ocean]
+    # songs = [genesis, suicide]
     output_dir = "cheetah"
     # output_dir = "processed"
 
