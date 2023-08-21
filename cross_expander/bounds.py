@@ -99,8 +99,10 @@ def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkp
                                     print_candidates=True  )
 
 
-
-            print(f"\tCandidates: {candidates}  {max(candidates)}")
+            if candidates is None: 
+                candidates = []
+            else:
+                print(f"\tCandidates: {candidates}  {max(candidates)}")
 
             for c in candidates:
                 max_indices.append(ts + c + clip_length * 2)
