@@ -392,7 +392,7 @@ def detect_faces(react_path, base_reaction_path, frames_to_read=None, frames_per
 
     coarse_face_metadata = f"{base_reaction_path}-coarse_face_position_metadata.pckl"
     if os.path.exists(coarse_face_metadata):
-      face_matches = read_coarse_face_metadata(course_face_metadata)
+      face_matches = read_coarse_face_metadata(coarse_face_metadata)
     else:
       face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition)
       output_coarse_face_metadata(coarse_face_metadata, face_matches)
@@ -419,7 +419,7 @@ def detect_faces(react_path, base_reaction_path, frames_to_read=None, frames_per
       #   - center is the (x,y) centroid
       #   - avg_size is the average (w,h) of candidate face matches in group
 
-      centroids = find_reactor_centroids(face_matches, group, center, avg_size, kernel, width, height)
+      centroids = find_reactor_centroids(face_matches, group, center, avg_size, kernel, width, height, len(reactors))
 
       centroids = smooth_and_interpolate_centroids(centroids)
 
@@ -617,7 +617,7 @@ def calculate_center(group):
 #              coarse match.
 #    kernel:   The (x,y,w,h) bounding box of the coarse_match. 
 #    
-def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kernel, video_width, video_height):
+def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kernel, video_width, video_height, num_reactors):
   centroids = []
   print(f"Finding reactor centroids {len(face_matches)}")
 
@@ -631,42 +631,67 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
   else:
     rep_histos = [match[5] for match in coarse_matches]
 
-  for sampled_frame, faces in face_matches:
+
+  moving_avg_centroid = None
+  for i, (sampled_frame, faces) in enumerate(face_matches):
     print(f"\tmatch for frame {sampled_frame} {len(faces)} {center} {avg_size}")
 
     best_score = 0
     best_centroid = None 
+    
 
-    if len(faces) > 1:
-      for (x,y,w,h,nose,hist) in faces:
-        dx = center[0] - (x + w/2)
-        dy = center[1] - (y + h/2)
-        dist = math.sqrt( dx * dx + dy * dy )
-        dist /= video_width
+    if i == 0 or len(faces) >= num_reactors: # we get bogus results if we don't have enough faces to 
+                                             # choose from in a given frame
 
-        dw = avg_size[0] - w
-        dh = avg_size[1] - h      
-        size_diff = math.sqrt ( dw * dw + dh * dh )
-        size_diff /= video_height
+      if len(faces) > 1:
+        for (x,y,w,h,nose,hist) in faces:
+          dx = center[0] - (x + w/2)
+          dy = center[1] - (y + h/2)
+          dist = math.sqrt( dx * dx + dy * dy )
+          dist /= video_width
 
-        hist_similarity = 0
-        for rep_histo in rep_histos:
-          sim = compare_faces(hist, rep_histo)
-          sim = (sim + 1) / 2 # convert from [-1, 1] to [0, 1]
-          hist_similarity += sim
+          if moving_avg_centroid is None:
+            dist_from_previous = 0
+          else: 
+            dx = moving_avg_centroid[0] - (x + w/2)
+            dy = moving_avg_centroid[1] - (y + h/2)
+            dist_from_previous = math.sqrt( dx * dx + dy * dy )
+            dist_from_previous /= video_width
 
-        hist_similarity /= len(rep_histos)
 
-        score = hist_similarity / (1 + size_diff + 0.5 * dist)
-        print(f"\t\t{score} ({best_score}) dist={dist} size={size_diff} sim={hist_similarity} {(x,y,w,h)}")
-        if score > best_score:
-          best_score = score
-          best_centroid = (x + w/2, y + h/2)
-    elif len(faces) == 1:
-      (x,y,w,h,nose,hist) = faces[0]
-      best_centroid = (x + w/2, y + h/2)
+          dw = avg_size[0] - w
+          dh = avg_size[1] - h      
+          size_diff = math.sqrt ( dw * dw + dh * dh )
+          size_diff /= video_height
 
-    centroids.append( (sampled_frame, best_centroid ) )
+          hist_similarity = 0
+          for rep_histo in rep_histos:
+            sim = compare_faces(hist, rep_histo)
+            sim = (sim + 1) / 2 # convert from [-1, 1] to [0, 1]
+            hist_similarity += sim
+
+          hist_similarity /= len(rep_histos)
+
+          score = hist_similarity / (1 + size_diff + 0.5 * dist + 0.5 * dist_from_previous)
+          print(f"\t\t{score} ({best_score}) dist={dist} size={size_diff} sim={hist_similarity} {(x,y,w,h)}")
+          if score > best_score:
+            best_score = score
+            best_centroid = (x + w/2, y + h/2)
+
+      elif len(faces) == 1:
+        (x,y,w,h,nose,hist) = faces[0]
+        best_centroid = (x + w/2, y + h/2)
+
+      centroids.append( (sampled_frame, best_centroid ) )
+      if moving_avg_centroid is None:
+        moving_avg_centroid = best_centroid
+      else:
+        curr_x, curr_y = best_centroid
+        ma_x, ma_y = moving_avg_centroid
+        weight = .33
+        moving_avg_centroid = (curr_x * weight + (1 - weight) * ma_x, curr_y * weight + (1 - weight) * ma_y )
+    else: 
+      centroids.append( (sampled_frame, centroids[-1][1]))
 
   return centroids
 
@@ -676,7 +701,7 @@ def get_face_img(image, bbox):
   face_img = image[y:y+h, x:x+w]
   return face_img
 
-def preprocess_face(face): #assuming already gray
+def preprocess_face(face): 
   # Convert image to grayscale, equalize histogram and resize
   face_gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
   face_equalized = cv2.equalizeHist(face_gray)
@@ -704,37 +729,6 @@ def compare_faces(hist1, hist2):
   correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
   return correlation
 
-
-
-################
-# Convolves and interpolates centroids
-# sampled_centroids is an array of (frame, (x,y)), where frame is the 
-# sampled frame number (doesn't increase by 1) and (x,y) is 
-# the proposed centroid at that point. 
-def smooth_and_interpolate_centroids2(sampled_centroids):
-  # TODO: Identify outliers in the sampled centroids. Replace the outliers
-  #       with linearly interpolated centroid between the nearest non-outliers. 
-  #       Ignore centroids with a value of None.
-  # de_outliered_centroids = ...
-
-  # TODO: Replace centroids with a value of None by linearly interpolating 
-  #       between the closest defined centroid on either side. 
-  # fully_valued_centroids = ...
-
-  # TODO: smooth out the sampled centroids. Use a convolution that samples
-  #       equally from the current frame and the 3 surrounding frames on 
-  #       either side. 
-  # smoothed_centroids = ...
-
-  # TODO: interpolate smoothed_centroids. We want a centroid at each 
-  # actual frame, not just each sampled frame. So fill in the values 
-  # between each sampled centroid. The centroids can be linearly
-  # interpolated between the two nearest sampled centroids, except 
-  # for the first and last, which can just adopt the value of the 
-  # nearest centroid.
-  # interpolated_centroids = ...
-
-  return interpolated_centroids
 
 def smooth_and_interpolate_centroids(sampled_centroids):
     # Unpack the frames and the centroids from the input
