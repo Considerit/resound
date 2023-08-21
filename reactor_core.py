@@ -145,13 +145,20 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         if len(reaction_videos) > 0 and options['create_compilation']:
             base_video_for_compilation = VideoFileClip(base_video)
             compose_reactor_compilation(song_def, base_video_for_compilation, reaction_videos, os.path.join(song_directory, f"{song} (compilation).mp4"))
+    except KeyboardInterrupt as e:
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+        else:
+            print("Could not find lockfile to clean up")
+        raise(e)
 
     except Exception as e:
         traceback.print_exc()
         print(e)
+        
 
-
-    os.remove(lock_file)
+    if os.path.exists(lock_file):
+        os.remove(lock_file)
     return failed_reactions
 
 def get_orientation(input_file):
