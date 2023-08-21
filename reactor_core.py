@@ -34,7 +34,8 @@ def handle_reaction_video(song:dict, output_dir: str, react_video, base_video, b
     if not options["isolate_commentary"]:
         return []
 
-    _,sr,aligned_reaction_audio_path = extract_audio(output_file)
+    _,sr,aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
+
     isolated_commentary = process_reactor_audio(output_dir, aligned_reaction_audio_path, base_audio_path, extended_by=extend_by, sr=sr)
     
     if not options["create_reactor_view"]:
@@ -53,80 +54,104 @@ from moviepy.editor import VideoFileClip
 def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', include_base_video = True, options = {}):
 
 
+    try:
 
-    song = f"{song_def['artist']} - {song_def['song']}"
-    song_directory = os.path.join('Media', song)
-    reactions_dir = 'reactions'
-
-    full_output_dir = os.path.join(song_directory, output_dir)
-    if not os.path.exists(full_output_dir):
-       # Create a new directory because it does not exist
-       os.makedirs(full_output_dir)
-
-    print("Processing directory", song_directory, reactions_dir, "Outputting to", output_dir)
-
-    base_video, react_videos = prepare_reactions(song_directory)
-
-
-    # Extract the base audio and get the sample rate
-    base_audio_data, _, base_audio_path = extract_audio(base_video)
-
-
-    reaction_dir = os.path.join(song_directory, reactions_dir)
-
-    failed_reactions = []
-    reactors = []
-    for i, react_video in enumerate(react_videos):
-        # if 'Cliff' not in react_video:
-        #     continue
-
-        try:
-            # profiler = cProfile.Profile()
-            # profiler.enable()
-
-            faces = handle_reaction_video(song_def, full_output_dir, react_video, base_video, base_audio_data, base_audio_path, copy.deepcopy(options))
-            
-            if len(faces) > 1:
-                outputs = [{'file': f, 'group': i + 1} for f in faces]
-            else:
-                outputs = [{'file': f} for f in faces]
-
-            reactors.extend(outputs)
+        song = f"{song_def['artist']} - {song_def['song']}"
+        song_directory = os.path.join('Media', song)
+        reactions_dir = 'reactions'
 
 
 
-            # profiler.disable()
-            # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
-            # stats.print_stats()
 
-        except Exception as e: 
-            traceback.print_exc()
-            print(e)
-            failed_reactions.append((react_video, e))
+        full_output_dir = os.path.join(song_directory, output_dir)
+        if not os.path.exists(full_output_dir):
+           # Create a new directory because it does not exist
+           os.makedirs(full_output_dir)
 
-    reaction_videos = []
-    for reactor in reactors: 
-        input_file = reactor['file']
 
-        featured = False
-        for featured_r in song_def['featured']:
-          if featured_r in input_file:
-            featured = True
-            break
 
-        reaction = {
-            'key': input_file,
-            'clip': VideoFileClip(input_file),
-            'orientation': get_orientation(input_file),
-            'group': reactor.get('group', None),
-            'featured': featured
-        }
-        reaction_videos.append(reaction)
+        print("Processing directory", song_directory, reactions_dir, "Outputting to", output_dir)
 
-    if len(reaction_videos) > 0 and options['create_compilation']:
-        base_video_for_compilation = VideoFileClip(base_video)
-        compose_reactor_compilation(song_def, base_video_for_compilation, reaction_videos, os.path.join(song_directory, f"{song} (compilation).mp4"))
+        lock_file = os.path.join(full_output_dir, 'locked')
+        if os.path.exists( lock_file  ):
+            print("...Skipping because another process is already working on this video")
+            return []
 
+        lock = open(lock_file, 'w')
+        lock.write(f"yo")
+        lock.close()
+
+
+        base_video, react_videos = prepare_reactions(song_directory)
+
+
+        # Extract the base audio and get the sample rate
+        base_audio_data, _, base_audio_path = extract_audio(base_video)
+
+
+        reaction_dir = os.path.join(song_directory, reactions_dir)
+
+        failed_reactions = []
+        reactors = []
+        for i, react_video in enumerate(react_videos):
+            # if 'Cliff' not in react_video:
+            #     continue
+
+            try:
+                # profiler = cProfile.Profile()
+                # profiler.enable()
+
+                faces = handle_reaction_video(song_def, full_output_dir, react_video, base_video, base_audio_data, base_audio_path, copy.deepcopy(options))
+                
+                if len(faces) > 1:
+                    outputs = [{'file': f, 'group': i + 1} for f in faces]
+                else:
+                    outputs = [{'file': f} for f in faces]
+
+                reactors.extend(outputs)
+
+
+
+                # profiler.disable()
+                # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+                # stats.print_stats()
+
+            except Exception as e: 
+                traceback.print_exc()
+                print(e)
+                failed_reactions.append((react_video, e))
+
+        reaction_videos = []
+        for reactor in reactors: 
+            input_file = reactor['file']
+
+            featured = False
+            for featured_r in song_def['featured']:
+              if featured_r in input_file:
+                featured = True
+                break
+
+            print(f"\tQueuing up {input_file}")
+
+            reaction = {
+                'key': input_file,
+                'clip': VideoFileClip(input_file),
+                'orientation': get_orientation(input_file),
+                'group': reactor.get('group', None),
+                'featured': featured
+            }
+            reaction_videos.append(reaction)
+
+        if len(reaction_videos) > 0 and options['create_compilation']:
+            base_video_for_compilation = VideoFileClip(base_video)
+            compose_reactor_compilation(song_def, base_video_for_compilation, reaction_videos, os.path.join(song_directory, f"{song} (compilation).mp4"))
+
+    except Exception as e:
+        traceback.print_exc()
+        print(e)
+
+
+    os.remove(lock_file)
     return failed_reactions
 
 def get_orientation(input_file):
@@ -208,12 +233,62 @@ if __name__ == '__main__':
         'search': 'Diazepam'
     }
 
+
+    crutch = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'Crutch',
+        'artist': 'Ren',
+        'search': 'Crutch'
+    }
+
+    losing_it = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'Losing It',
+        'artist': 'Ren',
+        'search': 'Losing It'
+    }
+
+    power = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'Power',
+        'artist': 'Ren',
+        'search': 'Power'
+    }
+
+    sick_boi = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'Sick Boi',
+        'artist': 'Ren',
+        'search': 'Sick Boi'
+    }
+
+
+    watch_world_burn = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'Watch the World Burn',
+        'artist': 'Falling in Reverse',
+        'search': 'Watch the World Burn'
+    }
+
     time_will_fly = {
         'include_base_video': True,
-        'featured': ["ThatSingerReactions", "Black Pegasus"],
+        'featured': ["ThatSingerReactions", "Black Pegasus", "redheadedneighbor", "The NEW Reel"],
         'song': 'Time Will Fly',
         'artist': 'Sam Tompkins',
         'search': 'Time Will Fly'
+    }
+
+    cats_in_the_cradle = {
+        'include_base_video': True,
+        'featured': [],
+        'song': "Cat's in the Cradle",
+        'artist': 'Harry Chapin',
+        'search': "Cat's in the Cradle"
     }
 
     handy = {
@@ -224,11 +299,44 @@ if __name__ == '__main__':
         'search': 'Handy'
     }
 
+    foil = {
+        'include_base_video': True,
+        'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
+        'song': 'Foil',
+        'artist': 'Weird Al',
+        'search': 'Foil'
+    }
 
-    songs = [hunger, fire, handy, time_will_fly, genesis, suicide, diazepam, ocean]
+    pentiums = {
+        'include_base_video': True,
+        'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
+        'song': "It's All About The Pentiums",
+        'artist': 'Weird Al',
+        'search': 'All About The Pentiums'
+    }
 
-    songs = [handy, time_will_fly, diazepam, ocean]
-    # songs = [genesis, suicide]
+
+    wreck_of_fitzgerald = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'Wreck of The Edmund Fitzgerald',
+        'artist': 'Gordon Lightfoot',
+        'search': 'Wreck of The Edmund Fitzgerald'
+    }
+
+    this_is_america = {
+        'include_base_video': True,
+        'featured': [],
+        'song': 'This is America',
+        'artist': 'Childish Gambino',
+        'search': 'This is America'
+    }
+
+
+    finished = [time_will_fly]
+    songs = [suicide, hunger, fire, genesis, handy, diazepam, ocean, crutch, watch_world_burn, foil, cats_in_the_cradle, power, losing_it, sick_boi, this_is_america, wreck_of_fitzgerald, pentiums]
+
+
     output_dir = "cheetah"
     # output_dir = "processed"
 
