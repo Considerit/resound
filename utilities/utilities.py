@@ -270,6 +270,7 @@ def prepare_reactions(song_directory: str):
             with VideoFileClip(react_video) as clip:
                 width, height = clip.size
 
+
             resize_command = ""
             if width > 1920 or height > 1080:
                 # Calculate aspect ratio
@@ -283,13 +284,11 @@ def prepare_reactions(song_directory: str):
                 
                 resize_command = f"-vf scale={new_width}:{new_height}"
 
+
             # Generate the ffmpeg command
             command = f'ffmpeg -y -i "{react_video}" {resize_command} -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -c:a aac "{react_video_mp4}"'
-
-
-
-            # TODO: if video is also greater than 1920x1080 resolution, resize it while maintaining aspect ratio            
-            command = f'ffmpeg -y -i "{react_video}" -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -c:a aac "{react_video_mp4}"'
+            
+            print(command)
             subprocess.run(command, shell=True, check=True)
 
             if os.path.exists(react_video):
