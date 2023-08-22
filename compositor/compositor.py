@@ -11,7 +11,10 @@ import colorsys
 from moviepy.editor import ImageClip, CompositeVideoClip, CompositeAudioClip
 from moviepy.audio.AudioClip import AudioArrayClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
+from moviepy.editor import VideoFileClip
 from moviepy.video.fx.all import crop
+
+from utilities import conversion_frame_rate, conversion_audio_sample_rate
 
 
 # I have a base video, and then any number of videos of people reacting to that base video. I would 
@@ -39,13 +42,15 @@ from moviepy.video.fx.all import crop
 # The aspect ration of the resulting video should be approximately that of a laptop screen, and can 
 # be any size up to the resolution of a modern macbook pro. These constraints are soft. 
 
-def compose_reactor_compilation(song, base_video, reactions, output_path, output_size=(1792, 1120)):
+def compose_reactor_compilation(song, base_video_path, reactions, output_path, output_size=(1792, 1120), fast_only=False):
 
     if os.path.exists(output_path):
       print("Compilation already exists", output_path)
       return
 
     print(f"Creating compilation for {output_path}")
+
+    base_video = VideoFileClip(base_video_path)
 
     width, height = output_size
     base_size = int(width * .55)
@@ -54,18 +59,20 @@ def compose_reactor_compilation(song, base_video, reactions, output_path, output
 
     include_base_video = song['include_base_video']
 
-    # Position base video in the center of the grid
     if include_base_video:
 
-      base_video = base_video.resize(width=base_size)
+      base_video = base_video.resize(base_size / base_video.w)
       base_width, base_height = base_video.size
 
-      x,y = (base_size / 2, base_height / 2)
+      if base_video.audio.fps != conversion_audio_sample_rate:
+          base_video = base_video.set_audio(base_video.audio.set_fps(conversion_audio_sample_rate))
 
-      base_video = base_video.set_position((x - base_size / 2, y - base_height / 2))
+      x,y = (base_width / 2, base_height / 2)
+
+      base_video = base_video.set_position((x - base_width / 2, y - base_height / 2))
 
       # upper left point of rectangle, lower right point of rectangle
-      bounds = (x - base_size / 2, y - base_height / 2, x + base_size / 2, y + base_height / 2)
+      bounds = (x - base_width / 2, y - base_height / 2, x + base_width / 2, y + base_height / 2)
     else: 
       bounds = [0,0,width,0]
 
@@ -165,7 +172,18 @@ def compose_reactor_compilation(song, base_video, reactions, output_path, output
     final_clip.set_fps(30)
 
     # Save the result
-    final_clip.write_videofile(output_path, codec='libx264', audio_codec="aac")
+    fast_path = output_path + "fast.mp4"
+    if not os.path.exists(fast_path):
+      final_clip.write_videofile(fast_path, 
+                             codec='libx264', 
+                             audio_codec="aac", 
+                             threads=2, 
+                             preset='ultrafast', 
+                             profile='baseline', 
+                             bitrate="500k")
+
+    if not fast_only:
+      final_clip.write_videofile(output_path, codec='libx264', audio_codec="aac", threads=2, )
 
 
 
@@ -186,7 +204,7 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
 
     # Calculate the center of the grid
     if center is None:  
-      main_padding = max(0, 220 - 8.25 * min_cells)
+      main_padding = max(0, 180 - 8 * min_cells)
       center = (outside_bounds[2] + main_padding, outside_bounds[3] + main_padding)
     
     # Create an empty list to hold the hexagon center coordinates

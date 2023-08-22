@@ -46,7 +46,9 @@ import traceback
 import cProfile
 import pstats
 
-from utilities import trim_and_concat_video, extract_audio, compute_precision_recall, universal_frame_rate, is_close, print_memory_consumption
+from cross_expander.create_trimmed_video import trim_and_concat_video
+
+from utilities import extract_audio, compute_precision_recall, universal_frame_rate, is_close, print_memory_consumption
 
 from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data
 
@@ -374,7 +376,7 @@ def cross_expander_aligner(base_audio, reaction_audio, sr, options, ground_truth
 
 def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, react_video, base_video, base_audio_data, base_audio_path, options, extend_by = 0):
 
-    gt = song.get('ground_truth', {}).get(os.path.basename(react_video) )
+    gt = song.get('ground_truth', {}).get(os.path.splitext(os.path.basename(react_video))[0] )
     # if not gt: 
     #     return
 

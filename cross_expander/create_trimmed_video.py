@@ -1,7 +1,8 @@
-import os
+import os, subprocess
 from typing import List, Tuple
 from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, CompositeVideoClip
 
+from utilities import conversion_frame_rate, conversion_audio_sample_rate
 
 
 def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, ext: str, extend_by=0, use_fill=True):
@@ -18,6 +19,12 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
     # process video  target_resolution=(1080, 1920)
     reaction_video = VideoFileClip(video_file)
+    if reaction_video.w > 1920:
+        reaction_video = reaction_video.resize( 1920 / reaction_video.w )
+
+    if reaction_video.audio.fps != conversion_audio_sample_rate:
+        reaction_video = reaction_video.set_audio(reaction_video.audio.set_fps(conversion_audio_sample_rate))
+
     width = reaction_video.w
     height = reaction_video.h
 
@@ -56,10 +63,9 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
             if filler:
                 subclip = subclip.resize(height=height, width=width)
                 subclip = subclip.without_audio()
-                subclip = subclip.set_fps(reaction_video.fps)
         else: 
             clip_duration = float(filler_end - filler_start)
-            subclip = ColorClip(size=(width, height), color=(0,0,0)).set_duration(clip_duration).set_fps(reaction_video.fps).without_audio()
+            subclip = ColorClip(size=(width, height), color=(0,0,0)).set_duration(clip_duration).without_audio()
 
 
         print(f'Adding frames from {start_frame}s to {end_frame}s filler? {filler}')
@@ -109,3 +115,71 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     print(f'DONE! Duration={output_video.duration} (compare to {base_video_duration})')
 
     return output_file
+
+
+import json
+
+def extract_video_info(video_file):
+    command = [
+        'ffprobe', '-i', video_file, 
+        '-hide_banner', 
+        '-print_format', 'json', 
+        '-show_format', 
+        '-show_streams'
+    ]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    
+    json_start_idx = result.stdout.find('{')
+    json_output = result.stdout[json_start_idx:]
+    
+    try:
+        video_info = json.loads(json_output)
+    except json.JSONDecodeError:
+        print("Error while extracting information from video. FFprobe says:")
+        print(result.stdout)
+        return None
+    
+    return video_info
+
+def check_compatibility(video1, video2):
+    video1_info = extract_video_info(video1)
+    video2_info = extract_video_info(video2)
+
+    if not video1_info or not video2_info:
+        return
+
+    video1_video_stream = next(s for s in video1_info['streams'] if s['codec_type'] == 'video')
+    video2_video_stream = next(s for s in video2_info['streams'] if s['codec_type'] == 'video')
+
+    video1_audio_stream = next(s for s in video1_info['streams'] if s['codec_type'] == 'audio')
+    video2_audio_stream = next(s for s in video2_info['streams'] if s['codec_type'] == 'audio')
+
+    video_attributes_to_check = [
+        'codec_name', 'width', 'height', 'pix_fmt', 
+        'avg_frame_rate', 'color_range', 'color_space', 
+        'color_transfer', 'color_primaries', 'level', 
+        'profile', 'sample_aspect_ratio', 'display_aspect_ratio',
+        'field_order'
+    ]
+
+    audio_attributes_to_check = [
+        'codec_name', 'sample_rate', 'channels', 
+        'channel_layout', 'sample_fmt'
+    ]
+
+    for attribute in video_attributes_to_check:
+        v1_attr = video1_video_stream.get(attribute, "Unavailable")
+        v2_attr = video2_video_stream.get(attribute, "Unavailable")
+        if v1_attr != v2_attr:
+            print(f"Different {attribute}: {video1} has {v1_attr}, while {video2} has {v2_attr}")
+
+    if video1_audio_stream and video2_audio_stream:
+        for attribute in audio_attributes_to_check:
+            v1_attr = video1_audio_stream.get(attribute, "Unavailable")
+            v2_attr = video2_audio_stream.get(attribute, "Unavailable")
+            if v1_attr != v2_attr:
+                print(f"Different {attribute}: {video1} has {v1_attr}, while {video2} has {v2_attr}")
+    elif not video1_audio_stream:
+        print(f"{video1} does not contain an audio stream.")
+    elif not video2_audio_stream:
+        print(f"{video2} does not contain an audio stream.")

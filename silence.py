@@ -39,7 +39,7 @@ def get_edge_silence(video_file, trim_end=True):
     end /= 1000
 
 
-    print(video_file, start_trim, end_trim)
+    print(f"Edge silence for {video_file}: ({start_trim}, {end_trim})")
 
     return (start, end)
 

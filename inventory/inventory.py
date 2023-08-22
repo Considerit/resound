@@ -165,6 +165,15 @@ def create_manifest(artist, song_title, manifest_file, search):
 
 
 
+def get_manifest_path(artist, song):
+    song_directory = os.path.join('Media', f"{artist} - {song}")
+    
+    if not os.path.exists(song_directory):
+       # Create a new directory because it does not exist
+       os.makedirs(song_directory)
+
+    manifest_file = os.path.join(song_directory, "manifest.json")
+    return manifest_file
 
 
 def download_and_parse_reactions(artist, song, search):
@@ -174,7 +183,7 @@ def download_and_parse_reactions(artist, song, search):
        # Create a new directory because it does not exist
        os.makedirs(song_directory)
 
-    manifest_file = os.path.join(song_directory, "manifest.json")
+    manifest_file = get_manifest_path(artist, song)
     if not os.path.exists(manifest_file):
         create_manifest(artist, song, manifest_file, search)
 

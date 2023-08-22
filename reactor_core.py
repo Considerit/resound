@@ -2,7 +2,7 @@ import os
 import copy
 
 from utilities import prepare_reactions, extract_audio
-from inventory import download_and_parse_reactions
+from inventory import download_and_parse_reactions, get_manifest_path
 from cross_expander import create_aligned_reaction_video
 from face_finder import create_reactor_view
 from backchannel_isolator import process_reactor_audio
@@ -20,14 +20,13 @@ def handle_reaction_video(song:dict, output_dir: str, react_video, base_video, b
 
 
     react_video_name, react_video_ext = os.path.splitext(react_video)
-    output_file = os.path.join(output_dir, os.path.basename(react_video_name) + f"-CROSS-EXPANDER{react_video_ext}")
+    output_file = os.path.join(output_dir, os.path.basename(react_video_name) + f"-CROSS-EXPANDER.mp4")
 
     # if '40' not in react_video_name:
     #     return
 
     print("processing ", react_video_name)
     # Create the output video file name
-
 
     create_aligned_reaction_video(song, react_video_ext, output_file, react_video, base_video, base_audio_data, base_audio_path, options, extend_by=extend_by)
 
@@ -55,11 +54,15 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
 
 
     try:
-
         song = f"{song_def['artist']} - {song_def['song']}"
         song_directory = os.path.join('Media', song)
         reactions_dir = 'reactions'
+        failed_reactions = []
 
+        compilation_path = os.path.join(song_directory, f"{song} (compilation).mp4")
+        if os.path.exists(compilation_path):
+          print("Compilation already exists", compilation_path)
+          return []
 
 
 
@@ -82,6 +85,12 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         lock.close()
 
 
+        if options.get('download_and_parse'):
+            download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'])
+
+        manifest = open(get_manifest_path(song_def['artist'], song_def['song']), "r")
+
+
         base_video, react_videos = prepare_reactions(song_directory)
 
 
@@ -91,7 +100,6 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
 
         reaction_dir = os.path.join(song_directory, reactions_dir)
 
-        failed_reactions = []
         reactors = []
         for i, react_video in enumerate(react_videos):
             # if 'Cliff' not in react_video:
@@ -126,6 +134,7 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
             input_file = reactor['file']
 
             featured = False
+            
             for featured_r in song_def['featured']:
               if featured_r in input_file:
                 featured = True
@@ -143,8 +152,7 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
             reaction_videos.append(reaction)
 
         if len(reaction_videos) > 0 and options['create_compilation']:
-            base_video_for_compilation = VideoFileClip(base_video)
-            compose_reactor_compilation(song_def, base_video_for_compilation, reaction_videos, os.path.join(song_directory, f"{song} (compilation).mp4"))
+            compose_reactor_compilation(song_def, base_video, reaction_videos, compilation_path, fast_only=song_def.get('fast_only', False))
     except KeyboardInterrupt as e:
         if os.path.exists(lock_file):
             os.remove(lock_file)
@@ -176,8 +184,8 @@ if __name__ == '__main__':
         'include_base_video': True,
         'featured': ['ThatSingerReactions', 'Rosalie Reacts', 'JohnReavesLive', 'Dicodec'],
         'ground_truth': {
-            "Black Pegasus.mp4": [(241, 306.4), (7*60+5, 7*60+54), (8*60+2, 10*60 + 14)],
-            "That’s Not Acting Either.mp4": [(75, 129), (192, 282), (7*60+30, 9*60 + 7)]            
+            "Black Pegasus": [(241, 306.4), (7*60+5, 7*60+54), (8*60+2, 10*60 + 14)],
+            "That’s Not Acting Either": [(75, 129), (192, 282), (7*60+30, 9*60 + 7)]            
         },
         'song': 'Suicide',
         'artist': 'Ren',
@@ -197,9 +205,9 @@ if __name__ == '__main__':
         'include_base_video': True,
         'featured': ['H8TFUL JAY', 'Stevie Knight', 'Jamel_AKA_Jamal', 'Knox Hill', "TheWolfJohnson", "Lilly Jane Reacts", "ThatSingerReactions"],
         'ground_truth': {
-            "Knox Hill.mp4": [(0.0, 12.6), (80, 89), (123, 131), (156, 160), (173, 176), (189, 193), (235, 239), (247, 254.5), (286, 290), (342, 346), (373, 377), (442, 445), (477, 483), (513, 517), (546, 552), (570, 578), (599, 600), (632, 639), (645, 651), (662, 665), (675, 680), (694, 707), (734, 753)],
-            "RAP CATALOG by Anthony Ray.mp4": [(0.5, 75), (604, 613), (658, 680), (724, 737), (760, 781), (1236, 1241)],
-            "H8TFUL JAY.mp4": [(0, 12.75), (28, 36), (49, 51), (88, 90), (104, 112), (135, 140), (160, 178), (195, 200), (227, 238), (254, 260), (284, 298), (319, 330), (355, 361), (371, 408)],
+            "Knox Hill": [(0.0, 12.6), (80, 89), (123, 131), (156, 160), (173, 176), (189, 193), (235, 239), (247, 254.5), (286, 290), (342, 346), (373, 377), (442, 445), (477, 483), (513, 517), (546, 552), (570, 578), (599, 600), (632, 639), (645, 651), (662, 665), (675, 680), (694, 707), (734, 753)],
+            "RAP CATALOG by Anthony Ray": [(0.5, 75), (604, 613), (658, 680), (724, 737), (760, 781), (1236, 1241)],
+            "H8TFUL JAY": [(0, 12.75), (28, 36), (49, 51), (88, 90), (104, 112), (135, 140), (160, 178), (195, 200), (227, 238), (254, 260), (284, 298), (319, 330), (355, 361), (371, 408)],
 
         },
         'song': 'The Hunger',
@@ -209,7 +217,7 @@ if __name__ == '__main__':
 
     genesis = {
         'include_base_video': True,
-        'featured': ['Jamel_AKA_Jamal', 'J Rizzle', 'ThatSingerReactions'],
+        'featured': ['Jamel_AKA_Jamal', 'J Rizzle', 'ThatSingerReactions', "K-RayTV", "Black Pegasus"],
         'song': 'Genesis',
         'artist': 'Ren',
         'search': 'Genesis'
@@ -221,7 +229,8 @@ if __name__ == '__main__':
         'featured': [],
         'song': 'Humble',
         'artist': 'Ren',
-        'search': 'Humble'
+        'search': 'Humble',
+        'fast_only': True
     }
 
     ocean = {
@@ -229,12 +238,13 @@ if __name__ == '__main__':
         'featured': ["RAP CATALOG by Anthony Ray", "Black Pegasus"],
         'song': 'Ocean',
         'artist': 'Ren',
-        'search': 'Ocean'
+        'search': 'Ocean',
+        'fast_only': True
     }
 
     diazepam = {
         'include_base_video': True,
-        'featured': ["Neurogal MD"],
+        'featured': ["Jamel_AKA_Jamal", "Neurogal MD", "SheaWhatNow", "Sean Staxx"],
         'song': 'Diazepam',
         'artist': 'Ren',
         'search': 'Diazepam'
@@ -243,10 +253,11 @@ if __name__ == '__main__':
 
     crutch = {
         'include_base_video': True,
-        'featured': [],
+        'featured': ["Rosalie Reacts", "That\u2019s Not Acting Either", "McFly JP", "Joe E Sparks", "Ian Taylor Reacts", "redheadedneighbor"],
         'song': 'Crutch',
         'artist': 'Ren',
-        'search': 'Crutch'
+        'search': 'Crutch',
+        'fast_only': True
     }
 
     losing_it = {
@@ -254,7 +265,8 @@ if __name__ == '__main__':
         'featured': [],
         'song': 'Losing It',
         'artist': 'Ren',
-        'search': 'Losing It'
+        'search': 'Losing It',
+        'fast_only': True
     }
 
     power = {
@@ -262,7 +274,8 @@ if __name__ == '__main__':
         'featured': [],
         'song': 'Power',
         'artist': 'Ren',
-        'search': 'Power'
+        'search': 'Power',
+        'fast_only': True
     }
 
     sick_boi = {
@@ -270,7 +283,8 @@ if __name__ == '__main__':
         'featured': [],
         'song': 'Sick Boi',
         'artist': 'Ren',
-        'search': 'Sick Boi'
+        'search': 'Sick Boi',
+        'fast_only': True
     }
 
 
@@ -279,7 +293,8 @@ if __name__ == '__main__':
         'featured': [],
         'song': 'Watch the World Burn',
         'artist': 'Falling in Reverse',
-        'search': 'Watch the World Burn'
+        'search': 'Watch the World Burn',
+        'fast_only': True
     }
 
     time_will_fly = {
@@ -295,7 +310,8 @@ if __name__ == '__main__':
         'featured': [],
         'song': "Cat's in the Cradle",
         'artist': 'Harry Chapin',
-        'search': "Cat's in the Cradle"
+        'search': "Cat's in the Cradle",
+        'fast_only': True
     }
 
     handy = {
@@ -311,7 +327,8 @@ if __name__ == '__main__':
         'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
         'song': 'Foil',
         'artist': 'Weird Al',
-        'search': 'Foil'
+        'search': 'Foil',
+        'fast_only': True
     }
 
     pentiums = {
@@ -319,7 +336,8 @@ if __name__ == '__main__':
         'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
         'song': "It's All About The Pentiums",
         'artist': 'Weird Al',
-        'search': 'All About The Pentiums'
+        'search': 'All About The Pentiums',
+        'fast_only': True
     }
 
 
@@ -328,7 +346,8 @@ if __name__ == '__main__':
         'featured': [],
         'song': 'Wreck of The Edmund Fitzgerald',
         'artist': 'Gordon Lightfoot',
-        'search': 'Wreck of The Edmund Fitzgerald'
+        'search': 'Wreck of The Edmund Fitzgerald',
+        'fast_only': True
     }
 
     this_is_america = {
@@ -336,16 +355,16 @@ if __name__ == '__main__':
         'featured': [],
         'song': 'This is America',
         'artist': 'Childish Gambino',
-        'search': 'This is America'
+        'search': 'This is America',
+        'fast_only': True
     }
 
 
     finished = [time_will_fly]
-    songs = [suicide, hunger, fire, genesis, handy, diazepam, ocean, crutch, watch_world_burn, foil, cats_in_the_cradle, power, losing_it, sick_boi, this_is_america, wreck_of_fitzgerald, pentiums]
+    songs = [handy, suicide, hunger, fire, genesis, watch_world_burn, foil, cats_in_the_cradle, power, losing_it, sick_boi, this_is_america, wreck_of_fitzgerald, pentiums, diazepam, ocean, crutch ]
 
 
     output_dir = "cheetah"
-    # output_dir = "processed"
 
 
     options = {
@@ -361,8 +380,6 @@ if __name__ == '__main__':
 
     failures = []
     for song in songs: 
-        if options.get('download_and_parse'):
-            download_and_parse_reactions(song['artist'], song['song'], song['search'])
         failed = create_reaction_compilations(song, output_dir = output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
