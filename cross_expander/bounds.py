@@ -147,6 +147,19 @@ def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkp
         print(f"\t{base_ts / sr}  <=  {last_reaction_match / sr}")
 
 
+    gt = basics.get('ground_truth')
+    if gt: 
+        print("Checking if ground truth is within alignment bounds")
+        current_start = 0
+        for reaction_start, reaction_end in gt:
+            bound = get_bound(alignment_bounds, current_start, reaction_end)
+            if( not in_bounds(bound, current_start, reaction_start)):
+                print(f"\tOh oh! {reaction_start} is not in bounds of {current_start}")
+            else: 
+                print(f"\tIn bounds: {reaction_start} for {current_start}")
+            current_start += reaction_end - reaction_start
+
+
     # profiler.disable()
     # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
     # stats.print_stats()
