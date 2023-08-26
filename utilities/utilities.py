@@ -96,7 +96,8 @@ def prepare_reactions(song_directory: str):
     # Get all reaction video files
     webm_videos = glob.glob(os.path.join(reaction_dir, "*.webm"))
     mp4_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
-    react_videos = webm_videos + mp4_videos
+    mkv_videos = glob.glob(os.path.join(reaction_dir, "*.mkv"))    
+    react_videos = webm_videos + mp4_videos + mkv_videos
 
 
     # # Process each reaction video

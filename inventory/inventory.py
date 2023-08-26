@@ -228,8 +228,6 @@ def download_and_parse_reactions(artist, song, search):
             except:
                 print(f"Failed to download {output} {cmd}")
 
-    prepare_reactions(song_directory)
-
 
 
 
