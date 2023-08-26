@@ -177,11 +177,12 @@ def create_reaction_mfcc_from_path(path, basics):
             length = reaction_end - reaction_start
             segment = reaction_audio_mfcc[:,reaction_start:reaction_end]
         else:
-            current_start = round(current_start / hop_length)
-            current_end = round(current_end / hop_length)
+            length = 0
+            # current_start = round(current_start / hop_length)
+            # current_end = round(current_end / hop_length)
 
-            length = current_end - current_start
-            segment = base_audio_mfcc[:,current_start:current_end]
+            # length = current_end - current_start
+            # segment = base_audio_mfcc[:,current_start:current_end]
 
         if length > 0:
             path_mfcc[:,start:start+length] = segment
@@ -343,7 +344,8 @@ def path_score(path, basics, relative_to=None):
 
     duration_score = (duration + fill) / relative_to
 
-    total_score = duration_score * duration_score * fill_score * fill_score * earliness * alignment
+
+    total_score = duration_score * duration_score * fill_score * earliness * alignment
     if duration == 0:
         total_score = alignment = 0
 
@@ -359,8 +361,6 @@ def find_best_path(candidate_paths, basics):
     reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
     hop_length = basics.get('hop_length')
     gt = basics.get('ground_truth')
-    if gt: 
-        gt = [ (int(s * sr), int(e * sr)) for (s,e) in gt]
 
 
 
@@ -404,31 +404,77 @@ def find_best_path(candidate_paths, basics):
 
     print("Paths by score:")
     for path,scores in paths_by_score:
+        if gt: 
+            gtpp = ground_truth_overlap(path, gt)
+
+
         if scores[0] > 0.9:
             if gt:
-                gtp = f"Ground Truth: {ground_truth_overlap(path, gt)}%"
+                gtp = f"Ground Truth: {gtpp}%"
             else:
                 gtp = ""
             print(f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]} {gtp}")
-            for sequence in path:
-                reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+            print_path(path, basics)
 
-                mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
-                mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
+    if gt: 
+        max_gt = 0
+        best_gt_path = None
+        best_scores = None
+        for path,scores in paths_by_score:
+            gtpp = ground_truth_overlap(path, gt)
+            if gtpp > max_gt:
+                max_gt = gtpp
+                best_gt_path = path
+                best_scores = scores
 
-                voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
-                voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
+        print("***** Best Ground Truth Path *****")
 
-                if is_filler: 
-                    mfcc_react_chunk = mfcc_song_chunk
-                    voldiff_react_chunk = voldiff_song_chunk
+        print(f"\tScore={best_scores[0]}  EarlyThrough={best_scores[1]}  Similarity={best_scores[2]} Duration={best_scores[3]} {max_gt}")
+        print_path(best_gt_path, basics)
 
-                mfcc_score = mfcc_similarity(sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
-                rel_volume_alignment = relative_volume_similarity(sr, vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
-                print(f"\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}]")
 
 
     return paths_by_score[0][0]
+
+
+def print_path(path, basics):
+    sr = basics.get('sr')
+    base_audio_mfcc = basics.get('base_audio_mfcc')
+    base_audio_vol_diff = basics.get('song_percentile_loudness')
+    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+    reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
+    hop_length = basics.get('hop_length')
+    gt = basics.get('ground_truth')
+
+    if gt: 
+        print(f"Ground Truth Overlap {ground_truth_overlap(path, gt)}%")
+
+    for sequence in path:
+        reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+
+        mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
+        mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
+
+        voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
+        voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
+
+        if is_filler: 
+            mfcc_react_chunk = mfcc_song_chunk
+            voldiff_react_chunk = voldiff_song_chunk
+
+        mfcc_score = mfcc_similarity(sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
+        rel_volume_alignment = relative_volume_similarity(sr, vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
+
+        if gt and not is_filler: 
+            total_overlap = 0
+            for gt_sequence in gt:
+                total_overlap += calculate_overlap(sequence, gt_sequence)
+
+            gt_pr = f"{100 * total_overlap / (sequence[1] - sequence[0])}%"
+        else:
+            gt_pr = ""
+
+        print(f"\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}] {gt_pr}")
 
 
 def calculate_overlap(interval1, interval2):
@@ -438,9 +484,11 @@ def calculate_overlap(interval1, interval2):
 def ground_truth_overlap(path, gt):
     total_overlap = 0
 
-    for p_interval in path:
-        for gt_interval in gt:
-            total_overlap += calculate_overlap(p_interval, gt_interval)
+    for sequence in path:
+        if not sequence[4]:
+            for gt_sequence in gt:
+
+                total_overlap += calculate_overlap(sequence, gt_sequence)
 
     # Calculate total duration of both paths
     path_duration = sum(end - start for start, end, cstart, cend, filler in path)
