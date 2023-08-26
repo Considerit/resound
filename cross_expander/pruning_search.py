@@ -16,7 +16,7 @@ def initialize_path_pruning():
                 "exact",
                 "bounds",
                 "scope_cached",
-                "seg_start_cached",
+                "seg_start_prune",
                 "combinatorial",
                 "continuity",
                 'duplicate_path_prune'
@@ -95,7 +95,7 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
     # aggressive prune based on scores after having passed a checkpoint 
     if depth > 0:
         should_prune = check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_scores, best_finished_path, current_start, basics)
-        if should_prune and max_visited > 2500:
+        if should_prune: #and max_visited > 2500:
             prune_types[should_prune] += 1
             return True
 
@@ -145,7 +145,7 @@ def check_for_prune_at_segment_start(basics, paths_at_segment_start, current_pat
             paths_at_segment_start[i][1] = prior_score
 
         if confidence * prior_score[0] >= score[0]: # or (prior_score[1] >= score[1] and prior_score[2] > score[2] and prior_score[3] > score[3]):
-            prune_types['seg_start_cached'] += 1
+            prune_types['seg_start_prune'] += 1
             # print("pruning!")
             return True
 
@@ -170,7 +170,6 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
         print("Weird zero length path!")
         return 'checkpoint'
 
-
     # go through all checkpoints we've passed
     for its, current_ts in enumerate(checkpoints):
         if current_start < current_ts: 
@@ -194,15 +193,13 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
 
 
 
-        # if current_ts > len_audio * .75:
-        #     confidence = .95
-        # else: 
-        #     confidence = .45 + .499 * (  current_ts / (len_audio * .75) )
-
         if current_ts > len_audio / 2:
             confidence = .99
         else: 
             confidence = .5 + .499 * (  current_ts / (len_audio / 2) )
+
+        def get_score(sc):
+            return sc[0] # * sc[3] #* sc[3] * sc[3] * sc[3] * sc[3] * sc[3]
 
         if 'score' in best_finished_path:
             if current_ts not in best_finished_path['partials']:
@@ -210,7 +207,7 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
                 best_finished_path['partials'][current_ts] = best_at_checkpoint
             best_at_checkpoint = best_finished_path['partials'][current_ts]
 
-            if confidence * best_at_checkpoint[2] * best_at_checkpoint[3] * best_at_checkpoint[3] > current_score[2] * current_score[3] * current_score[3]: 
+            if confidence * get_score(best_at_checkpoint) > get_score(current_score): 
                 paths_by_checkpoint[current_ts]['prunes_here'] += 1
                 return 'best_score'
 
@@ -226,7 +223,7 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
             if comp_reaction_end <= adjusted_reaction_end:
 
                 # if current_score[0] < prune_threshold * comp_score[0]:
-                if confidence * comp_score[2] * comp_score[3] * comp_score[3] > current_score[2] * current_score[3] * current_score[3]: 
+                if confidence * get_score(comp_score) > get_score(current_score):
                     paths_by_checkpoint[current_ts]['prunes_here'] += 1 # increment prunes at this checkpoint
                     # print(f"\tCheckpoint Prune at {current_ts / sr}: {current_score[0]} compared to {comp_score[0]}. Prunes here: {paths_by_checkpoint[current_ts]['prunes_here']} @ thresh {prune_threshold}")
                     
@@ -236,9 +233,6 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
         prune_paths_at_checkpoint(current_ts, paths_by_checkpoint)
 
             
-    # if random.random() < .01:
-    #     prune_paths_at_checkpoints()
-
     return False
 
 def prune_paths_at_checkpoint(checkpoint, paths_by_checkpoint):
