@@ -1,5 +1,6 @@
 import os
 import copy
+import glob
 
 from utilities import prepare_reactions, extract_audio
 from inventory import download_and_parse_reactions, get_manifest_path
@@ -14,6 +15,23 @@ import pstats
 
 
 
+
+def clean_up(song_def: dict):
+    song = f"{song_def['artist']} - {song_def['song']}"
+    song_directory = os.path.join('Media', song)
+
+    print(f"Cleaning up {song}...")
+
+    # Recursively find all .wav files starting from song_directory
+    wav_files = glob.glob(f"{song_directory}/**/*.wav", recursive=True)
+
+    # Delete each .wav file
+    for wav_file in wav_files:
+        try:
+            os.remove(wav_file)
+            print(f"\tDeleted: {wav_file}")
+        except Exception as e:
+            print(f"Error occurred while deleting file {wav_file}: {e}")
 
 
 def handle_reaction_video(song:dict, output_dir: str, react_video, base_video, base_audio_data, base_audio_path, options, extend_by=15):
@@ -60,6 +78,9 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         failed_reactions = []
 
         compilation_path = os.path.join(song_directory, f"{song} (compilation).mp4")
+        if options.get('draft', False):
+            compilation_path += "fast.mp4" 
+
         if os.path.exists(compilation_path):
           print("Compilation already exists", compilation_path)
           return []
@@ -73,7 +94,7 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
 
 
 
-        print("Processing directory", song_directory, reactions_dir, "Outputting to", output_dir)
+        print("Processing directory", song_directory, "Outputting to", output_dir)
 
         lock_file = os.path.join(full_output_dir, 'locked')
         if os.path.exists( lock_file  ):
@@ -88,6 +109,12 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         if options.get('download_and_parse'):
             download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'])
 
+        if options.get('only_manifest', False):
+            if os.path.exists(lock_file):
+                os.remove(lock_file)
+
+            return []
+
         manifest = open(get_manifest_path(song_def['artist'], song_def['song']), "r")
 
 
@@ -101,6 +128,8 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         reaction_dir = os.path.join(song_directory, reactions_dir)
 
         reactors = []
+
+        extend_by = 15
         for i, react_video in enumerate(react_videos):
             # if 'Cliff' not in react_video:
             #     continue
@@ -109,7 +138,7 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
                 # profiler = cProfile.Profile()
                 # profiler.enable()
 
-                faces = handle_reaction_video(song_def, full_output_dir, react_video, base_video, base_audio_data, base_audio_path, copy.deepcopy(options))
+                faces = handle_reaction_video(song_def, full_output_dir, react_video, base_video, base_audio_data, base_audio_path, copy.deepcopy(options), extend_by=extend_by)
                 
                 if len(faces) > 1:
                     outputs = [{'file': f, 'group': i + 1} for f in faces]
@@ -152,7 +181,7 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
             reaction_videos.append(reaction)
 
         if len(reaction_videos) > 0 and options['create_compilation']:
-            compose_reactor_compilation(song_def, base_video, reaction_videos, compilation_path, fast_only=song_def.get('fast_only', False))
+            compose_reactor_compilation(song_def, base_video, reaction_videos, compilation_path, options, extend_by=extend_by)
     except KeyboardInterrupt as e:
         if os.path.exists(lock_file):
             os.remove(lock_file)
@@ -177,195 +206,26 @@ def get_orientation(input_file):
 
 
 import traceback
+from library import get_library
 if __name__ == '__main__':
 
 
-    suicide = {
-        'include_base_video': True,
-        'featured': ['ThatSingerReactions', 'Rosalie Reacts', 'JohnReavesLive', 'Dicodec'],
-        'ground_truth': {
-            "Black Pegasus": [(241, 306.4), (7*60+5, 7*60+54), (8*60+2, 10*60 + 14)],
-            "That’s Not Acting Either": [(75, 129), (192, 282), (7*60+30, 9*60 + 7)]            
-        },
-        'song': 'Suicide',
-        'artist': 'Ren',
-        'search': ['Suicide', 'Su!cIde', 'Su!cide', 'suicide']
-
-    }
-
-    fire = {
-        'include_base_video': False,
-        'featured': ['Johnnie Calloway Sr', 'Anthony Ray Reacts', 'DuaneTV', "SheaWhatNow"],
-        'song': 'Fire',
-        'artist': 'Ren',
-        'search': 'Fire'
-    }
-
-    hunger = {
-        'include_base_video': True,
-        'featured': ['H8TFUL JAY', 'Stevie Knight', 'Jamel_AKA_Jamal', 'Knox Hill', "TheWolfJohnson", "Lilly Jane Reacts", "ThatSingerReactions"],
-        'ground_truth': {
-            "Knox Hill": [(0.0, 12.6), (80, 89), (123, 131), (156, 160), (173, 176), (189, 193), (235, 239), (247, 254.5), (286, 290), (342, 346), (373, 377), (442, 445), (477, 483), (513, 517), (546, 552), (570, 578), (599, 600), (632, 639), (645, 651), (662, 665), (675, 680), (694, 707), (734, 753)],
-            "RAP CATALOG by Anthony Ray": [(0.5, 75), (604, 613), (658, 680), (724, 737), (760, 781), (1236, 1241)],
-            "H8TFUL JAY": [(0, 12.75), (28, 36), (49, 51), (88, 90), (104, 112), (135, 140), (160, 178), (195, 200), (227, 238), (254, 260), (284, 298), (319, 330), (355, 361), (371, 408)],
-
-        },
-        'song': 'The Hunger',
-        'artist': 'Ren',
-        'search': 'Hunger'
-    }
-
-    genesis = {
-        'include_base_video': True,
-        'featured': ['Jamel_AKA_Jamal', 'J Rizzle', 'ThatSingerReactions', "K-RayTV", "Black Pegasus"],
-        'song': 'Genesis',
-        'artist': 'Ren',
-        'search': 'Genesis'
-    }
-
-
-    humble = {
-        'include_base_video': True,
-        'featured': [],
-        'song': 'Humble',
-        'artist': 'Ren',
-        'search': 'Humble',
-        'fast_only': True
-    }
-
-    ocean = {
-        'include_base_video': False,
-        'featured': ["RAP CATALOG by Anthony Ray", "Black Pegasus"],
-        'song': 'Ocean',
-        'artist': 'Ren',
-        'search': 'Ocean',
-        'fast_only': True
-    }
-
-    diazepam = {
-        'include_base_video': True,
-        'featured': ["Jamel_AKA_Jamal", "Neurogal MD", "SheaWhatNow", "Sean Staxx"],
-        'song': 'Diazepam',
-        'artist': 'Ren',
-        'search': 'Diazepam'
-    }
-
-
-    crutch = {
-        'include_base_video': True,
-        'featured': ["Rosalie Reacts", "That\u2019s Not Acting Either", "McFly JP", "Joe E Sparks", "Ian Taylor Reacts", "redheadedneighbor"],
-        'song': 'Crutch',
-        'artist': 'Ren',
-        'search': 'Crutch',
-        'fast_only': True
-    }
-
-    losing_it = {
-        'include_base_video': True,
-        'featured': [],
-        'song': 'Losing It',
-        'artist': 'Ren',
-        'search': 'Losing It',
-        'fast_only': True
-    }
-
-    power = {
-        'include_base_video': True,
-        'featured': [],
-        'song': 'Power',
-        'artist': 'Ren',
-        'search': 'Power',
-        'fast_only': True
-    }
-
-    sick_boi = {
-        'include_base_video': True,
-        'featured': [],
-        'song': 'Sick Boi',
-        'artist': 'Ren',
-        'search': 'Sick Boi',
-        'fast_only': True
-    }
-
-
-    watch_world_burn = {
-        'include_base_video': True,
-        'featured': [],
-        'song': 'Watch the World Burn',
-        'artist': 'Falling in Reverse',
-        'search': 'Watch the World Burn',
-        'fast_only': True
-    }
-
-    time_will_fly = {
-        'include_base_video': True,
-        'featured': ["ThatSingerReactions", "Black Pegasus", "redheadedneighbor", "The NEW Reel"],
-        'song': 'Time Will Fly',
-        'artist': 'Sam Tompkins',
-        'search': 'Time Will Fly'
-    }
-
-    cats_in_the_cradle = {
-        'include_base_video': True,
-        'featured': [],
-        'song': "Cat's in the Cradle",
-        'artist': 'Harry Chapin',
-        'search': "Cat's in the Cradle",
-        'fast_only': True
-    }
-
-    handy = {
-        'include_base_video': True,
-        'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
-        'song': 'Handy',
-        'artist': 'Weird Al',
-        'search': 'Handy'
-    }
-
-    foil = {
-        'include_base_video': True,
-        'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
-        'song': 'Foil',
-        'artist': 'Weird Al',
-        'search': 'Foil',
-        'fast_only': True
-    }
-
-    pentiums = {
-        'include_base_video': True,
-        'featured': ["BrittReacts", "The Matthews Fam", "Jamel_AKA_Jamal", "ScribeCash"],
-        'song': "It's All About The Pentiums",
-        'artist': 'Weird Al',
-        'search': 'All About The Pentiums',
-        'fast_only': True
-    }
-
-
-    wreck_of_fitzgerald = {
-        'include_base_video': True,
-        'featured': [],
-        'song': 'Wreck of The Edmund Fitzgerald',
-        'artist': 'Gordon Lightfoot',
-        'search': 'Wreck of The Edmund Fitzgerald',
-        'fast_only': True
-    }
-
-    this_is_america = {
-        'include_base_video': True,
-        'featured': [],
-        'song': 'This is America',
-        'artist': 'Childish Gambino',
-        'search': 'This is America',
-        'fast_only': True
-    }
-
-
-    finished = [time_will_fly]
-    songs = [handy, suicide, hunger, fire, genesis, watch_world_burn, foil, cats_in_the_cradle, power, losing_it, sick_boi, this_is_america, wreck_of_fitzgerald, pentiums, diazepam, ocean, crutch ]
-
+    songs, drafts, manifest_only, finished = get_library()
 
     output_dir = "cheetah"
 
+    for song in finished:
+        clean_up(song)
+
+    manifest_options = {
+        "only_manifest": True,
+    }
+
+    failures = []
+    for song in manifest_only: 
+        failed = create_reaction_compilations(song, output_dir = output_dir, options=manifest_options)
+        if(len(failed) > 0):
+            failures.append((song, failed)) 
 
     options = {
         "output_alignment_metadata": True,
@@ -373,17 +233,21 @@ if __name__ == '__main__':
         "isolate_commentary": True,
         "create_reactor_view": True,
         "create_compilation": True,
-        "download_and_parse": True
+        "download_and_parse": True,
+        "draft": True
     }
+    failures = []
+    for song in drafts: 
+        failed = create_reaction_compilations(song, output_dir = output_dir, options=options)
+        if(len(failed) > 0):
+            failures.append((song, failed)) 
 
-
-
+    options['draft'] = False
     failures = []
     for song in songs: 
         failed = create_reaction_compilations(song, output_dir = output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
-
 
 
 
