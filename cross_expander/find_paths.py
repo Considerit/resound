@@ -54,7 +54,7 @@ from cross_expander.pruning_search import should_prune_path, initialize_path_pru
 
 from cross_expander.find_segment_start import find_next_segment_start_candidates, initialize_segment_start_cache
 from cross_expander.find_segment_end import scope_segment, initialize_segment_end_cache
-from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score
+from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, print_path
 from cross_expander.bounds import create_reaction_alignment_bounds, get_bound
 
 from utilities.audio_processing import audio_percentile_loudness
@@ -121,9 +121,17 @@ def print_paths(current_start, reaction_start, depth, paths, path_counts, sr):
 
 
 
+import keyboard
+print_when_possible = False
+def print_status(st):
+    global print_when_possible
+    print_when_possible = True
+keyboard.on_press_key('p', print_status)
+
 def find_pathways(basics, options, current_path=None, current_path_checkpoint_scores=None, current_start=0, reaction_start=0): 
     global best_finished_path
     global path_counts
+    global print_when_possible
 
     # initializing
     if current_path is None: 
@@ -188,7 +196,7 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
                     "partials": {}
                     })
                 print(f"**** New best score is {best_finished_path['score']}")
-
+                print_path(current_path, basics)
 
             return [current_path]
         ###############
@@ -277,9 +285,13 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
             complete_path(depth)
 
 
-            if depth < 2 or path_counts[-1]['open'] % 10000 == 5000:
+            if depth < 1 or print_when_possible: 
                 print_paths(current_start, reaction_start, depth, paths, path_counts, sr)
                 print_prune_data(basics)
+                print(f"**** Best score is {best_finished_path['score']}")
+                print_path(best_finished_path["path"], basics)
+
+                print_when_possible = False
 
             if depth == 0: 
                 print("**************")
@@ -327,6 +339,9 @@ def cross_expander_aligner(base_audio, reaction_audio, sr, options, ground_truth
 
     song_percentile_loudness = audio_percentile_loudness(base_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=hop_length)
     reaction_percentile_loudness = audio_percentile_loudness(reaction_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=hop_length)
+
+    if ground_truth: 
+        ground_truth = [ (int(s * sr), int(e * sr)) for (s,e) in ground_truth]
 
     basics = {
         "base_audio": base_audio,
