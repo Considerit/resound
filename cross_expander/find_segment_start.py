@@ -1,5 +1,6 @@
 import math, random
 import numpy as np
+import matplotlib.pyplot as plt
 
 from scipy.signal import correlate, find_peaks
 from cross_expander.scoring_and_similarity import mfcc_similarity, relative_volume_similarity
@@ -50,12 +51,63 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
         if upper_bound is not None:
             prev = len(open_chunk)
             open_chunk = open_chunk[:int(upper_bound - open_start + 2 * current_chunk_size)]
+            open_chunk_mfcc = open_chunk_mfcc[:, :int((upper_bound - open_start + 2 * current_chunk_size) / hop_length)]
+
             # print(f"\tConstraining open chunk from size {prev} to {len(open_chunk)}  [{len(open_chunk) / prev * 100}% of original]")
 
         correlation = correlate(open_chunk, closed_chunk)
+        cross_max = np.max(correlation)
         # Find peaks
-        peak_indices, _ = find_peaks(correlation, height=np.max(correlation)*peak_tolerance, distance=distance)
-        peak_indices = sorted( peak_indices.tolist() )
+        peak_indices, _ = find_peaks(correlation, height=cross_max*peak_tolerance, distance=distance)
+        peak_indices = peak_indices.tolist()
+
+        mfcc_candidates = []
+        mfcc_correlations = [correlate(open_chunk_mfcc[i, :], closed_chunk_mfcc[i, :]) for i in range(open_chunk_mfcc.shape[0])]        
+        aggregate_mfcc_correlation = np.mean(mfcc_correlations, axis=0)
+        aggregate_mfcc_correlation = aggregate_mfcc_correlation - np.mean(aggregate_mfcc_correlation[100:len(aggregate_mfcc_correlation)-100])
+        # Find the position of maximum correlation
+        max_mfcc_correlation = np.max(aggregate_mfcc_correlation)
+        peak_mfcc_indices, _ = find_peaks(aggregate_mfcc_correlation, height=max_mfcc_correlation*( peak_tolerance + (1 - peak_tolerance)/2), distance=distance / hop_length)
+        for candidate in peak_mfcc_indices:
+            candidate_adjusted = int(candidate * hop_length)
+
+            sufficiently_unique = candidate_adjusted not in peak_indices
+            for ind in peak_indices:
+                if abs(ind - candidate_adjusted) < distance:
+                    sufficiently_unique = False
+                    if prune_types:
+                        prune_types['mfcc_correlate_overlap'] += 1
+                    break
+
+            if sufficiently_unique:
+                index = correct_peak_index(candidate_adjusted, current_chunk_size)
+                if index not in mfcc_candidates:
+                    mfcc_candidates.append(index )
+                # if candidate_adjusted < len(correlation):
+                #     peak_indices.append(candidate_adjusted)
+                #     correlation[candidate_adjusted] = aggregate_mfcc_correlation[candidate] * cross_max / max_mfcc_correlation
+
+
+        # plt.figure(figsize=(14, 6))
+        
+        # plt.subplot(1, 2, 1)
+        # plt.title("Standard Correlation")
+        # plt.plot(correlation)
+        # plt.scatter(peak_indices, correlation[peak_indices], color='blue')
+        # plt.axhline(y=cross_max * peak_tolerance, color='b', linestyle='--')
+
+        # plt.subplot(1, 2, 2)
+        # plt.title("Aggregate MFCC Correlation")
+        # plt.plot(aggregate_mfcc_correlation)
+        # plt.scatter(peak_mfcc_indices, aggregate_mfcc_correlation[peak_mfcc_indices], color='red')
+        # plt.axhline(y=max_mfcc_correlation * peak_tolerance, color='r', linestyle='--')
+        
+        # plt.show()
+
+
+
+
+        peak_indices = sorted( peak_indices )
 
         
         # if random.random() < .01:
@@ -123,15 +175,17 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
             for candidate in scores:
                 (candidate_index, mfcc_score, rel_vol_score, correlation_score) = candidate
 
-                good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + .2)
-                good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + .4)
+                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .75)
+
+                good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + (1 - peak_tolerance) * .5)
+                good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + (1 - peak_tolerance) * .75)  
                 # joint_goodness = (mfcc_score / max_mfcc_score + rel_vol_score / max_relative_volume_score) / 2 > peak_tolerance
 
                 # if (good_by_mfcc or good_by_rel_vol) and not joint_goodness:
                 #     print(f"[restricted] Start at {(closed_start + candidate_index) / sr:.1f} with correlation={100 * correlation_score / max_correlation_score:.1f}% mfcc_similarity={100 * mfcc_score / max_mfcc_score:.1f}% rel_vol_similarity={100 * relative_volume_score / max_relative_volume_score:.1f}%")
 
                 # good_by_mediocrity = (mfcc_score / max_mfcc_score + correlation_score / max_correlation_score + rel_vol_score / max_relative_volume_score) / 3 > peak_tolerance
-                if good_by_mfcc or good_by_rel_vol:
+                if good_by_mfcc or good_by_rel_vol or good_by_correlation:
                     candidates.append(candidate)
 
                 #score = correlation_score / max_correlation_score + mfcc_score / max_mfcc_score + rel_vol_score / max_relative_volume_score
@@ -150,7 +204,11 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
             if prune_for_continuity and continuity_found and continuity_score > .98 * max_score:
                 # print("continuity prune")
                 prune_types['continuity'] += len(candidates) - 1
-                return [continuity[0]]
+
+                candidates = [continuity[0]]
+                seg_start_cache[key] = candidates
+                seg_start_cache_effectiveness["misses"] += 1                
+                return candidates
 
         candidates_by_time = [c[0] for c in candidates]
         candidates.sort(key=lambda x: x[1] * x[2], reverse=True)
@@ -160,18 +218,20 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
         # starting with candidates_by_score. The resulting list should not have duplicates. Only the
         # first instance of the item should stay in the array. 
 
-        candidates = []
-        for score, time in zip(candidates_by_score, candidates_by_time):
-            if score not in candidates:
-                candidates.append(score)
-            if time not in candidates:
-                candidates.append(time)
+        # candidates = []
+        # for score, time in zip(candidates_by_score, candidates_by_time):
+        #     if score not in candidates:
+        #         candidates.append(score)
+        #     if time not in candidates:
+        #         candidates.append(time)
 
+        candidates = candidates_by_score
 
         # if print_candidates:
         #     for candidate_index, mfcc_score, relative_volume_score, correlation_score in candidates:
         #         print(f"Comparing start at {(closed_start + candidate_index) / sr:.1f} with correlation={100 * correlation_score / max_correlation_score:.1f}% mfcc_similarity={100 * mfcc_score / max_mfcc_score:.1f}% rel_vol_similarity={100 * relative_volume_score / max_relative_volume_score:.1f}%")
 
+        candidates.extend(mfcc_candidates)
 
         seg_start_cache[key] = candidates
         seg_start_cache_effectiveness["misses"] += 1
