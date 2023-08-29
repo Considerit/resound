@@ -13,13 +13,13 @@ def initialize_path_pruning():
     global prune_types
     prunes = [  "checkpoint",
                 "best_score",
-                "exact",
                 "bounds",
                 "scope_cached",
                 "seg_start_prune",
-                "combinatorial",
                 "continuity",
-                'duplicate_path_prune'
+                'duplicate_path_prune',
+                'mfcc_correlate_overlap',
+                'manual_branch_prune'
               ]
 
     for prune_type in prunes:
@@ -80,7 +80,7 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
     if depth > 3:
         prior_current_start = current_path[-1][2]
         prior_prior_current_start = current_path[-2][2]
-        if prior_current_start in path_counts[depth - 1]['current_starts'] and path_counts[depth - 1]['current_starts'][prior_current_start] > 1:  # path_counts[depth]['completed'] > 250:
+        if prior_current_start in path_counts[depth - 1]['current_starts'] and path_counts[depth - 1]['current_starts'][prior_current_start] > 1:
             check_depth = depth - 1
             while check_depth > 3 and depth - check_depth < 10:
                 new_checkpoint = current_path[check_depth - depth][2]
@@ -88,39 +88,12 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
                 check_depth -= 1
 
 
-        if False and prior_prior_current_start in path_counts[depth - 2]['current_starts'] and max_visited > 2500 and path_counts[depth - 2]['current_starts'][prior_prior_current_start] > 5:  # path_counts[depth]['completed'] > 250:
-            prune_types["combinatorial"] += 1
-            return True
-
     # aggressive prune based on scores after having passed a checkpoint 
     if depth > 0:
         should_prune = check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_scores, best_finished_path, current_start, basics)
         if should_prune: #and max_visited > 2500:
             prune_types[should_prune] += 1
             return True
-
-    # specific prune based on exact match of current start
-    if False and depth > 0:
-        score = None
-        if current_start not in paths_from_current_start: 
-            paths_from_current_start[current_start] = []
-        else: 
-            score = path_score(current_path, basics, relative_to = current_start) 
-            for i, (comp_reaction_start, comp_path, comp_score) in enumerate(paths_from_current_start[current_start]):
-                if comp_reaction_start <= reaction_start:
-                    if comp_score is None:
-                        comp_score = path_score(comp_path, basics, relative_to = current_start)
-                        paths_from_current_start[current_start][i][2] = comp_score
-
-                    ts_thresh_contrib = min( current_start / (2 * 60 * sr), .09)
-                    prune_threshold = .9 + ts_thresh_contrib
-
-                    if score[0] < prune_threshold * comp_score[0] and max_visited > 1000:
-                        # print(f"\tExact Prune! {comp_reaction_start} {comp_score[0]}  >  {reaction_start} {score[0]} @ threshold {prune_threshold}")
-                        prune_types['exact'] += 1
-                        return True      
-
-        paths_from_current_start[current_start].append( [reaction_start, copy.deepcopy(current_path), score] )
 
 
     alignment_bounds = options.get('alignment_bounds')
@@ -329,13 +302,14 @@ def add_new_checkpoint(checkpoints, current_start, basics):
 
         if reference_checkpoint not in paths_by_checkpoint:
             paths_by_checkpoint[reference_checkpoint] = {'prunes_here': 0, 'paths': []}
+            
+        if current_start not in paths_by_checkpoint:
+            paths_by_checkpoint[current_start] = {'prunes_here': 0, 'paths': []}
 
         for rs, scr, current_path in paths_by_checkpoint[reference_checkpoint]["paths"]:
             partial_score = calculate_partial_score(current_path, current_start, basics)
             if partial_score is None:
                 continue
-            if current_start not in paths_by_checkpoint:
-                paths_by_checkpoint[current_start] = {'prunes_here': 0, 'paths': []}
 
             paths_by_checkpoint[current_start]['paths'].append( (partial_score[0], partial_score[1], list(current_path))  )
 
@@ -344,5 +318,6 @@ def add_new_checkpoint(checkpoints, current_start, basics):
         # we'll replace the reference checkpoint with the new checkpoint. This helps keep the 
         # checkpoints spaced out, as similarity measures are costly. 
         if (reference_checkpoint - current_start) / basics.get('sr') < .5:
+            paths_by_checkpoint[current_start]['prunes_here'] += paths_by_checkpoint[reference_checkpoint]['prunes_here']
             del paths_by_checkpoint[reference_checkpoint]
             checkpoints.pop(idx + 1)
