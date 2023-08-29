@@ -18,4 +18,4 @@ objgraph
 python-youtube
 requests
 python-decouple
-keyboard
+pynput

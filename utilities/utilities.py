@@ -315,3 +315,40 @@ def object_description(obj):
         return str(type(obj))
 
 
+
+
+
+
+###### For input
+
+from pynput import keyboard
+import threading
+
+# A dictionary to store key-callback mappings
+input_events = {}
+
+# Function to set the callback for a specific key
+def on_press_key(key, callback):
+    global input_events
+    input_events[key] = callback
+
+# Function that will be called whenever a key is pressed
+def on_press(key):
+    try:
+        # Attempt to get the character of the key
+        char = key.char
+    except AttributeError:
+        char = None
+
+    # If the character is in our input events, call the associated function
+    if char in input_events:
+        input_events[char]()
+
+
+
+# Start the listener
+listener = keyboard.Listener(on_press=on_press)
+listener_thread = threading.Thread(target=listener.start)
+listener_thread.daemon = True
+listener_thread.start()
+
