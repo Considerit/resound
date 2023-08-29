@@ -40,6 +40,7 @@ import matplotlib.pyplot as plt
 from decimal import Decimal, getcontext
 
 
+
 from typing import List, Tuple
 import traceback
 
@@ -48,7 +49,7 @@ import pstats
 
 from cross_expander.create_trimmed_video import trim_and_concat_video
 
-from utilities import extract_audio, compute_precision_recall, universal_frame_rate, is_close, print_memory_consumption
+from utilities import extract_audio, compute_precision_recall, universal_frame_rate, is_close, print_memory_consumption, on_press_key
 
 from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data
 
@@ -121,17 +122,42 @@ def print_paths(current_start, reaction_start, depth, paths, path_counts, sr):
 
 
 
-import keyboard
+
+
+
 print_when_possible = False
-def print_status(st):
+def print_status():
     global print_when_possible
     print_when_possible = True
-keyboard.on_press_key('p', print_status)
+
+on_press_key('π', print_status) # option-p
+
+
+skip_to_next_branch = False
+def skip_branch():
+    global skip_to_next_branch
+    skip_to_next_branch = True
+    print('skipping branch!')
+
+
+on_press_key('ø', skip_branch) # option-o
+
+
+
+
+
+
+
+
+
+
+
 
 def find_pathways(basics, options, current_path=None, current_path_checkpoint_scores=None, current_start=0, reaction_start=0): 
     global best_finished_path
     global path_counts
     global print_when_possible
+    global skip_to_next_branch
 
     # initializing
     if current_path is None: 
@@ -160,6 +186,12 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
     if depth not in path_counts:
         initialize_path_counts_for_depth(depth)
 
+    if skip_to_next_branch:
+        if depth > 1:
+            prune_types['manual_branch_prune'] += 1
+            return [None]
+        else:
+            skip_to_next_branch = False
  
     if should_prune_path(basics, options, current_path, current_path_checkpoint_scores, best_finished_path, current_start, reaction_start, path_counts):
         return [None]
@@ -288,8 +320,9 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
             if depth < 1 or print_when_possible: 
                 print_paths(current_start, reaction_start, depth, paths, path_counts, sr)
                 print_prune_data(basics)
-                print(f"**** Best score is {best_finished_path['score']}")
-                print_path(best_finished_path["path"], basics)
+                if best_finished_path:
+                    print(f"**** Best score is {best_finished_path['score']}")
+                    print_path(best_finished_path["path"], basics)
 
                 print_when_possible = False
 
