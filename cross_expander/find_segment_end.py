@@ -5,7 +5,7 @@ from cross_expander.find_segment_start import find_next_segment_start_candidates
 
 from utilities import samples_per_frame, universal_frame_rate, is_close
 
-def find_correlation_end(current_start, reaction_start, basics, options, step, scores = [], reaction_end=None, end_at=None, max_score=0, cache={}):
+def find_correlation_end(current_start, reaction_start, basics, options, step, reaction_end=None, end_at=None, max_score=0, cache={}):
     expansion_tolerance = options.get('expansion_tolerance')
 
     base_audio = basics.get('base_audio')
@@ -60,8 +60,6 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, s
     # Now we're going to shrink the end of the segment based on the slope of the scores, trying to work backwards to 
     # a reasonable pause or rewind breakpoint
 
-    scores += [(start, end, chunk_score) for (start, end, chunk_score, _, _) in segment_scores]
-
     slopes = []
     window = 2
     for i, score in enumerate(segment_scores):
@@ -108,7 +106,7 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, s
 
     if not last_neg_slopes or len(last_neg_slopes) == 0:
         assert( current_end - current_start == reaction_end - reaction_start)        
-        return (current_end, reaction_end, sorted(scores, key=lambda score: score[1]))
+        return (current_end, reaction_end)
 
     last_neg_slopes.reverse()
 
@@ -138,7 +136,7 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, s
 
         # print(f"RECURSING AROUND {break_point / sr} - {next_end_at / sr} with neg_slope_avg of {neg_slope_avg}")
 
-        return find_correlation_end(current_start, reaction_start, basics, options, step = step // 2, scores = scores, reaction_end = break_point, end_at = next_end_at, max_score = max_score, cache = cache )
+        return find_correlation_end(current_start, reaction_start, basics, options, step = step // 2, reaction_end = break_point, end_at = next_end_at, max_score = max_score, cache = cache )
     else: 
         reaction_end = break_point
         current_end = current_start + reaction_end - reaction_start
@@ -154,7 +152,7 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, s
         assert((current_end - current_start) % samples_per_frame() == 0)
         assert( is_close(result, round(result) )  )
 
-        return (current_end, reaction_end, sorted(scores, key=lambda score: score[1]))
+        return (current_end, reaction_end)
 
 
 
@@ -246,7 +244,8 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
 
         current_start += reverse_index
 
-        return (segment, current_start, reaction_start, [])
+        segment_scope_cache[scope_key] = (segment, current_start, reaction_start)
+        return (segment, current_start, reaction_start)
 
     #########################################
 
@@ -254,7 +253,7 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
     # print(f"Start segment {current_start / sr}-{(current_start + n_samples) / sr} at {reaction_start / sr}")
 
 
-    candidate_current_end, candidate_reaction_end, scores = find_correlation_end(current_start, reaction_start, basics, options, step = n_samples, cache={})
+    candidate_current_end, candidate_reaction_end = find_correlation_end(current_start, reaction_start, basics, options, step = n_samples, cache={})
     # print(candidate_current_end - current_start, candidate_reaction_end - reaction_start)        
 
 
@@ -272,7 +271,8 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
 
     if reaction_start == reaction_end:
         # print(f"### Sequence of zero length at {reaction_start} {current_start}, skipping forward")
-        return (None, current_start, reaction_start + samples_per_frame(), [])
+        segment_scope_cache[scope_key] = (None, current_start, reaction_start + samples_per_frame())
+        return segment_scope_cache[scope_key]
 
     # print(f"*** Completing match ({reaction_start / sr} [{reaction_start}], {reaction_end / sr} [{reaction_end}]), ({current_start / sr} [{current_start}], {current_end / sr} [{current_end}])\n")                
 
@@ -280,12 +280,7 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
     segment = (reaction_start, reaction_end, current_start, current_end, False)
 
 
-    # print("scores", scores)
-    # all_scores.append(scores)
-
-    scores.clear() # respond to memory issue
-
-    segment_scope_cache[scope_key] = (segment, current_end, reaction_end, scores)
+    segment_scope_cache[scope_key] = (segment, current_end, reaction_end)
     return segment_scope_cache[scope_key]
 
 
