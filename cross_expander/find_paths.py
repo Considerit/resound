@@ -36,6 +36,7 @@ import gc
 import librosa
 import copy
 import pickle
+import random
 import matplotlib.pyplot as plt
 from decimal import Decimal, getcontext
 
@@ -51,11 +52,11 @@ from cross_expander.create_trimmed_video import trim_and_concat_video
 
 from utilities import extract_audio, compute_precision_recall, universal_frame_rate, is_close, print_memory_consumption, on_press_key
 
-from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data
+from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data, find_last_checkpoint_crossed
 
 from cross_expander.find_segment_start import find_next_segment_start_candidates, initialize_segment_start_cache
 from cross_expander.find_segment_end import scope_segment, initialize_segment_end_cache
-from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, print_path
+from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, print_path, calculate_partial_score
 from cross_expander.bounds import create_reaction_alignment_bounds, get_bound
 
 from utilities.audio_processing import audio_percentile_loudness
@@ -77,9 +78,6 @@ from utilities.audio_processing import audio_percentile_loudness
 #   return completed path / paths
 
 
-profile_pathways = False
-if profile_pathways:
-    profiler = cProfile.Profile()
 
 best_finished_path = {}
 path_counts = {}
@@ -132,18 +130,36 @@ def print_status():
 
 on_press_key('π', print_status) # option-p
 
+profile_when_possible = False
+profile_pathways = False
+if profile_pathways:
+    profiler = cProfile.Profile()
+
+def print_profile():
+    print("ACTIVATE PROFILING")
+    global profile_when_possible
+    global profile_pathways
+
+    profile_when_possible = True
+
+    if not profile_pathways:
+        global profiler
+        profiler = cProfile.Profile()
+        profile_pathways = True
+        profiler.enable()
+
+
+on_press_key('¬', print_profile) # option-i
+
 
 skip_to_next_branch = False
-def skip_branch():
-    global skip_to_next_branch
-    skip_to_next_branch = True
-    print('skipping branch!')
+# def skip_branch():
+#     global skip_to_next_branch
+#     skip_to_next_branch = True
+#     print('skipping branch!')
 
 
-on_press_key('ø', skip_branch) # option-o
-
-
-
+# on_press_key('ø', skip_branch) # option-o
 
 
 
@@ -153,17 +169,13 @@ on_press_key('ø', skip_branch) # option-o
 
 
 
-def find_pathways(basics, options, current_path=None, current_path_checkpoint_scores=None, current_start=0, reaction_start=0): 
+
+
+
+def branching_search(basics, options, current_path=None, current_path_checkpoint_scores=None, current_start=0, reaction_start=0, continuations=None, greedy_branching=False, recursive=True): 
     global best_finished_path
     global path_counts
-    global print_when_possible
     global skip_to_next_branch
-
-    # initializing
-    if current_path is None: 
-        current_path = []
-        current_path_checkpoint_scores = {}
-
 
     base_audio = basics.get('base_audio')
     reaction_audio = basics.get('reaction_audio')
@@ -178,11 +190,6 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
 
     depth = len(current_path)
 
-    if profile_pathways:
-        global profiler
-        if depth == 0:
-            profiler.enable()
-
     if depth not in path_counts:
         initialize_path_counts_for_depth(depth)
 
@@ -196,8 +203,6 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
     if should_prune_path(basics, options, current_path, current_path_checkpoint_scores, best_finished_path, current_start, reaction_start, path_counts):
         return [None]
     
-
-    # print(f"Starting pathway {current_path} {current_start} {reaction_start}")
     try: 
 
 
@@ -219,16 +224,6 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
                 current_path.append(  filler_segment   )
                 # print(f"Reaction video finished before end of base video. Backfilling with base video ({length_remaining / sr}s).")
                 # print(f"Backfilling {current_path} {current_start} {reaction_start}")
-
-            score = path_score(current_path, basics)
-            if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
-                best_finished_path.update({
-                    "path": current_path,
-                    "score": score,
-                    "partials": {}
-                    })
-                print(f"**** New best score is {best_finished_path['score']}")
-                print_path(current_path, basics)
 
             return [current_path]
         ###############
@@ -284,7 +279,7 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
             else:
                 # print(f"Could not find match in remainder of reaction video!!! Skipping forward.")
                 open_path(depth)
-                result = find_pathways(basics, options, current_path, copy.deepcopy(current_path_checkpoint_scores), current_start, reaction_start)
+                result = branching_search(basics, options, current_path, copy.deepcopy(current_path_checkpoint_scores), current_start, reaction_start, continuations=continuations, greedy_branching=greedy_branching, recursive=recursive)
                 complete_path(depth)
                 return result
         #########
@@ -299,7 +294,7 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
                 print(f"STARTING DEPTH ZERO from {candidate_segment_start / sr}")
 
 
-            segment, next_start, next_reaction_start, scores = scope_segment(basics, options, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types)
+            segment, next_start, next_reaction_start = scope_segment(basics, options, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types)
 
             my_path = copy.deepcopy(current_path)
             if segment:
@@ -307,41 +302,17 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
             elif next_reaction_start < len(reaction_audio) - 1: 
                 print("did not find segment", next_start, next_reaction_start)
 
-            paths_this_direction = 0
-            continued_paths = find_pathways(basics, options, my_path, copy.deepcopy(current_path_checkpoint_scores), next_start, next_reaction_start)
-            for full_path in continued_paths:
-                if full_path is not None:
-                    paths_this_direction += 1
-                    paths.append(full_path)
+            filler = segment[-1]
+            if (not recursive and filler) or (recursive and (not greedy_branching or ci < greedy_branching)):
+                continued_paths = branching_search(basics, options, my_path, copy.deepcopy(current_path_checkpoint_scores), next_start, next_reaction_start, continuations=continuations, greedy_branching=greedy_branching, recursive=recursive)
+                for full_path in continued_paths:
+                    if full_path is not None:
+                        paths.append(full_path)
+                complete_path(depth)
+            else: 
+                continuations.append([my_path, copy.deepcopy(current_path_checkpoint_scores), next_start, next_reaction_start])
 
-            complete_path(depth)
 
-
-            if depth < 1 or print_when_possible: 
-                print_paths(current_start, reaction_start, depth, paths, path_counts, sr)
-                print_prune_data(basics)
-                if best_finished_path:
-                    print(f"**** Best score is {best_finished_path['score']}")
-                    print_path(best_finished_path["path"], basics)
-
-                print_when_possible = False
-
-            if depth == 0: 
-                print("**************")
-                print(f"Len of paths from {candidate_segment_start / sr} is {paths_this_direction}")
-                # initialize_path_counts() # give each starting point a fair shot
-
-            if profile_pathways and path_counts[-1]['completed'] % 1000 == 50:
-                profiler.disable()
-                stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
-                stats.print_stats()
-                profiler.enable()
-
-                # print_memory_consumption()
-
-            if path_counts[-1]['completed'] % 50000 == 49999:
-                print('...invoking garbage collector')
-                gc.collect()
 
         return paths
 
@@ -351,6 +322,185 @@ def find_pathways(basics, options, current_path=None, current_path_checkpoint_sc
         print(e)
         return [None]
 
+
+
+def find_alignments(basics, options):
+    global path_counts
+    global best_finished_path
+    global profile_when_possible
+    global print_when_possible
+
+    initialize_segment_start_cache()
+    initialize_segment_end_cache()
+    initialize_path_score()
+    initialize_path_counts()
+    initialize_path_pruning()
+
+    sr = basics.get('sr')
+
+    best_finished_path.clear()
+
+    if profile_pathways:
+        global profiler        
+        profiler.enable()
+
+
+    saved_bounds = os.path.splitext(options['output_file'])[0] + '-bounds.pckl'
+    if not os.path.exists(saved_bounds):
+        options['alignment_bounds'] = create_reaction_alignment_bounds(basics, options['first_n_samples'])
+        save_object_to_file(saved_bounds, options['alignment_bounds'])
+    else: 
+        options['alignment_bounds'] = read_object_from_file(saved_bounds)
+
+
+    if profile_pathways:
+        profiler.disable()
+        stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+        stats.print_stats()
+        profiler.enable()
+
+
+
+    queue = []
+    low_score_queue = []
+    paths = []
+
+    continuations = []
+    new_paths = branching_search(basics, options, current_path=[], current_path_checkpoint_scores={}, current_start=0, reaction_start=0, continuations=continuations, recursive=False)
+    paths.extend(new_paths)
+    queue.extend( [ [c, {}, None] for c in continuations]    )
+
+
+    idx = 0
+    while(len(queue) > 0):
+        (path, checkpoint_scores, current_start, reaction_start), __, latest_score = queue.pop(0)
+        if best_finished_path:
+            best_score_before = best_finished_path["score"][0]
+        else:
+            best_score_before = 0
+
+        continuations = []
+        new_paths = branching_search(basics, options, current_path=path, current_path_checkpoint_scores=checkpoint_scores, current_start=current_start, reaction_start=reaction_start, continuations=continuations, greedy_branching=1, recursive=True)
+        
+        depth = len(path)
+        if depth not in path_counts:
+            initialize_path_counts_for_depth(depth)
+        complete_path(depth)
+
+        for new_path in new_paths: 
+            if new_path is not None:
+                score = path_score(new_path, basics)
+                if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
+                    best_finished_path.update({
+                        "path": new_path,
+                        "score": score,
+                        "partials": {}
+                        })
+                    print(f"**** New best score is {best_finished_path['score']}")
+                    print_path(new_path, basics)
+
+        paths.extend(new_paths)
+        best_score_updated = best_finished_path and best_score_before < best_finished_path["score"][0]
+        continuations = [ [c, {}, None] for c in continuations]
+
+        queue.extend( continuations )
+        first_non_fill_start = None
+        for pstart, _, _, _, filler in path:
+            if not filler:
+                first_non_fill_start = pstart / sr
+                break
+
+        print(f"starting from {reaction_start / sr} / {current_start / sr} ({first_non_fill_start}) [{latest_score}]. [{len(continuations)} added, {len(queue)} total]")
+
+
+        # Every once in awhile, re-sort the queue based on scores. Use fraction of the best score
+        # at the latest checkpoint. Any paths that haven't reached the first checkpoint are given
+        # high priority.
+
+        if idx % 50 == 49 and best_finished_path: 
+
+            for item in queue:
+                continuation, checkpoint_scores, current_score = item
+                path = continuation[0]
+                current_start = continuation[2]
+
+                current_ts = find_last_checkpoint_crossed(basics, current_start)
+
+                if current_ts > 0:
+
+                    if current_ts not in checkpoint_scores:
+                        _, score_at_checkpoint = calculate_partial_score(path, current_ts, basics)
+                        checkpoint_scores[current_ts] = score_at_checkpoint
+                    score_at_checkpoint = checkpoint_scores[current_ts]
+
+                    if current_ts not in best_finished_path['partials']:
+                        _, best_at_checkpoint = calculate_partial_score(best_finished_path['path'], current_ts, basics)
+                        best_finished_path['partials'][current_ts] = best_at_checkpoint
+                    best_at_checkpoint = best_finished_path['partials'][current_ts]
+
+                    item[2] = score_at_checkpoint[0] / best_at_checkpoint[0]
+                else:
+                    item[2] = 5
+
+
+            new_queue = []
+            queue.sort(key=lambda x: x[2], reverse=True)
+
+            if len(queue) > 50:
+                low_score_queue.extend(queue[50:])
+                queue = queue[:50]
+
+            for item in queue:
+                new_queue.append(item)
+
+                # we'll randomly process some lower scored items
+                if len(low_score_queue) > 0:
+                    index = max(0, int(random.random() * len(low_score_queue) - 1))
+                    winning_loser = low_score_queue.pop(index)
+                    lottery_winners.append(winning_loser)
+                    new_queue.append(winning_loser)
+            queue = new_queue
+
+
+            print(f"sorted queue. queue is {len(queue)} and low_score_queue is {len(low_score_queue)}")
+
+        if idx % 1000 == 999 or (len(queue) == 0 and len(low_score_queue) > 0):
+            queue.extend(low_score_queue)
+            low_score_queue.clear()
+
+
+        if print_when_possible: 
+            print_paths(current_start, reaction_start, depth, paths, path_counts, sr)
+            print_prune_data(basics)
+            if best_finished_path:
+                print(f"**** Best score is {best_finished_path['score']}")
+                print_path(best_finished_path["path"], basics)
+            print_when_possible = False
+
+        if profile_pathways and profile_when_possible:
+            profiler.disable()
+            stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+            stats.print_stats()
+            profiler.enable()
+            profile_when_possible = False
+            # print_memory_consumption()
+
+        if path_counts[-1]['completed'] % 50000 == 49999:
+            print('...invoking garbage collector')
+            gc.collect()
+
+        idx += 1
+
+
+
+    if best_finished_path:
+        print(f"**** Best score is {best_finished_path['score']}")
+        print_path(best_finished_path["path"], basics)
+
+    print_prune_data(basics)
+
+
+    return [p for p in paths if p]
 
 
 
@@ -394,19 +544,7 @@ def cross_expander_aligner(base_audio, reaction_audio, sr, options, ground_truth
     options['first_n_samples'] = first_n_samples
 
 
-    initialize_segment_start_cache()
-    initialize_segment_end_cache()
-
-    initialize_path_score()
-    initialize_path_counts()
-    initialize_path_pruning()
-
-    best_finished_path.clear()
-
-
-    options['alignment_bounds'] = create_reaction_alignment_bounds(basics, first_n_samples)
-
-    paths = find_pathways(basics, options)
+    paths = find_alignments(basics, options)
 
     path = find_best_path(paths, basics)
 
@@ -433,6 +571,7 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
     options.setdefault("reverse_search_bound", options['min_segment_length_in_seconds'])
     options.setdefault("peak_tolerance", .5)
     options.setdefault("expansion_tolerance", .7)
+    options['output_file'] = output_file
 
 
 
@@ -459,9 +598,9 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
             for sequence in final_sequences:
                 print(f"\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])}")
 
-            output_alignment_metadata(alignment_metadata_file, final_sequences)
+            save_object_to_file(alignment_metadata_file, final_sequences)
         else: 
-            final_sequences = read_alignment_metadata(alignment_metadata_file)
+            final_sequences = read_object_from_file(alignment_metadata_file)
 
     if not os.path.exists(output_file) and options["output_alignment_video"]:
         # Trim and align the reaction video
@@ -469,16 +608,11 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
     return output_file
 
 
-def output_alignment_metadata(output_file, final_sequences):
-    temp_dir, _ = os.path.splitext(output_file)
-
-    if not os.path.exists(temp_dir):
-        os.makedirs(temp_dir)
-
+def save_object_to_file(output_file, final_sequences):
     with open(output_file, 'wb') as f:
         pickle.dump(final_sequences, f)
 
-def read_alignment_metadata(input_file):
+def read_object_from_file(input_file):
     with open(input_file, 'rb') as f:
         data = pickle.load(f)
     return data
