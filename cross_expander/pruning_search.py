@@ -143,13 +143,18 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
         print("Weird zero length path!")
         return 'checkpoint'
 
-    # go through all checkpoints we've passed
-    for its, current_ts in enumerate(checkpoints):
-        if current_start < current_ts: 
-            break
+
+    current_ts = find_last_checkpoint_crossed(basics, current_start)
+
+    # # go through all checkpoints we've passed
+    # for its, current_ts in enumerate(checkpoints):
+    #     if current_start < current_ts: 
+    #         break
+
+    if current_ts > 0:
 
         if current_ts in current_path_checkpoint_scores and current_path_checkpoint_scores[current_ts]:
-            continue
+            return False
 
         partial_score = calculate_partial_score(current_path, current_ts, basics)
         if partial_score is None:
@@ -169,7 +174,7 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
         if current_ts > len_audio / 2:
             confidence = .99
         else: 
-            confidence = .5 + .499 * (  current_ts / (len_audio / 2) )
+            confidence = .2 + .799 * (  current_ts / (len_audio / 2) )
 
         def get_score(sc):
             return sc[0] # * sc[3] #* sc[3] * sc[3] * sc[3] * sc[3] * sc[3]
@@ -184,26 +189,28 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
                 paths_by_checkpoint[current_ts]['prunes_here'] += 1
                 return 'best_score'
 
-        # ts_thresh_contrib = min( current_ts / (3 * 60 * sr), .1)
-        # prunes_thresh_contrib = min( .04 * prunes_here / 50, .04 )
-        # prunes_thresh_contrib = 0
 
-        # prune_threshold = .85 + ts_thresh_contrib + prunes_thresh_contrib
+        if False:
+            # ts_thresh_contrib = min( current_ts / (3 * 60 * sr), .1)
+            # prunes_thresh_contrib = min( .04 * prunes_here / 50, .04 )
+            # prunes_thresh_contrib = 0
+
+            # prune_threshold = .85 + ts_thresh_contrib + prunes_thresh_contrib
 
 
-        for comp_reaction_end, comp_score, ppath in paths_by_checkpoint[current_ts]['paths']:
-            # print(f"\t{comp_reaction_end} <= {adjusted_reaction_end}?")
-            if comp_reaction_end <= adjusted_reaction_end:
+            for comp_reaction_end, comp_score, ppath in paths_by_checkpoint[current_ts]['paths']:
+                # print(f"\t{comp_reaction_end} <= {adjusted_reaction_end}?")
+                if comp_reaction_end <= adjusted_reaction_end:
 
-                # if current_score[0] < prune_threshold * comp_score[0]:
-                if confidence * get_score(comp_score) > get_score(current_score):
-                    paths_by_checkpoint[current_ts]['prunes_here'] += 1 # increment prunes at this checkpoint
-                    # print(f"\tCheckpoint Prune at {current_ts / sr}: {current_score[0]} compared to {comp_score[0]}. Prunes here: {paths_by_checkpoint[current_ts]['prunes_here']} @ thresh {prune_threshold}")
-                    
-                    return 'checkpoint'
+                    # if current_score[0] < prune_threshold * comp_score[0]:
+                    if confidence * get_score(comp_score) > get_score(current_score):
+                        paths_by_checkpoint[current_ts]['prunes_here'] += 1 # increment prunes at this checkpoint
+                        # print(f"\tCheckpoint Prune at {current_ts / sr}: {current_score[0]} compared to {comp_score[0]}. Prunes here: {paths_by_checkpoint[current_ts]['prunes_here']} @ thresh {prune_threshold}")
+                        
+                        return 'checkpoint'
 
-        paths_by_checkpoint[current_ts]['paths'].append( (adjusted_reaction_end, current_score, list(current_path)) )
-        prune_paths_at_checkpoint(current_ts, paths_by_checkpoint)
+            paths_by_checkpoint[current_ts]['paths'].append( (adjusted_reaction_end, current_score, list(current_path)) )
+            prune_paths_at_checkpoint(current_ts, paths_by_checkpoint)
 
             
     return False
@@ -236,6 +243,16 @@ def prune_paths_at_checkpoints():
         prune_paths_at_checkpoint(ts, paths_by_checkpoint)
 
 
+def find_last_checkpoint_crossed(basics, current_start):
+    checkpoints = basics.get('checkpoints')
+    previous_checkpoint = -1
+    for checkpoint in checkpoints:
+        if current_start < checkpoint:
+            break
+        previous_checkpoint = checkpoint
+
+    return previous_checkpoint
+
 
 def print_prune_data(basics):
     global paths_by_checkpoint
@@ -260,12 +277,12 @@ def initialize_checkpoints(basics):
     base_audio = basics.get('base_audio')
     sr = basics.get('sr')
 
-    samples_per_checkpoint = 10 * sr 
+    samples_per_checkpoint = 5 * sr 
 
     timestamps = []
-    s = samples_per_checkpoint
+    s = 5
     while s < len(base_audio):
-        if s / basics.get('sr') >= 10:
+        if s / basics.get('sr') >= 5:
             timestamps.append(s)
         s += samples_per_checkpoint
 
