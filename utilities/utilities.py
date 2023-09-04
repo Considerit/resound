@@ -331,6 +331,7 @@ input_events = {}
 def on_press_key(key, callback):
     global input_events
     input_events[key] = callback
+    print('set callback for', key)
 
 # Function that will be called whenever a key is pressed
 def on_press(key):
@@ -339,10 +340,12 @@ def on_press(key):
         char = key.char
     except AttributeError:
         char = None
-
+        
     # If the character is in our input events, call the associated function
     if char in input_events:
         input_events[char]()
+
+
 
 
 
@@ -351,4 +354,37 @@ listener = keyboard.Listener(on_press=on_press)
 listener_thread = threading.Thread(target=listener.start)
 listener_thread.daemon = True
 listener_thread.start()
+
+
+
+# set up profiling on demand
+import cProfile
+import pstats
+# import asyncio
+
+profile_when_possible = False
+profiler = None
+
+def toggle_profiling():
+    global profile_when_possible
+    global profiler
+
+    profile_when_possible = True
+
+    if profile_when_possible and not profiler:
+        print("ACTIVATE PROFILING")
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+def print_profiling():
+    global profile_when_possible
+    if profile_when_possible:
+        profiler.disable()
+        stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+        stats.print_stats()
+        profiler.enable()
+        profile_when_possible = False
+
+
+on_press_key('¬', toggle_profiling) # option-i
 
