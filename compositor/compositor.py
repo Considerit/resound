@@ -8,7 +8,7 @@ from itertools import groupby
 import colorsys
 
 
-from moviepy.editor import ImageClip, CompositeVideoClip, CompositeAudioClip
+from moviepy.editor import ImageClip, CompositeVideoClip, CompositeAudioClip, concatenate_audioclips
 from moviepy.audio.AudioClip import AudioArrayClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
 from moviepy.editor import VideoFileClip
@@ -42,13 +42,17 @@ from utilities import conversion_frame_rate, conversion_audio_sample_rate
 # The aspect ration of the resulting video should be approximately that of a laptop screen, and can 
 # be any size up to the resolution of a modern macbook pro. These constraints are soft. 
 
-def compose_reactor_compilation(song, base_video_path, reactions, output_path, output_size=(1792, 1120), fast_only=False):
+from moviepy.audio.fx import all as audio_fx
+
+def compose_reactor_compilation(song, base_video_path, reactions, output_path, options, extend_by=0, output_size=(1792, 1120)):
 
     if os.path.exists(output_path):
       print("Compilation already exists", output_path)
       return
 
     print(f"Creating compilation for {output_path}")
+
+    draft = options.get('draft', False)
 
     base_video = VideoFileClip(base_video_path)
 
@@ -73,8 +77,10 @@ def compose_reactor_compilation(song, base_video_path, reactions, output_path, o
 
       # upper left point of rectangle, lower right point of rectangle
       bounds = (x - base_width / 2, y - base_height / 2, x + base_width / 2, y + base_height / 2)
+      center = None
     else: 
       bounds = [0,0,width,0]
+      center = [width / 2, height / 2]
 
     audio_clips.append(base_video.audio)
 
@@ -108,7 +114,7 @@ def compose_reactor_compilation(song, base_video_path, reactions, output_path, o
     #   if not enough_grid_cells:
     #     total_videos += 1
 
-    hex_grid, cell_size = generate_hexagonal_grid(width, height, total_videos, bounds)
+    hex_grid, cell_size = generate_hexagonal_grid(width, height, total_videos, bounds, center)
     hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
     cell_size = math.floor(cell_size)
     print(f"len(hex_grid) = {len(hex_grid)}  total_videos={total_videos} cell_size={cell_size}")
@@ -128,8 +134,11 @@ def compose_reactor_compilation(song, base_video_path, reactions, output_path, o
         featured = reaction['featured']
 
         clip = reaction['clip']
-        volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1.5)
-        audio_clips.append(AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps))
+        volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
+        volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
+
+
+        audio_clips.append(volume_adjusted_clip)
 
         size = cell_size
         if featured: 
@@ -139,18 +148,22 @@ def compose_reactor_compilation(song, base_video_path, reactions, output_path, o
 
         hsv_color = reactor_colors[i]
         color_func = create_color_func(hsv_color, clip)
-        clip = create_masked_video(clip, color_func=color_func, border_thickness=10, width=size, height=size, as_circle=featured)
+
+        clip = clip.resize((size, size))
+        if not draft:
+          clip = create_masked_video(clip, color_func=color_func, border_thickness=10, width=size, height=size, as_circle=featured)
 
         x,y = pos
-
         clip = clip.set_position((x - size / 2, y - size / 2))
+
+        if clip_length < clip.duration:
+          clip_length = clip.duration
+
         if featured:
           featured_clips.append(clip)
         else: 
           other_clips.append(clip)
 
-        if clip_length < clip.duration:
-          clip_length = clip.duration
 
 
 
@@ -160,7 +173,7 @@ def compose_reactor_compilation(song, base_video_path, reactions, output_path, o
 
     # Create the composite video
     clips = other_clips + featured_clips
-    if include_base_video:
+    if include_base_video and not draft:
         clips = [base_video] + clips
     final_clip = CompositeVideoClip(clips, size=output_size)
     final_clip = final_clip.set_duration(duration)
@@ -168,22 +181,30 @@ def compose_reactor_compilation(song, base_video_path, reactions, output_path, o
 
     final_audio = CompositeAudioClip(audio_clips)
     final_audio = final_audio.set_duration(duration)        
+
+    if extend_by > 0:
+      clip1 = final_audio.subclip(0, clip.duration - extend_by)
+      clip2 = final_audio.subclip(clip.duration - extend_by, clip.duration)
+
+      # Reduce the volume of the second clip
+      clip2 = clip2.fx(audio_fx.volumex, 0.5)  # reduce volume to 50%
+      final_audio = concatenate_audioclips([clip1, clip2])
+
+
     final_clip = final_clip.set_audio(final_audio)
     final_clip.set_fps(30)
 
     # Save the result
-    fast_path = output_path + "fast.mp4"
-    if not os.path.exists(fast_path):
-      final_clip.write_videofile(fast_path, 
-                             codec='libx264', 
-                             audio_codec="aac", 
-                             threads=2, 
-                             preset='ultrafast', 
-                             profile='baseline', 
-                             bitrate="500k")
+    if draft:
+      fast_path = output_path + "fast.mp4"
+      if not os.path.exists(fast_path):
+        final_clip.resize(.25).set_fps(12).write_videofile(output_path + "fast.mp4", 
+                                         codec='libx264', 
+                                         audio_codec="aac", 
+                                         preset='ultrafast')
 
-    if not fast_only:
-      final_clip.write_videofile(output_path, codec='libx264', audio_codec="aac", threads=2, )
+    else:
+      final_clip.write_videofile(output_path, codec='libx264', audio_codec="aac")
 
 
 
@@ -390,8 +411,6 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
 
 def create_masked_video(clip, width, height, color_func, border_thickness=10, as_circle=False):
 
-    # Resize the clip
-    clip = clip.resize((width, height))
 
     # Create new PIL images with the same size as the clip, fill with black color
     mask_img_large = Image.new('1', (width, height), 0)
