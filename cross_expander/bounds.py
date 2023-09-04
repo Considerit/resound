@@ -95,8 +95,7 @@ def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkp
                                     open_start=start,
                                     closed_start=start, 
                                     distance=first_n_samples, 
-                                    filter_for_similarity=False, 
-                                    print_candidates=True  )
+                                    filter_for_similarity=False)
 
 
             if candidates is None: 
