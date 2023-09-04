@@ -17,10 +17,6 @@ def get_chunk_score(basics, reaction_start, reaction_end, current_start, current
     sr = basics.get('sr')
     hop_length = basics.get('hop_length')
 
-
-    chunk = base_audio[current_start:current_end]
-    reaction_chunk = reaction_audio[reaction_start:reaction_end]            
-
     mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
     mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
 
@@ -65,10 +61,6 @@ def calculate_partial_score(current_path, checkpoint_ts, basics):
     score = path_score(modified_path, basics, relative_to = checkpoint_ts) 
 
     return adjusted_reaction_end, score
-
-
-
-
 
 
 
@@ -354,6 +346,9 @@ def path_score(path, basics, relative_to=None):
 
 
 def find_best_path(candidate_paths, basics):
+
+    print(f"Finding the best of {len(candidate_paths)} paths")
+
     sr = basics.get('sr')
     base_audio_mfcc = basics.get('base_audio_mfcc')
     base_audio_vol_diff = basics.get('song_percentile_loudness')
