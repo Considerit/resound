@@ -11,7 +11,7 @@ paths_visited = {}
 
 def initialize_path_pruning():
     global prune_types
-    prunes = [  "checkpoint",
+    prunes = [  "queue_prune",
                 "best_score",
                 "bounds",
                 "scope_cached",
@@ -71,21 +71,23 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
     #             cnt = path_counts[ddepth]['current_starts'][sstart]
     #             print(f"\t\t{sstart} [{sstart / sr:.1f}]: {path_counts[ddepth]['current_starts'][sstart]}")
 
-    path_key = str(current_path)
-    if path_key in paths_visited:
-        prune_types["duplicate_path_prune"] += 1
-        return True
-    paths_visited[path_key] = 1
+    if len(current_path) > 0:
+        path_key = str(current_path)
+        if path_key in paths_visited:
+            prune_types["duplicate_path_prune"] += 1
+            # print('duplicate path')
+            return True
+        paths_visited[path_key] = 1
 
-    if depth > 3:
-        prior_current_start = current_path[-1][2]
-        prior_prior_current_start = current_path[-2][2]
-        if prior_current_start in path_counts[depth - 1]['current_starts'] and path_counts[depth - 1]['current_starts'][prior_current_start] > 1:
-            check_depth = depth - 1
-            while check_depth > 3 and depth - check_depth < 10:
-                new_checkpoint = current_path[check_depth - depth][2]
-                add_new_checkpoint(checkpoints, new_checkpoint, basics)
-                check_depth -= 1
+    # if depth > 3:
+    #     prior_current_start = current_path[-1][2]
+    #     prior_prior_current_start = current_path[-2][2]
+    #     if prior_current_start in path_counts[depth - 1]['current_starts'] and path_counts[depth - 1]['current_starts'][prior_current_start] > 1:
+    #         check_depth = depth - 1
+    #         while check_depth > 3 and depth - check_depth < 10:
+    #             new_checkpoint = current_path[check_depth - depth][2]
+    #             add_new_checkpoint(checkpoints, new_checkpoint, basics)
+    #             check_depth -= 1
 
 
     # aggressive prune based on scores after having passed a checkpoint 
@@ -93,6 +95,7 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
         should_prune = check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_scores, best_finished_path, current_start, basics)
         if should_prune: #and max_visited > 2500:
             prune_types[should_prune] += 1
+            # print('checkpoint prune', should_prune)
             return True
 
 
@@ -102,6 +105,7 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
         if not in_bounds(upper_bound, current_start, reaction_start):
             # print(f'\tBounds Prune! {current_start / sr} {reaction_start / sr} not in bounds (upper_bound={upper_bound}!')
             prune_types['bounds'] += 1
+            # print('bounds prune')
             return True
 
     return False
@@ -171,10 +175,7 @@ def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_s
 
 
 
-        if current_ts > len_audio / 2:
-            confidence = .99
-        else: 
-            confidence = .2 + .799 * (  current_ts / (len_audio / 2) )
+        confidence = .2 + .75 * (  current_ts / len_audio )
 
         def get_score(sc):
             return sc[0] # * sc[3] #* sc[3] * sc[3] * sc[3] * sc[3] * sc[3]
