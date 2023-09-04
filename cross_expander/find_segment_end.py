@@ -84,7 +84,6 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, r
         # print(f"{(reaction_start + i * step) / sr} : {slope}     {range(i - window - 1, i)}   {range(i + 1, i + window + 1)}  {prev} - {after}")
         slopes.append( (slope, score)  )
 
-
     slopes.reverse()
     break_point = None
     last_neg_slopes = None
@@ -105,12 +104,11 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, r
 
 
     if not last_neg_slopes or len(last_neg_slopes) == 0:
-        assert( current_end - current_start == reaction_end - reaction_start)        
+        assert( current_end - current_start == reaction_end - reaction_start) 
+        # print('exiting early', current_start, current_end, reaction_start, reaction_end)       
         return (current_end, reaction_end)
 
     last_neg_slopes.reverse()
-
-    # print("last_neg_slopes", last_neg_slopes)
 
     neg_slope_avg /= len(last_neg_slopes)
 
@@ -240,11 +238,11 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
         while (reverse_index - current_start) % samples_per_frame() > 0 and reverse_index < len(reaction_audio) and current_start + reverse_index < len(base_audio):
             reverse_index += 1
 
-        segment = (reaction_start - reverse_index, reaction_start, current_start, current_start + reverse_index, True)
-
+        segment = (reaction_start, reaction_start + reverse_index, current_start, current_start + reverse_index, reaction_start - reverse_index < 0)
         current_start += reverse_index
 
         segment_scope_cache[scope_key] = (segment, current_start, reaction_start)
+
         return (segment, current_start, reaction_start)
 
     #########################################
@@ -270,7 +268,7 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
     reaction_end = candidate_reaction_end
 
     if reaction_start == reaction_end:
-        # print(f"### Sequence of zero length at {reaction_start} {current_start}, skipping forward")
+        # print(f"### Sequence of zero length at {reaction_start / sr} {current_start / sr}, skipping forward")
         segment_scope_cache[scope_key] = (None, current_start, reaction_start + samples_per_frame())
         return segment_scope_cache[scope_key]
 
@@ -281,6 +279,7 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
 
 
     segment_scope_cache[scope_key] = (segment, current_end, reaction_end)
+
     return segment_scope_cache[scope_key]
 
 
