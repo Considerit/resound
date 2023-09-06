@@ -35,7 +35,6 @@ import os
 import gc
 import librosa
 import copy
-import pickle
 import random
 import matplotlib.pyplot as plt
 from decimal import Decimal, getcontext
@@ -49,13 +48,18 @@ import traceback
 from cross_expander.create_trimmed_video import trim_and_concat_video
 
 from utilities import extract_audio, compute_precision_recall, universal_frame_rate, is_close, print_memory_consumption, on_press_key, print_profiling
+from utilities import save_object_to_file, read_object_from_file
 
 from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data, find_last_checkpoint_crossed
 
 from cross_expander.find_segment_start import find_next_segment_start_candidates, initialize_segment_start_cache
 from cross_expander.find_segment_end import scope_segment, initialize_segment_end_cache
 from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, print_path, calculate_partial_score
+from cross_expander.scoring_and_similarity import initialize_segment_tracking
 from cross_expander.bounds import create_reaction_alignment_bounds, get_bound
+
+
+
 
 from utilities.audio_processing import audio_percentile_loudness
 
@@ -139,14 +143,7 @@ skip_to_next_branch = False
 
 # on_press_key('ø', skip_branch) # option-o
 
-
-
-
-
-
-
-
-
+    
 
 
 
@@ -159,6 +156,7 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
 
     base_audio = basics.get('base_audio')
     reaction_audio = basics.get('reaction_audio')
+
     sr = basics.get('sr')
     base_audio_mfcc = basics.get('base_audio_mfcc')
     base_audio_vol_diff = basics.get('song_percentile_loudness')
@@ -216,12 +214,13 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
             upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
 
         adjusted_reaction_start = max(0,reaction_start - 0 * current_chunk_size)
+
         candidate_starts = find_next_segment_start_candidates(
                                 basics=basics, 
-                                open_chunk=reaction_audio[adjusted_reaction_start:], 
+                                open_chunk=reaction_audio[adjusted_reaction_start:],                   
                                 open_chunk_mfcc=reaction_audio_mfcc[:, max(0, round(adjusted_reaction_start / hop_length)):], 
                                 open_chunk_vol_diff=reaction_audio_vol_diff[max(0, round(adjusted_reaction_start / hop_length)):], 
-                                closed_chunk=chunk, 
+                                closed_chunk=chunk,
                                 closed_chunk_mfcc= base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length) ],
                                 closed_chunk_vol_diff=base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)],
                                 current_chunk_size=current_chunk_size, 
@@ -233,9 +232,12 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
                                 prune_types=prune_types,
                                 upper_bound=upper_bound, 
                                 filter_for_similarity=True, #depth > 0, 
-                                current_path=current_path,
-                                use_mfcc_correlation=True
-                                )
+                                current_path=current_path
+                            )
+
+
+
+
         # if depth == 0:
         #     candidate_starts = [candidate_starts[0], candidate_starts[1]]
         #     # candidate_starts = [0]
@@ -320,6 +322,98 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
 
 
 
+def manage_queue(basics, queue, low_score_queue, reassess_all):
+    global best_finished_path
+
+    base_audio = basics.get('base_audio')
+    song_length = len(base_audio)
+
+    if reassess_all:
+        queue.extend(low_score_queue)
+        low_score_queue.clear()
+
+    for item in queue:
+        continuation, checkpoint_scores, current_score = item
+        path = continuation[0]
+        current_start = continuation[2]
+
+        current_ts = find_last_checkpoint_crossed(basics, current_start)
+
+        if current_ts > 0:
+
+            if current_ts not in checkpoint_scores:
+                _, score_at_checkpoint = calculate_partial_score(path, current_ts, basics)
+                checkpoint_scores[current_ts] = score_at_checkpoint
+            score_at_checkpoint = checkpoint_scores[current_ts]
+
+            if 'score' in best_finished_path:
+                if current_ts not in best_finished_path['partials']:
+                    _, best_at_checkpoint = calculate_partial_score(best_finished_path['path'], current_ts, basics)
+                    best_finished_path['partials'][current_ts] = best_at_checkpoint
+                best_at_checkpoint = best_finished_path['partials'][current_ts]
+            else:
+                best_at_checkpoint = [song_length / current_ts * current_ts / current_ts * current_ts / current_ts]
+            item[2] = score_at_checkpoint[0] / best_at_checkpoint[0]
+
+        else:
+            item[2] = 2
+
+    if reassess_all and 'score' in best_finished_path: # prune when everything is in the queue
+        new_queue = []
+        for item in queue:
+            confidence = .9 #0 + .9 * (  find_last_checkpoint_crossed(basics, item[0][2]) / song_length )  # 2 .75
+            if item[2] >= confidence:
+                new_queue.append(item)
+            else: 
+                prune_types['queue_prune'] += 1
+                complete_path(len(item[0][0]))
+        queue = new_queue
+
+
+    if len(queue) > 50:
+        num_overall_score = 16
+        num_promising_mid = 12
+        num_promising_late = 12
+
+        by_score = sorted(queue, key=lambda x: x[2], reverse=True)
+        new_queue = by_score[:num_overall_score]
+
+        remaining = by_score[num_overall_score:]
+
+        promising_mid = sorted(remaining, key=lambda x:x[2] * (.5 + x[0][2] / song_length * .5))
+        new_queue.extend(promising_mid[:num_promising_mid])
+
+        remaining = promising_mid[num_promising_mid:]
+
+        promising_late = sorted(remaining, key=lambda x:x[2] * (x[0][2] / song_length)**2)
+        new_queue.extend(promising_late[:num_promising_late])
+
+        remaining = promising_late[num_promising_late:]
+
+        if len(low_score_queue) >= 10:
+            lottery_queue = low_score_queue
+        else:
+            lottery_queue = remaining
+
+        randoms = 0
+        while randoms < 10:
+            idx = max(0, int(random.random() * len(lottery_queue) - 1))
+            new_queue.append( lottery_queue.pop(idx)  )
+            randoms += 1
+
+        queue = new_queue
+        low_score_queue.extend(remaining)
+
+    else: 
+        queue.sort(key=lambda x:x[2], reverse=True)
+
+
+    print(f"sorted queue. queue is {len(queue)} and low_score_queue is {len(low_score_queue)}")
+
+    return queue
+
+
+
 def find_alignments(basics, options):
     global path_counts
     global best_finished_path
@@ -330,9 +424,8 @@ def find_alignments(basics, options):
     initialize_path_score()
     initialize_path_counts()
     initialize_path_pruning()
+    initialize_segment_tracking()
 
-    base_audio = basics.get('base_audio')
-    song_length = len(base_audio)
     sr = basics.get('sr')
 
     best_finished_path.clear()
@@ -384,100 +477,46 @@ def find_alignments(basics, options):
 
         for new_path in new_paths: 
             if new_path is not None:
-                score = path_score(new_path, basics)
+                compressed_path = compress_segments(basics, new_path)
+                score = path_score(compressed_path, basics)
                 if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
+                    old_best = best_finished_path.get('partials', None)
+                    old_best_path = best_finished_path.get('path', None)
                     best_finished_path.update({
                         "path": new_path,
                         "score": score,
                         "partials": {}
                         })
                     print(f"**** New best score is {best_finished_path['score']}")
-                    print_path(compress_segments(basics, new_path), basics)
+                    print_path(compressed_path, basics)
 
-        paths.extend(new_paths)
+                    if old_best:
+                        checkpoints = basics.get('checkpoints')
+                        print("Comparative checkpoint scores:")
+                        for ts in checkpoints: 
+                            old_best_score = calculate_partial_score(old_best_path, ts, basics)
+                            new_best_score = calculate_partial_score(best_finished_path['path'], ts, basics)
+                            print(f"\t{ts / sr}: {new_best_score[0] / old_best_score[0]}")
+
+                paths.append(compressed_path)
+                
         best_score_updated = best_finished_path and best_score_before < best_finished_path["score"][0]
         continuations = [ [c, {}, None] for c in continuations]
+        if best_score_updated:
+            continuations.reverse()
+            continuations.extend(queue)
+            queue = continuations
+        else:
+            queue.extend(continuations)
 
-        queue.extend( continuations )
-
-        print(f"starting from {reaction_start / sr} / {current_start / sr} ({first_non_fill_start}) [{latest_score}]. [{len(continuations)} added, {len(queue)} total]")
-
-
-        # Every once in awhile, re-sort the queue based on scores. Use fraction of the best score
-        # at the latest checkpoint. Any paths that haven't reached the first checkpoint are given
-        # high priority.
-
-        if idx % 250 == 249 or (len(queue) == 0 and len(low_score_queue) > 0):
-            queue.extend(low_score_queue)
-            low_score_queue.clear()
-
-        if idx % 50 == 49: 
-
-            for item in queue:
-                continuation, checkpoint_scores, current_score = item
-                path = continuation[0]
-                current_start = continuation[2]
-
-                current_ts = find_last_checkpoint_crossed(basics, current_start)
-
-                if current_ts > 0:
-
-                    if current_ts not in checkpoint_scores:
-                        _, score_at_checkpoint = calculate_partial_score(path, current_ts, basics)
-                        checkpoint_scores[current_ts] = score_at_checkpoint
-                    score_at_checkpoint = checkpoint_scores[current_ts]
-
-                    if 'score' in best_finished_path:
-
-                        if current_ts not in best_finished_path['partials']:
-                            _, best_at_checkpoint = calculate_partial_score(best_finished_path['path'], current_ts, basics)
-                            best_finished_path['partials'][current_ts] = best_at_checkpoint
-                        best_at_checkpoint = best_finished_path['partials'][current_ts]
-                    else:
-                        best_at_checkpoint = [1]
-
-                    item[2] = score_at_checkpoint[0] / best_at_checkpoint[0]
-                else:
-                    item[2] = 2
+        # print(f"starting from {reaction_start / sr} / {current_start / sr} ({first_non_fill_start}) [{latest_score}]. [{len(continuations)} added, {len(queue)} total]")
 
 
-            queue.sort(key=lambda x: x[2] * (.5 + x[0][2] / song_length * .5), reverse=True)
-            # queue.sort(key=lambda x: x[2], reverse=True)
-
-            if len(low_score_queue) and 'score' in best_finished_path: # prune when everything is in the queue
-                new_queue = []
-                for item in queue:
-                    confidence = .2 + .7 * (  item[0][2] / song_length )
-                    if item[2] >= confidence:
-                        new_queue.append(item)
-                    else: 
-                        prune_types['queue_prune'] += 1
-                        complete_path(len(item[0][0]))
-                queue = new_queue
-
-            if len(queue) > 50:
-                low_score_queue.extend(queue[50:])
-                queue = queue[:50]
-
-            new_queue = []
-
-            for idx, item in enumerate(queue):
-                new_queue.append(item)
-
-                if idx > 35:
-                    # we'll randomly process some lower scored items
-                    while len(low_score_queue) > 0:
-                        index = max(0, int(random.random() * len(low_score_queue) - 1))
-                        winning_loser = low_score_queue.pop(index)
-                        if winning_loser: 
-                            new_queue.append(winning_loser)
-                            break
-
-            queue = new_queue
-
-
-            print(f"sorted queue. queue is {len(queue)} and low_score_queue is {len(low_score_queue)}")
-
+        if idx % 50 == 49 or (len(queue) == 0 and len(low_score_queue) > 0): 
+            # Every once in awhile, re-sort the queue based on scores. Use fraction of the best score
+            # at the latest checkpoint. Any paths that haven't reached the first checkpoint are given
+            # high priority.
+            queue = manage_queue(basics, queue, low_score_queue, reassess_all=idx % 250 == 99)
 
 
         if print_when_possible: 
@@ -614,14 +653,6 @@ def create_aligned_reaction_video(song:dict, react_video_ext, output_file: str, 
     return output_file
 
 
-def save_object_to_file(output_file, final_sequences):
-    with open(output_file, 'wb') as f:
-        pickle.dump(final_sequences, f)
-
-def read_object_from_file(input_file):
-    with open(input_file, 'rb') as f:
-        data = pickle.load(f)
-    return data
 
 
 def compress_segments(basics, match_segments):
