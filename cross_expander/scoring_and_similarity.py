@@ -4,7 +4,6 @@ import math
 
 from utilities.audio_processing import audio_percentile_loudness
 
-
 def get_chunk_score(basics, reaction_start, reaction_end, current_start, current_end):
 
     base_audio = basics.get('base_audio')
@@ -89,6 +88,7 @@ def mfcc_similarity(sr, audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=
 
     similarity = len(mfcc1) / (1 + mse)
     return similarity
+
 
 
 def relative_volume_similarity(sr, audio_chunk1=None, audio_chunk2=None, vol_diff1=None, vol_diff2=None, hop_length=1):
@@ -249,6 +249,9 @@ def initialize_path_score():
     path_score_cache_perf["misses"] = 0
     
 
+
+use_summed_sequence = True
+
 def path_score(path, basics, relative_to=None): 
     global path_score_cache
     global path_score_cache_perf
@@ -326,13 +329,19 @@ def path_score(path, basics, relative_to=None):
     fill_score = duration / (duration + fill)
 
 
-    path_mfcc = create_reaction_mfcc_from_path(path, basics)
-    # path_vol_diff = create_reaction_vol_diff_from_path(path, basics)
 
-    mfcc_alignment = mfcc_similarity(sr, mfcc1=base_audio_mfcc[:,:total_length], mfcc2=path_mfcc)
-    # rel_vol_alignment = relative_volume_similarity(sr, vol_diff1=base_audio_vol_diff[:total_length], vol_diff2=path_vol_diff)
+    if use_summed_sequence:
+        alignment = path_mfcc_segment_sum_score(path, basics)
+    else:
+        path_mfcc = create_reaction_mfcc_from_path(path, basics)
+        mfcc_alignment = mfcc_similarity(sr, mfcc1=base_audio_mfcc[:,:total_length], mfcc2=path_mfcc)
 
-    alignment = 100 * mfcc_alignment #* math.log10(1 + rel_vol_alignment)
+        # path_vol_diff = create_reaction_vol_diff_from_path(path, basics)
+        # rel_vol_alignment = relative_volume_similarity(sr, vol_diff1=base_audio_vol_diff[:total_length], vol_diff2=path_vol_diff)
+
+        alignment = 100 * mfcc_alignment #* math.log10(1 + rel_vol_alignment)
+
+
 
     duration_score = (duration + fill) / relative_to
 
@@ -434,11 +443,7 @@ def find_best_path(candidate_paths, basics):
 
 def print_path(path, basics):
     sr = basics.get('sr')
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    base_audio_vol_diff = basics.get('song_percentile_loudness')
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
-    hop_length = basics.get('hop_length')
+    base_audio = basics.get('base_audio')
     gt = basics.get('ground_truth')
 
     if gt: 
@@ -447,29 +452,63 @@ def print_path(path, basics):
     for sequence in path:
         reaction_start, reaction_end, current_start, current_end, is_filler = sequence
 
-        mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
-        mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
+        gt_pr = ""
+        if not is_filler: 
+            mfcc_score = get_segment_mfcc_score(basics, sequence)
+            rel_volume_alignment = get_segment_rel_vol_score(basics, sequence)
+        
+            if gt: 
+                total_overlap = 0
+                for gt_sequence in gt:
+                    total_overlap += calculate_overlap(sequence, gt_sequence)
 
-        voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
-        voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
-
-        if is_filler: 
-            mfcc_react_chunk = mfcc_song_chunk
-            voldiff_react_chunk = voldiff_song_chunk
-
-        mfcc_score = mfcc_similarity(sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
-        rel_volume_alignment = relative_volume_similarity(sr, vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
-
-        if gt and not is_filler: 
-            total_overlap = 0
-            for gt_sequence in gt:
-                total_overlap += calculate_overlap(sequence, gt_sequence)
-
-            gt_pr = f"{100 * total_overlap / (sequence[1] - sequence[0])}%"
-        else:
-            gt_pr = ""
+                gt_pr = f"{100 * total_overlap / (sequence[1] - sequence[0])}%"
+        else: 
+            mfcc_score = rel_volume_alignment = 0 
 
         print(f"\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}] {gt_pr}")
+    
+    print(f"\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, basics)} relvol={path_rel_vol_segment_sum_score(path, basics)}")
+
+def path_mfcc_segment_sum_score(path, basics):
+    base_audio = basics.get('base_audio')
+
+    mfcc_sequence_sum_score = 0
+
+    for sequence in path:
+        reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+
+        if not is_filler: 
+            mfcc_score = get_segment_mfcc_score(basics, sequence)
+        
+            duration_factor = (current_end - current_start) / len(base_audio)
+            mfcc_sequence_sum_score    += mfcc_score * duration_factor
+
+    if math.isnan(mfcc_sequence_sum_score):
+        return 0
+
+    return mfcc_sequence_sum_score
+
+def path_rel_vol_segment_sum_score(path, basics):
+    base_audio = basics.get('base_audio')
+
+    rel_vol_sequence_sum_score = 0
+
+    for sequence in path:
+        reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+
+        if not is_filler: 
+            rel_volume_alignment = get_segment_rel_vol_score(basics, sequence)
+        
+            duration_factor = (current_end - current_start) / len(base_audio)
+            rel_vol_sequence_sum_score += rel_volume_alignment * duration_factor
+
+    if math.isnan(rel_vol_sequence_sum_score):
+        return 0
+
+    return rel_vol_sequence_sum_score
+
+
 
 
 def calculate_overlap(interval1, interval2):
@@ -495,3 +534,71 @@ def ground_truth_overlap(path, gt):
 
     # Calculate the percentage overlap
     return (total_overlap * 2) / (path_duration + gt_duration) * 100  # Percentage overlap
+
+
+
+
+
+
+
+##### Segments
+
+
+
+segment_mfcc_scores = {}
+segment_rel_vol_scores = {}
+
+def initialize_segment_tracking():
+  global segment_mfcc_scores
+  segment_mfcc_scores.clear()
+  segment_rel_vol_scores.clear()
+
+def get_segment_id(segment):
+    reaction_start, reaction_end, current_start, current_end, is_filler = segment
+    return f"{reaction_start} {reaction_end} {current_start} {current_end} {is_filler}"
+
+def get_segment_mfcc_score(basics, segment):
+    reaction_start, reaction_end, current_start, current_end, is_filler = segment
+
+    if is_filler:
+      return 0
+
+    global segment_mfcc_scores
+
+    key = get_segment_id(segment)
+    if key not in segment_mfcc_scores:
+      sr = basics.get('sr')
+      base_audio_mfcc = basics.get('base_audio_mfcc')
+      reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
+      hop_length = basics.get('hop_length')
+
+      mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
+      mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
+      mfcc_score = mfcc_similarity(sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
+
+      segment_mfcc_scores[key] = 1000 * mfcc_score
+
+    return segment_mfcc_scores[key]
+
+def get_segment_rel_vol_score(basics, segment):
+    reaction_start, reaction_end, current_start, current_end, is_filler = segment
+
+    if is_filler:
+      return 0
+
+    global segment_rel_vol_scores
+
+    key = get_segment_id(segment)
+    if key not in segment_rel_vol_scores:
+      sr = basics.get('sr')
+      base_audio_vol_diff = basics.get('song_percentile_loudness')
+      reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
+      hop_length = basics.get('hop_length')
+
+      voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
+      voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
+      rel_volume_alignment = relative_volume_similarity(sr, vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
+
+      segment_rel_vol_scores[key] = 10 * rel_volume_alignment
+
+    return segment_rel_vol_scores[key]
