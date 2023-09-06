@@ -40,7 +40,16 @@ from decimal import Decimal, getcontext
 
 
 
+import pickle
 
+def save_object_to_file(output_file, object):
+    with open(output_file, 'wb') as f:
+        pickle.dump(object, f)
+
+def read_object_from_file(input_file):
+    with open(input_file, 'rb') as f:
+        data = pickle.load(f)
+    return data
 
 
 
@@ -346,16 +355,11 @@ def on_press(key):
         input_events[char]()
 
 
-
-
-
 # Start the listener
 listener = keyboard.Listener(on_press=on_press)
 listener_thread = threading.Thread(target=listener.start)
 listener_thread.daemon = True
 listener_thread.start()
-
-
 
 # set up profiling on demand
 import cProfile
