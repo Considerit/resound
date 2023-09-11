@@ -138,6 +138,8 @@ def check_for_prune_at_segment_start(basics, paths_at_segment_start, current_pat
     
 
 def check_if_prune_at_nearest_checkpoint(current_path, current_path_checkpoint_scores, best_finished_path, current_start, basics):
+    return False
+
     base_audio = basics.get('base_audio')
     sr = basics.get('sr')
     new_checkpoint_every_n_prunes = 5
@@ -287,12 +289,12 @@ def initialize_checkpoints(basics):
     base_audio = basics.get('base_audio')
     sr = basics.get('sr')
 
-    samples_per_checkpoint = 10 * sr 
+    samples_per_checkpoint = 2 * sr 
 
     timestamps = []
-    s = 10
+    s = 6
     while s < len(base_audio):
-        if s / basics.get('sr') >= 10:
+        if s / basics.get('sr') >= 6:
             timestamps.append(s)
         s += samples_per_checkpoint
 
