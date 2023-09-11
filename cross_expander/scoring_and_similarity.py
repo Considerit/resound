@@ -31,19 +31,18 @@ def get_chunk_score(basics, reaction_start, reaction_end, current_start, current
 
 
 
-def calculate_partial_score(current_path, checkpoint_ts, basics):
-
+def truncate_path(current_path, timestamp): 
     modified_path = []
     adjusted_reaction_end = None
 
     for segment in current_path:
         (reaction_start, reaction_end, current_start, current_end, filler) = segment
-        if current_end >= checkpoint_ts:
-            if current_start > checkpoint_ts:
+        if current_end >= timestamp:
+            if current_start > timestamp:
                 break
 
-            to_trim = current_end - checkpoint_ts
-            current_end = checkpoint_ts
+            to_trim = current_end - timestamp
+            current_end = timestamp
             reaction_end -= to_trim
             modified_path.append( (reaction_start, reaction_end, current_start, current_end, filler) )
             adjusted_reaction_end = reaction_end
@@ -56,6 +55,33 @@ def calculate_partial_score(current_path, checkpoint_ts, basics):
         print(f"WEIRD! Could not calculate partial score for {checkpoint_ts} {current_path}")
         return None
 
+    return (adjusted_reaction_end, modified_path)
+
+
+def append_or_extend_segment(my_path, segment):
+    if len(my_path) == 0:
+        my_path.append(segment)
+        return
+
+    (previous_reaction_start, previous_reaction_end, previous_start, previous_end, previous_is_filler) = my_path[-1]
+    (new_reaction_start, new_reaction_end, new_start, new_end, new_is_filler) = segment
+
+    if new_reaction_start - previous_reaction_end > 1 or new_is_filler or new_is_filler != previous_is_filler:
+        my_path.append(segment)
+    else: 
+        my_path[-1][1] = new_reaction_end
+        my_path[-1][3] = new_end 
+
+
+
+
+
+
+def calculate_partial_score(current_path, checkpoint_ts, basics):
+    result = truncate_path(current_path, checkpoint_ts)
+    if result is None: 
+        return None
+    (adjusted_reaction_end, modified_path) = result
     # truncate current path back to current_ts
     score = path_score(modified_path, basics, relative_to = checkpoint_ts) 
 
@@ -250,7 +276,7 @@ def initialize_path_score():
     
 
 
-use_summed_sequence = True
+use_summed_sequence = False
 
 def path_score(path, basics, relative_to=None): 
     global path_score_cache
@@ -552,6 +578,9 @@ def initialize_segment_tracking():
   global segment_mfcc_scores
   segment_mfcc_scores.clear()
   segment_rel_vol_scores.clear()
+
+def get_path_id(path):
+    return ":".join([get_segment_id(segment) for segment in path])
 
 def get_segment_id(segment):
     reaction_start, reaction_end, current_start, current_end, is_filler = segment
