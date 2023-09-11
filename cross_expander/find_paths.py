@@ -38,7 +38,7 @@ import copy
 import random
 import matplotlib.pyplot as plt
 from decimal import Decimal, getcontext
-
+import numpy as np
 
 
 from typing import List, Tuple
@@ -55,7 +55,7 @@ from cross_expander.pruning_search import should_prune_path, initialize_path_pru
 from cross_expander.find_segment_start import find_next_segment_start_candidates, initialize_segment_start_cache
 from cross_expander.find_segment_end import scope_segment, initialize_segment_end_cache
 from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, print_path, calculate_partial_score
-from cross_expander.scoring_and_similarity import initialize_segment_tracking
+from cross_expander.scoring_and_similarity import initialize_segment_tracking, truncate_path, append_or_extend_segment
 from cross_expander.bounds import create_reaction_alignment_bounds, get_bound
 
 
@@ -104,11 +104,13 @@ def open_path(depth, cnt=1):
 
 def complete_path(depth, cnt=1):
     global path_counts
+    if depth not in path_counts:
+        initialize_path_counts_for_depth(depth)    
     path_counts[depth]['completed'] += cnt
     path_counts[-1]['completed'] += cnt
 
-def print_paths(current_start, reaction_start, depth, paths, path_counts, sr):
-    print(f"Paths at point: {current_start / sr:.1f} {reaction_start / sr:.1f} [depth={depth}] [paths found here={len(paths)}]")
+def print_paths(current_start, reaction_start, depth, path_counts, sr):
+    print(f"Paths at point: {current_start / sr:.1f} {reaction_start / sr:.1f} [depth={depth}]")
 
     try: 
         for ddd, progress in path_counts.items():
@@ -147,10 +149,20 @@ skip_to_next_branch = False
 
 
 
-def branching_search(basics, options, current_path=None, current_path_checkpoint_scores=None, current_start=0, reaction_start=0, continuations=None, greedy_branching=False, recursive=True): 
+def branching_search(basics, options, current_path=None, current_path_checkpoint_scores=None, current_start=0, reaction_start=0, continuations=None, greedy_branching=False, recursive=True, probe_to_time=False, peak_tolerance=None): 
     global best_finished_path
     global path_counts
     global skip_to_next_branch
+
+
+
+    if (probe_to_time and current_start >= probe_to_time):
+        continuations.append([current_path, current_path_checkpoint_scores, current_start, reaction_start])
+        return [None]
+
+    if peak_tolerance is None:
+        peak_tolerance = options.get('peak_tolerance')
+
 
     print_profiling()
 
@@ -168,6 +180,8 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
 
     depth = len(current_path)
 
+    # print(f"\t\tDepth={depth} Reaction Start={reaction_start / sr} Current_start={current_start / sr}")
+
     if depth not in path_counts:
         initialize_path_counts_for_depth(depth)
 
@@ -179,6 +193,9 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
         else:
             skip_to_next_branch = False
  
+
+    check_if_print_info(basics, current_start, reaction_start, depth, path_counts, sr)
+
     if should_prune_path(basics, options, current_path, current_path_checkpoint_scores, best_finished_path, current_start, reaction_start, path_counts):
         
         return [None]
@@ -201,7 +218,8 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
             if reaction_audio_depleted:
                 length_remaining = len(base_audio) - current_start - 1
                 filler_segment = (reaction_start, reaction_start + length_remaining, current_start, current_start + length_remaining, True)
-                current_path.append(  filler_segment   )
+                append_or_extend_segment(current_path, filler_segment)
+
                 # print(f"Reaction video finished before end of base video. Backfilling with base video ({length_remaining / sr}s).")
                 # print(f"Backfilling {current_path} {current_start} {reaction_start}")
 
@@ -213,19 +231,18 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
         if alignment_bounds is not None:
             upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
 
-        adjusted_reaction_start = max(0,reaction_start - 0 * current_chunk_size)
 
         candidate_starts = find_next_segment_start_candidates(
                                 basics=basics, 
-                                open_chunk=reaction_audio[adjusted_reaction_start:],                   
-                                open_chunk_mfcc=reaction_audio_mfcc[:, max(0, round(adjusted_reaction_start / hop_length)):], 
-                                open_chunk_vol_diff=reaction_audio_vol_diff[max(0, round(adjusted_reaction_start / hop_length)):], 
+                                open_chunk=reaction_audio[reaction_start:],                   
+                                open_chunk_mfcc=reaction_audio_mfcc[:, max(0, round(reaction_start / hop_length)):], 
+                                open_chunk_vol_diff=reaction_audio_vol_diff[max(0, round(reaction_start / hop_length)):], 
                                 closed_chunk=chunk,
                                 closed_chunk_mfcc= base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length) ],
                                 closed_chunk_vol_diff=base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)],
                                 current_chunk_size=current_chunk_size, 
-                                peak_tolerance=options.get('peak_tolerance'),
-                                open_start=max(0, adjusted_reaction_start), 
+                                peak_tolerance=peak_tolerance,
+                                open_start=reaction_start, 
                                 closed_start=current_start, 
                                 distance=first_n_samples, 
                                 prune_for_continuity=True,
@@ -235,22 +252,16 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
                                 current_path=current_path
                             )
 
-
-
-
-        # if depth == 0:
-        #     candidate_starts = [candidate_starts[0], candidate_starts[1]]
-        #     # candidate_starts = [0]
-
         #########
         # segment start pruned
         if candidate_starts == -1:
+            # print("\t\t\treturning none")
             return [None]
 
         if candidate_starts:
-            candidate_starts = [c - reaction_start + adjusted_reaction_start for c in candidate_starts]
             candidate_starts = [c for c in candidate_starts if c >= 0]
-        #########
+
+
         # Could not find match in remainder of reaction video
         if candidate_starts is None or len(candidate_starts) == 0:
             increment = int(sr * .25)
@@ -263,21 +274,25 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
                 length_remaining = len(base_audio) - current_start - 1
                 if length_remaining > 0:
                     filler_segment = (reaction_start, reaction_start + length_remaining, current_start, current_start + length_remaining, True)
-                    current_path.append(  filler_segment   )
+                    append_or_extend_segment(current_path, filler_segment)
 
                 return [current_path]
-            else:
+            elif ( current_start / len(base_audio) > .75 ):
                 # print(f"Could not find match in remainder of reaction video!!! Skipping forward.")
                 open_path(depth)
 
-                filler_segment = (reaction_start - increment, reaction_start, current_start - increment, current_start + increment, True)
-                current_path.append(  filler_segment   )
+                filler_segment = (reaction_start - increment, reaction_start, current_start - increment, current_start, True)
+                append_or_extend_segment(current_path, filler_segment)
 
-                result = branching_search(basics, options, current_path, copy.deepcopy(current_path_checkpoint_scores), current_start, reaction_start, continuations=continuations, greedy_branching=greedy_branching, recursive=recursive)
+                result = branching_search(basics, options, current_path, copy.deepcopy(current_path_checkpoint_scores), current_start, reaction_start, continuations=continuations, greedy_branching=greedy_branching, recursive=recursive, probe_to_time=probe_to_time, peak_tolerance=peak_tolerance)
                 complete_path(depth)
                 return result
+            else: # if this occurs earlier in the reaction, it almost always results from a poor match
+                return [None]
         #########
 
+        # for candidate in candidate_starts:
+        #     print(f"\t\t\tcandidate start={(reaction_start + candidate) / sr}")
 
         paths = []
         open_path(depth, len(candidate_starts))
@@ -286,21 +301,40 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
             if depth == 0:
                 print(f"STARTING DEPTH ZERO from {candidate_segment_start / sr}")
 
-            segment, next_start, next_reaction_start = scope_segment(basics, options, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types)
-
             my_path = copy.deepcopy(current_path)
-            if segment:
-                my_path.append(segment)
-            elif next_reaction_start < len(reaction_audio) - 1: 
-                print("did not find segment", next_start/sr, next_reaction_start/sr)
-                increment = int(sr * .25)
-                segment = (reaction_start - increment, reaction_start, current_start - increment, current_start + increment, True)
-                my_path.append(segment)
+
+            scoping_needed = True
+            next_start = current_start
+            next_reaction_start = reaction_start
+
+            while scoping_needed:
+                segment, next_start, next_reaction_start = scope_segment(basics, options, next_start, next_reaction_start, candidate_segment_start, current_chunk_size, prune_types)
+                if segment:
+                    back_fill_needed = segment[-1]
+                    append_or_extend_segment(my_path, segment)
+                elif next_reaction_start < len(reaction_audio) - 1: 
+                    back_fill_needed = True
+                    print("did not find segment", next_start/sr, next_reaction_start/sr)
+                    increment = int(sr * .25)
+                    segment = (reaction_start - increment, reaction_start, current_start, current_start + increment, True)
+                    append_or_extend_segment(my_path, segment)
+
+                scoping_needed = back_fill_needed
 
             filler = segment[-1]
-            if (not recursive and filler and len(my_path) < 10) or (recursive and (not greedy_branching or ci < greedy_branching)):
+            if (not recursive and filler and len(my_path) < 10) or (recursive and (not greedy_branching or ci < greedy_branching) and (not probe_to_time or next_start < probe_to_time)):
+
                 # print('recursing', filler, my_path)
-                continued_paths = branching_search(basics, options, my_path, copy.deepcopy(current_path_checkpoint_scores), next_start, next_reaction_start, continuations=continuations, greedy_branching=greedy_branching, recursive=recursive)
+                continued_paths = branching_search(basics, options,
+                    current_path=my_path, 
+                    current_path_checkpoint_scores=copy.deepcopy(current_path_checkpoint_scores), 
+                    current_start=next_start, 
+                    reaction_start=next_reaction_start, 
+                    continuations=continuations, 
+                    greedy_branching=greedy_branching, 
+                    recursive=recursive, 
+                    probe_to_time=probe_to_time,
+                    peak_tolerance=peak_tolerance)
 
                 for full_path in continued_paths:
                     if full_path is not None:
@@ -322,98 +356,293 @@ def branching_search(basics, options, current_path=None, current_path_checkpoint
 
 
 
-def manage_queue(basics, queue, low_score_queue, reassess_all):
+def check_if_print_info(basics, current_start, reaction_start, depth, path_counts, sr):
     global best_finished_path
+    global print_when_possible
 
+    if print_when_possible: 
+        print_paths(current_start, reaction_start, depth, path_counts, sr)
+        print_prune_data(basics)
+        if 'score' in best_finished_path:
+            print(f"**** Best score is {best_finished_path['score']}")
+            print_path(best_finished_path["path"], basics)
+        print_when_possible = False
+
+
+def update_paths(basics, paths, new_paths):
+    global best_finished_path
+    for new_path in new_paths: 
+        if new_path is not None:
+            score = path_score(new_path, basics)
+            if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
+                old_best_path = best_finished_path.get('path', None)
+                best_finished_path.update({
+                    "path": new_path,
+                    "score": score,
+                    "partials": {}
+                    })
+                print(f"**** New best score is {best_finished_path['score']}")
+                print_path(new_path, basics)
+
+                if old_best_path:
+                    print("Comparative checkpoint scores:")
+                    checkpoints = basics.get('checkpoints')
+                    sr = basics.get('sr')
+                    for ts in checkpoints: 
+                        _, old_best_score = calculate_partial_score(old_best_path, ts, basics)
+                        _, new_best_score = calculate_partial_score(best_finished_path['path'], ts, basics)
+                        print(f"\t{ts / sr}: {new_best_score[0] / old_best_score[0]}")
+                else: 
+                    print("...No old best score to compare")
+
+            paths.append(new_path)
+
+def get_score_ratio_at_checkpoint(candidate, best_candidate, scoring_function, checkpoint, basics):
+    path, checkpoint_scores, current_start, reaction_start = candidate        
+    best_path, best_checkpoint_scores, best_current_start, best_reaction_start = best_candidate
+        
+    for p,check_scores in [(path, checkpoint_scores), (best_path, best_checkpoint_scores)]:
+        if checkpoint not in check_scores:
+            __, score = calculate_partial_score(p, checkpoint, basics)
+            check_scores[checkpoint] = score
+
+    score = checkpoint_scores[checkpoint]
+    best_score = best_checkpoint_scores[checkpoint]
+
+    return scoring_function(score) / scoring_function(best_score)
+
+def get_score_for_tight_bound(score):
+    return score[2] * score[3]
+
+def get_score_for_overall_comparison(score):
+    return score[2]
+
+
+
+def align_by_checkpoint_probe(basics, options):
+    global path_counts
+    global best_finished_path
+    global print_when_possible
+
+    checkpoints = basics.get('checkpoints')
     base_audio = basics.get('base_audio')
     song_length = len(base_audio)
 
-    if reassess_all:
-        queue.extend(low_score_queue)
-        low_score_queue.clear()
+    sr = basics.get('sr')
 
-    for item in queue:
-        continuation, checkpoint_scores, current_score = item
-        path = continuation[0]
-        current_start = continuation[2]
+    checkpoint_threshold_tight = .85
+    checkpoint_threshold_light = .45
+    checkpoint_threshold_fill = .8
+    checkpoint_threshold_location = .99
 
-        current_ts = find_last_checkpoint_crossed(basics, current_start)
+    low_score_queue = []
+    paths = []
 
-        if current_ts > 0:
+    print("Getting starting points")
+    starting_points = []
+    new_paths = branching_search(basics, options, current_path=[], current_path_checkpoint_scores={}, current_start=0, reaction_start=0, continuations=starting_points, recursive=False, peak_tolerance=options.get('peak_tolerance')*.75)
+    update_paths(basics, paths, new_paths)
 
-            if current_ts not in checkpoint_scores:
-                _, score_at_checkpoint = calculate_partial_score(path, current_ts, basics)
-                checkpoint_scores[current_ts] = score_at_checkpoint
-            score_at_checkpoint = checkpoint_scores[current_ts]
+    checkpoints = [c for c in checkpoints]
+    checkpoints.append(None)
 
-            if 'score' in best_finished_path:
-                if current_ts not in best_finished_path['partials']:
-                    _, best_at_checkpoint = calculate_partial_score(best_finished_path['path'], current_ts, basics)
-                    best_finished_path['partials'][current_ts] = best_at_checkpoint
-                best_at_checkpoint = best_finished_path['partials'][current_ts]
-            else:
-                best_at_checkpoint = [song_length / current_ts * current_ts / current_ts * current_ts / current_ts]
-            item[2] = score_at_checkpoint[0] / best_at_checkpoint[0]
+    for idx,checkpoint_ts in enumerate(checkpoints): 
+        past_the_checkpoint = []
 
-        else:
-            item[2] = 2
+        if checkpoint_ts is not None:
+            print(f"Processing checkpoint {checkpoint_ts / sr} ({idx / len(checkpoints)*100}%)")
+        else: 
+            print(f"To the end! ({idx / len(checkpoints)})")
 
-    if reassess_all and 'score' in best_finished_path: # prune when everything is in the queue
-        new_queue = []
-        for item in queue:
-            confidence = .9 #0 + .9 * (  find_last_checkpoint_crossed(basics, item[0][2]) / song_length )  # 2 .75
-            if item[2] >= confidence:
-                new_queue.append(item)
+
+        starting_points.sort(key=lambda x: x[3])
+        for idx2, starting_point in enumerate(starting_points):
+            path, checkpoint_scores, current_start, reaction_start = starting_point
+            print(f"\tStarting now at {reaction_start / sr} ({current_start / sr}) [{100 * idx2 / len(starting_points)}%]...{len(past_the_checkpoint)} continuations found so far")
+
+            if (checkpoint_ts and current_start >= checkpoint_ts):
+                past_the_checkpoint.append([path, checkpoint_scores, current_start, reaction_start])
             else: 
-                prune_types['queue_prune'] += 1
-                complete_path(len(item[0][0]))
-        queue = new_queue
+                continuations = []
+                new_paths = branching_search(basics, options, current_path=path, current_path_checkpoint_scores=checkpoint_scores, current_start=current_start, reaction_start=reaction_start, continuations=continuations, recursive=True, probe_to_time=checkpoint_ts)
+                update_paths(basics, paths, new_paths)
+                past_the_checkpoint.extend(continuations)
+                # if abs( reaction_start / sr - 623.5551473922902 ) < .5:
+                #     print(f"\t\t Interest! {current_start / sr} {reaction_start / sr}") 
+                #     for path, checkpoint_scores, current_start, reaction_start in continuations:
+                #         print(f"\t\t\t {current_start / sr}  {reaction_start / sr}", path[-1])
 
 
-    if len(queue) > 50:
-        num_overall_score = 16
-        num_promising_mid = 12
-        num_promising_late = 12
+        if checkpoint_ts is None:
+            # should be finished!
+            if (len(past_the_checkpoint) > 0):
+                print("ERRRORRRRR!!!! We have paths remaining at the end.")
 
-        by_score = sorted(queue, key=lambda x: x[2], reverse=True)
-        new_queue = by_score[:num_overall_score]
+        else: 
 
-        remaining = by_score[num_overall_score:]
+            if (len(past_the_checkpoint) == 0):
+                print("ERRRORRRRR!!!! We didn't find any paths!")
 
-        promising_mid = sorted(remaining, key=lambda x:x[2] * (.5 + x[0][2] / song_length * .5))
-        new_queue.extend(promising_mid[:num_promising_mid])
+            percent_through = 100 * checkpoint_ts / len(base_audio)
 
-        remaining = promising_mid[num_promising_mid:]
+            best_score_past_checkpoint = 0 
+            best_path_past_checkpoint = None
+            best_past_the_checkpoint = []
+            best_candidate_past_the_checkpoint = None
+            reaction_ends = {}
+            all_by_current_location = {}
 
-        promising_late = sorted(remaining, key=lambda x:x[2] * (x[0][2] / song_length)**2)
-        new_queue.extend(promising_late[:num_promising_late])
 
-        remaining = promising_late[num_promising_late:]
+            all_by_score = []
 
-        if len(low_score_queue) >= 10:
-            lottery_queue = low_score_queue
+
+            best_scores_to_point = {}
+
+            for x, candidate in enumerate(past_the_checkpoint):
+                path, checkpoint_scores, current_start, reaction_start = candidate
+
+                if checkpoint_ts not in checkpoint_scores:
+                    reaction_end, score_at_checkpoint = calculate_partial_score(path, checkpoint_ts, basics)
+                    reaction_ends[x] = reaction_end
+                    checkpoint_scores[checkpoint_ts] = score_at_checkpoint
+                else: 
+                    if x not in reaction_ends:
+                        result = truncate_path(path, checkpoint_ts)
+                        if result is None:
+                            continue
+                        reaction_end, _ = result
+                        reaction_ends[x] = reaction_end
+                    reaction_end = reaction_ends[x]
+
+                if reaction_end not in best_scores_to_point:
+                    for y, candidate2 in enumerate(past_the_checkpoint):
+                        path2, checkpoint_scores2, current_start2, reaction_start2 = candidate2
+
+                        if checkpoint_ts not in checkpoint_scores2:
+                            reaction_end2, score_at_checkpoint2 = calculate_partial_score(path2, checkpoint_ts, basics)
+                            reaction_ends[y] = reaction_end2
+                            checkpoint_scores2[checkpoint_ts] = score_at_checkpoint2
+                        else: 
+                            if y not in reaction_ends:
+                                result = truncate_path(path, checkpoint_ts)
+                                if result is None:
+                                    continue
+                                reaction_end2, _ = result
+                                reaction_ends[y] = reaction_end2
+                            reaction_end2 = reaction_ends[y]                    
+                            score_at_checkpoint2 = checkpoint_scores2[checkpoint_ts]
+
+
+                        if reaction_end2 <= reaction_end and get_score_for_tight_bound(score_at_checkpoint2) > best_scores_to_point.get(reaction_end, [0])[0]:
+                            best_scores_to_point[reaction_end] = [get_score_for_tight_bound(score_at_checkpoint2), path2, candidate2]
+
+                        if get_score_for_overall_comparison(score_at_checkpoint2) > best_score_past_checkpoint:
+                            best_score_past_checkpoint = get_score_for_overall_comparison(score_at_checkpoint2)
+                            best_path_past_checkpoint = path2
+                            best_candidate_past_the_checkpoint = candidate2
+
+                best_score_to_point, best_path_to_point, best_candidate_to_point = best_scores_to_point[reaction_end]
+
+                score_at_checkpoint = checkpoint_scores[checkpoint_ts]
+                
+
+                depth = len(path)
+                complete_path(depth)
+
+
+
+                passes_tight = checkpoint_threshold_tight < get_score_ratio_at_checkpoint(candidate, best_candidate_to_point, get_score_for_tight_bound, checkpoint_ts, basics) 
+                passes_mfcc = checkpoint_threshold_light < get_score_ratio_at_checkpoint(candidate, best_candidate_past_the_checkpoint, get_score_for_overall_comparison, checkpoint_ts, basics)
+                passes_fill = checkpoint_threshold_fill < score_at_checkpoint[3] or percent_through < 20
+
+
+                if passes_tight and passes_mfcc and passes_fill:
+
+                    best_past_the_checkpoint.append(candidate)
+                    location = f"{int(1000 * current_start / sr)} {int(1000 * reaction_start / sr)}"
+                    if location not in all_by_current_location:
+                        all_by_current_location[location] = []
+                    all_by_current_location[location].append( [candidate, score_at_checkpoint]  )
+
+                ideal_filter = get_score_for_tight_bound(score_at_checkpoint) / best_score_to_point > .75 and .4 < score_at_checkpoint[2] / best_score_past_checkpoint and (.8 < score_at_checkpoint[3] or percent_through < 20)
+                all_by_score.append([get_score_for_overall_comparison(score_at_checkpoint), score_at_checkpoint[3], ideal_filter, path])
+
+
+
+            filtered_best_past_the_checkpoint = []
+
+            for location, candidates in all_by_current_location.items():
+                if len(candidates) < 2:
+                    filtered_best_past_the_checkpoint.append(candidates[0][0])
+                else:
+                    kept = 0
+                    best_at_location = 0
+                    for candidate, score in candidates:
+                        if score[0] > best_at_location:
+                            best_at_location = score[0]
+
+                    for candidate, score in candidates:
+                        if score[0] / best_at_location > checkpoint_threshold_location:
+                            filtered_best_past_the_checkpoint.append(candidate)
+                            kept += 1
+                    # print(f"Location filter: removed {len(candidates) - kept} of {len(candidates)}    kept: {kept / len(candidates)}")
+
+
+
+            best_past_the_checkpoint = filtered_best_past_the_checkpoint
+
+
+            if len(past_the_checkpoint) > 0:
+                print(f"\tFinished checkpoint {checkpoint_ts}. Kept {len(best_past_the_checkpoint)} of {len(past_the_checkpoint)} ({100 * len(best_past_the_checkpoint) / len(past_the_checkpoint)}%)")
+                print(f"best path at checkpoint\t", print_path(best_path_past_checkpoint, basics))
+            if False and len(past_the_checkpoint) > 1000:
+                if len(past_the_checkpoint) > 1:
+                    plot_candidates(all_by_score)
+
+            starting_points = best_past_the_checkpoint
+
+
+
+    if 'score' in best_finished_path:
+        print(f"**** Best score is {best_finished_path['score']}")
+        print_path(best_finished_path["path"], basics)
+
+    print_prune_data(basics)
+
+
+    return [p for p in paths if p]
+
+
+
+def plot_candidates(data):
+    # Separate the data into different lists for easier plotting
+    scores = [item[0] for item in data]
+    depths = [item[1] for item in data]
+    selected = [item[2] for item in data]
+
+    # Create the plot
+    plt.figure()
+
+    # Loop through the data to plot points color-coded by 'selected'
+    for i in range(len(scores)):
+        if selected[i]:
+            plt.scatter(depths[i], scores[i], color='green')
         else:
-            lottery_queue = remaining
+            plt.scatter(depths[i], scores[i], color='red')
 
-        randoms = 0
-        while randoms < 10:
-            idx = max(0, int(random.random() * len(lottery_queue) - 1))
-            new_queue.append( lottery_queue.pop(idx)  )
-            randoms += 1
+    plt.xlim(left=0)
+    plt.ylim(bottom=0)
 
-        queue = new_queue
-        low_score_queue.extend(remaining)
+    # Add labels and title
+    plt.xlabel('FILL')
+    plt.ylabel('MFCC')
+    plt.title('MFCC vs FILL')
 
-    else: 
-        queue.sort(key=lambda x:x[2], reverse=True)
-
-
-    print(f"sorted queue. queue is {len(queue)} and low_score_queue is {len(low_score_queue)}")
-
-    return queue
+    # Show the plot
+    plt.show()
 
 
-
+use_align_by_greed = False
 def find_alignments(basics, options):
     global path_counts
     global best_finished_path
@@ -426,7 +655,6 @@ def find_alignments(basics, options):
     initialize_path_pruning()
     initialize_segment_tracking()
 
-    sr = basics.get('sr')
 
     best_finished_path.clear()
 
@@ -439,112 +667,13 @@ def find_alignments(basics, options):
         options['alignment_bounds'] = read_object_from_file(saved_bounds)
 
 
-    queue = []
-    low_score_queue = []
-    paths = []
+    if use_align_by_greed:
+        paths = align_by_greed(basics, options)
+    else: 
+        paths = align_by_checkpoint_probe(basics, options)
 
-    continuations = []
-    new_paths = branching_search(basics, options, current_path=[], current_path_checkpoint_scores={}, current_start=0, reaction_start=0, continuations=continuations, recursive=False)
-    paths.extend(new_paths)
-    queue.extend( [ [c, {}, None] for c in continuations]    )
+    return paths
 
-    print("Done seeding")
-
-    idx = 0
-
-    while(len(queue) > 0):
-        (path, checkpoint_scores, current_start, reaction_start), __, latest_score = queue.pop(0)
-        if 'score' in best_finished_path:
-            best_score_before = best_finished_path["score"][0]
-        else:
-            best_score_before = 0
-
-        first_non_fill_start = None
-        for pstart, _, _, _, filler in path:
-            if not filler:
-                first_non_fill_start = pstart / sr
-                break
-
-        continuations = []
-        new_paths = branching_search(basics, options, current_path=path, current_path_checkpoint_scores=checkpoint_scores, current_start=current_start, reaction_start=reaction_start, continuations=continuations, greedy_branching=1, recursive=True)
-        
-        depth = len(path)
-        if depth not in path_counts:
-            initialize_path_counts_for_depth(depth)
-        complete_path(depth)
-
-        # print(f"New paths {len(new_paths)}")
-
-        for new_path in new_paths: 
-            if new_path is not None:
-                compressed_path = compress_segments(basics, new_path)
-                score = path_score(compressed_path, basics)
-                if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
-                    old_best = best_finished_path.get('partials', None)
-                    old_best_path = best_finished_path.get('path', None)
-                    best_finished_path.update({
-                        "path": new_path,
-                        "score": score,
-                        "partials": {}
-                        })
-                    print(f"**** New best score is {best_finished_path['score']}")
-                    print_path(compressed_path, basics)
-
-                    if old_best:
-                        checkpoints = basics.get('checkpoints')
-                        print("Comparative checkpoint scores:")
-                        for ts in checkpoints: 
-                            old_best_score = calculate_partial_score(old_best_path, ts, basics)
-                            new_best_score = calculate_partial_score(best_finished_path['path'], ts, basics)
-                            print(f"\t{ts / sr}: {new_best_score[0] / old_best_score[0]}")
-
-                paths.append(compressed_path)
-                
-        best_score_updated = best_finished_path and best_score_before < best_finished_path["score"][0]
-        continuations = [ [c, {}, None] for c in continuations]
-        if best_score_updated:
-            continuations.reverse()
-            continuations.extend(queue)
-            queue = continuations
-        else:
-            queue.extend(continuations)
-
-        # print(f"starting from {reaction_start / sr} / {current_start / sr} ({first_non_fill_start}) [{latest_score}]. [{len(continuations)} added, {len(queue)} total]")
-
-
-        if idx % 50 == 49 or (len(queue) == 0 and len(low_score_queue) > 0): 
-            # Every once in awhile, re-sort the queue based on scores. Use fraction of the best score
-            # at the latest checkpoint. Any paths that haven't reached the first checkpoint are given
-            # high priority.
-            queue = manage_queue(basics, queue, low_score_queue, reassess_all=idx % 250 == 99)
-
-
-        if print_when_possible: 
-            print_paths(current_start, reaction_start, depth, paths, path_counts, sr)
-            print_prune_data(basics)
-            if 'score' in best_finished_path:
-                print(f"**** Best score is {best_finished_path['score']}")
-                print_path(compress_segments(basics, best_finished_path["path"]), basics)
-
-            print(f"queue is {len(queue)} and low_score_queue is {len(low_score_queue)}")
-            print_when_possible = False
-
-        if path_counts[-1]['completed'] % 50000 == 49999:
-            print('...invoking garbage collector')
-            gc.collect()
-
-        idx += 1
-
-
-
-    if 'score' in best_finished_path:
-        print(f"**** Best score is {best_finished_path['score']}")
-        print_path(compress_segments(basics, best_finished_path["path"]), basics)
-
-    print_prune_data(basics)
-
-
-    return [p for p in paths if p]
 
 
 
