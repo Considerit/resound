@@ -231,19 +231,21 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
         reverse_index = reverse_index[0]
     # print('reverse index:', reverse_index / sr)
 
-    if reverse_index and reverse_index > 0: 
+    if reverse_index and reverse_index > sr / 100: 
         # print(f"Better match for base segment found later in reaction: using filler from base video from {current_start / sr} to {(current_start + reverse_index) / sr} with {(reaction_start - reverse_index) / sr} to {(reaction_start) / sr}")
         
         # seek to a frame boundary
         while (reverse_index - current_start) % samples_per_frame() > 0 and reverse_index < len(reaction_audio) and current_start + reverse_index < len(base_audio):
             reverse_index += 1
 
-        segment = (reaction_start, reaction_start + reverse_index, current_start, current_start + reverse_index, reaction_start - reverse_index < 0)
-        current_start += reverse_index
 
-        segment_scope_cache[scope_key] = (segment, current_start, reaction_start)
+        segment = [reaction_start - reverse_index, reaction_start, current_start, current_start + reverse_index, True]
 
-        return (segment, current_start, reaction_start)
+        # segment = (reaction_start, reaction_start + reverse_index, current_start, current_start + reverse_index, reaction_start - reverse_index < 0)
+
+        # segment_scope_cache[scope_key] = (segment, current_start + reverse_index, reaction_start)
+
+        return (segment, current_start + reverse_index, reaction_start)
 
     #########################################
 
@@ -269,13 +271,13 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
 
     if reaction_start == reaction_end:
         # print(f"### Sequence of zero length at {reaction_start / sr} {current_start / sr}, skipping forward")
-        segment_scope_cache[scope_key] = (None, current_start, reaction_start + samples_per_frame())
+        segment_scope_cache[scope_key] = [None, current_start, reaction_start + samples_per_frame()]
         return segment_scope_cache[scope_key]
 
     # print(f"*** Completing match ({reaction_start / sr} [{reaction_start}], {reaction_end / sr} [{reaction_end}]), ({current_start / sr} [{current_start}], {current_end / sr} [{current_end}])\n")                
 
     assert( is_close(current_end - current_start, reaction_end - reaction_start) )
-    segment = (reaction_start, reaction_end, current_start, current_end, False)
+    segment = [reaction_start, reaction_end, current_start, current_end, False]
 
 
     segment_scope_cache[scope_key] = (segment, current_end, reaction_end)
