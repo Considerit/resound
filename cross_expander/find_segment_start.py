@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 
 from scipy.signal import correlate, find_peaks
 from cross_expander.scoring_and_similarity import mfcc_similarity, relative_volume_similarity
-from cross_expander.pruning_search import check_for_prune_at_segment_start
 
 
 from utilities import on_press_key
@@ -80,13 +79,6 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
 
     key = f"{open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
     
-    # if full_search:
-    #     if key not in paths_at_segment_start:
-    #         paths_at_segment_start[key] = [[list(current_path), None]]
-    #     else: 
-    #         if check_for_prune_at_segment_start(basics, paths_at_segment_start[key], current_path, closed_start):
-    #             return -1
-
     if key not in seg_start_cache:
 
         # print(key)
