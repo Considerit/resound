@@ -276,7 +276,9 @@ def get_faces_from(img):
   ret = [ (face['box'], face['keypoints']['nose']) for face in faces ]
   return ret
 
-def detect_faces_in_frame(react_frame, show_facial_recognition, width, reduction_factor=0.5):
+
+
+def detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to_ignore, reduction_factor=0.5):
     # Resize the frame for faster face detection
     reduced_frame = cv2.resize(react_frame, (int(react_frame.shape[1] * reduction_factor), 
                                              int(react_frame.shape[0] * reduction_factor)))
@@ -295,19 +297,44 @@ def detect_faces_in_frame(react_frame, show_facial_recognition, width, reduction
     faces_this_frame = []
     for ((x, y, w, h), nose) in scaled_faces:
         if w > .05 * width:
-            if show_facial_recognition:
-                cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
             faces_this_frame.append([x, y, w, h, nose])
 
     # compute histogram of grays for later fine-grained matching
+    filtered_faces_this_frame = []
     for face in faces_this_frame:
-        hist = get_face_histogram(cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB), face)  # use the original frame here
-        face.append(hist)
+        react_frame_converted = cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB)
 
-    return faces_this_frame
+        should_ignore = False
+        if len(images_to_ignore) > 0:
+          candidate_face = cv2.cvtColor(get_face_img(react_frame_converted, face), cv2.COLOR_BGR2GRAY )  
+
+          for image_to_ignore in images_to_ignore:
+            fingerprint_found, distance = find_fingerprint_in_image(image_to_ignore, candidate_face)
+            if fingerprint_found:
+              should_ignore = True
+              break
+        
+        if not should_ignore:
+          hist = get_face_histogram(react_frame_converted, face)  # use the original frame here
+
+          face.append(hist)
+          filtered_faces_this_frame.append(face)
+
+          if show_facial_recognition:
+              x, y, w, h, nose, hist = face
+              cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
+        else:
+          if show_facial_recognition:
+              x, y, w, h, nose = face
+              cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 40, 190), 2)
+
+          print("IGNORING FACE!!!")
+
+    return filtered_faces_this_frame
 
 
-def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False):
+def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False, images_to_ignore=[]):
 
     # Iterate over each frame in the video
     face_matches = []
@@ -331,7 +358,8 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False)
           print('exception', e)
           break
 
-        frame_faces = detect_faces_in_frame(react_frame, show_facial_recognition, width)
+
+        frame_faces = detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to_ignore)
         face_matches.append( (current_react, frame_faces) )
         # print("matches:", face_matches)
 
@@ -360,8 +388,8 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False)
           cv2.moveWindow('Heat map', 0, int(540) ) 
 
           # Exit if 'q' is pressed
-          # if cv2.waitKey(1) & 0xFF == ord('q'):
-          #     break
+          if cv2.waitKey(1) & 0xFF == ord('q'):
+              break
 
 
 
@@ -394,7 +422,15 @@ def detect_faces(react_path, base_reaction_path, frames_to_read=None, frames_per
     if os.path.exists(coarse_face_metadata):
       face_matches = read_coarse_face_metadata(coarse_face_metadata)
     else:
-      face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition)
+
+      base_dir = os.path.dirname(os.path.dirname(react_path))
+      images_to_ignore = [ 
+          cv2.imread(os.path.join(base_dir, f), cv2.IMREAD_GRAYSCALE)   
+          for f in os.listdir(base_dir)
+          if f.startswith("face-to-ignore")
+      ]
+
+      face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition, images_to_ignore=images_to_ignore)
       output_coarse_face_metadata(coarse_face_metadata, face_matches)
 
     # print('facematches:', [(frame, x,y,w,h) for frame, (x,y,w,nose,hist) in face_matches])
@@ -695,6 +731,11 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
 
   return centroids
 
+
+
+
+
+
 def get_face_img(image, bbox):
   # Get the face image from the bounding box
   x, y, w, h, nose = bbox
@@ -702,10 +743,9 @@ def get_face_img(image, bbox):
   return face_img
 
 def preprocess_face(face): 
-  # Convert image to grayscale, equalize histogram and resize
-  face_gray = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
-  face_equalized = cv2.equalizeHist(face_gray)
-  face_resized = cv2.resize(face_equalized, (128, 128))  # Standard size
+  face_color_shifted = cv2.cvtColor(face, cv2.COLOR_BGR2GRAY)
+  face_equalized = cv2.equalizeHist(face_color_shifted)
+  face_resized = cv2.resize(face_equalized, (128, 128))  
   return face_resized
 
 def compute_histogram(face):
@@ -715,9 +755,13 @@ def compute_histogram(face):
   hist = hist.astype(np.float32)  # Ensure the histogram is float32
   return hist
 
-def get_face_histogram(image, face):
-  (x,y,w,h,nose) = face
-  face_img = get_face_img(image, face)
+def get_face_histogram(image=None, face=None, face_img=None):
+  if face:
+    (x,y,w,h,nose) = face
+    face_img = get_face_img(image, face)
+  elif face_img is None:
+    raise Exception("No face or face_img given")
+
   face_preprocessed = preprocess_face(face_img)
   hist = compute_histogram(face_preprocessed)
   return hist
@@ -728,6 +772,10 @@ def compare_faces(hist1, hist2):
   # hist2 = hist2.astype('float32')    
   correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
   return correlation
+
+
+
+
 
 
 def smooth_and_interpolate_centroids(sampled_centroids):
@@ -807,4 +855,61 @@ def smooth_and_interpolate_centroids(sampled_centroids):
 
 
 
+
+
+def find_fingerprint_in_image(fingerprint_image, target_image, scales=None, threshold=0.95):
+    best_corr = -1  # Best correlation value
+    best_scale = None  # Best scale factor
+    best_loc = None  # Best match location
+
+    if scales is None:
+      scales = [0.05, 0.1, .2, 0.25, .35, 0.5,.625, 0.75, .85, 1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 3.5, 4.0, 5, 6, 7, 8]
+    
+    max_scale_x = target_image.shape[1] / fingerprint_image.shape[1]
+    max_scale_y = target_image.shape[0] / fingerprint_image.shape[0]
+    max_scale = min(max_scale_x, max_scale_y)
+
+    scales = [scale for scale in scales if scale <= max_scale]
+
+    # Convert images to grayscale if they are not
+    if len(fingerprint_image.shape) == 3:
+        fingerprint_image = cv2.cvtColor(fingerprint_image, cv2.COLOR_BGR2GRAY)
+    if len(target_image.shape) == 3:
+        target_image = cv2.cvtColor(target_image, cv2.COLOR_BGR2GRAY)
+
+    
+
+
+    contains_fingerprint = False
+    secondary_threshold = 0.95  # set your secondary threshold
+    
+    # Loop over each scale factor
+    for scale in scales:
+        # Resize the template according to the scale factor
+        resized_fingerprint = cv2.resize(fingerprint_image, (0, 0), fx=scale, fy=scale)
+
+        # Check if resized_fingerprint is smaller than target_image
+        if resized_fingerprint.shape[0] > target_image.shape[0] or resized_fingerprint.shape[1] > target_image.shape[1]:
+            continue  # Skip this iteration if the resized template is larger
+        
+        # Perform template matching
+        result = cv2.matchTemplate(target_image, resized_fingerprint, cv2.TM_CCOEFF_NORMED)
+        
+        # Secondary check
+        result_secondary = cv2.matchTemplate(target_image, resized_fingerprint, cv2.TM_CCORR)
+        
+        # Find points where both primary and secondary checks pass the thresholds
+        match_locations_primary = np.where(result >= threshold)
+        match_locations_secondary = np.where(result_secondary >= secondary_threshold)
+        
+        # Check if both metrics agree on a match
+        for pt in zip(*match_locations_primary[::-1]):
+            if pt in zip(*match_locations_secondary[::-1]):
+                contains_fingerprint = True
+                break
+                
+        if contains_fingerprint:
+            break
+    
+    return contains_fingerprint, 100
 
