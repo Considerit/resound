@@ -154,7 +154,7 @@ def create_mask_by_relative_perceptual_loudness_difference(song, reaction, thres
 
 def process_mask(mask, min_segment_length):
     # Number of frames corresponding to the minimum segment length
-    min_segment_frames = int(min_segment_length * sr / 512)  # 512 is the default hop length in librosa's mfcc function
+    min_segment_frames = int(min_segment_length * sr / conf.get('hop_length'))  
 
     # Initialize a list to hold the segments
     segments = []
@@ -195,10 +195,10 @@ def merge_segments(segments, min_segment_length, max_gap_length):
         return []
 
     # Number of frames corresponding to the minimum segment length
-    min_segment_frames = int(min_segment_length * sr / 512)  # 512 is the default hop length in librosa's mfcc function
+    min_segment_frames = int(min_segment_length * sr / conf.get('hop_length'))
 
     # Number of frames corresponding to the maximum gap length
-    max_gap_frames = int(max_gap_length * sr / 512)  # 512 is the default hop length in librosa's mfcc function
+    max_gap_frames = int(max_gap_length * sr / conf.get('hop_length')) 
 
     # Initialize a list to hold the merged segments
     merged_segments = []
@@ -265,13 +265,13 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     percent_volume_diff_thresh = 8
 
     # Load the song and reaction audio
-    song, sr_song = librosa.load(song_path, sr=None, mono=True)
-    reaction, sr_reaction = librosa.load(reaction_path, sr=None, mono=True)
+    song, __ = librosa.load(song_path, sr=sr, mono=True)
+    reaction, __ = librosa.load(reaction_path, sr=sr, mono=True)
 
 
 
-    assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
-    assert sr == sr_reaction, f"Sample rate must be equal to global value"
+    # assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
+    # assert sr == sr_reaction, f"Sample rate must be equal to global value"
 
 
     # if mono:
@@ -287,7 +287,7 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     if len(song) > len(reaction):
         song = song[:len(reaction)]
     else:
-        original_reaction, sr_reaction = librosa.load(original_reaction, sr=None, mono=True)
+        original_reaction, __ = librosa.load(original_reaction, sr=sr, mono=True)
         extra_reaction = original_reaction[len(song):] # extract this from the original reaction audio, not the source separated content
         reaction = reaction[:len(song)]
 

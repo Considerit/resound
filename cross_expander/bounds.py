@@ -31,7 +31,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     # profiler = cProfile.Profile()
     # profiler.enable()
 
-    base_audio = conf.get('base_audio')
+    base_audio = conf.get('base_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
     hop_length = conf.get('hop_length')
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')

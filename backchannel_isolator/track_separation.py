@@ -45,22 +45,22 @@ def separate_vocals(output_dir, song_path, reaction_path, post_process=False):
 
     if post_process: 
 
-        sr_reaction = sr_song = None
+        # sr_reaction = sr_song = None
 
         if not os.path.exists(song_vocals_high_passed_path):
-            song_vocals, sr_song = librosa.load( song_vocals_path, sr=None, mono=True )
+            song_vocals, sr_song = librosa.load( song_vocals_path, sr=sr, mono=True )
             song_vocals = post_process_audio(song_vocals)
             sf.write(song_vocals_high_passed_path, song_vocals.T, sr)
         song_vocals_path = song_vocals_high_passed_path
 
         if not os.path.exists(reaction_vocals_high_passed_path):
-            reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=None, mono=True )
+            reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=sr, mono=True )
             reaction_vocals = post_process_audio(reaction_vocals)
             sf.write(reaction_vocals_high_passed_path, reaction_vocals.T, sr)
         reaction_vocals_path = reaction_vocals_high_passed_path
 
-        if sr_reaction and sr_song:
-            assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
+        # if sr_reaction and sr_song:
+        #     assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
 
     return (reaction_vocals_path, song_vocals_path)
 

@@ -1,9 +1,12 @@
 from scipy import signal
 import numpy as np
 from utilities import conversion_audio_sample_rate as sr
+from utilities import conf
 
-
-def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=512):
+def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=None):
+    if hop_length is None:
+        hop_length = conf.get('hop_length')
+        
     # Calculate the RMS energy over frames of audio
     rms = np.array([np.sqrt(np.mean(np.square(audio[i:i+frame_length]))) for i in range(0, len(audio), hop_length)])
     
