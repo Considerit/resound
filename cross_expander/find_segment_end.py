@@ -3,16 +3,16 @@ from decimal import Decimal
 from cross_expander.scoring_and_similarity import get_chunk_score
 from cross_expander.find_segment_start import find_next_segment_start_candidates
 
-from utilities import samples_per_frame, universal_frame_rate, is_close
+from utilities import conf, samples_per_frame, universal_frame_rate, is_close
+from utilities import conversion_audio_sample_rate as sr
 
-def find_correlation_end(current_start, reaction_start, basics, options, step, reaction_end=None, end_at=None, max_score=0, cache={}):
-    expansion_tolerance = options.get('expansion_tolerance')
+def find_correlation_end(reaction, current_start, reaction_start, step, reaction_end=None, end_at=None, max_score=0, cache={}):
+    expansion_tolerance = conf.get('expansion_tolerance')
 
-    base_audio = basics.get('base_audio')
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    reaction_audio = basics.get('reaction_audio')
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    sr = basics.get('sr')
+    base_audio = conf.get('base_audio_data')
+    base_audio_mfcc = conf.get('base_audio_mfcc')
+    reaction_audio = reaction.get('reaction_audio_data')
+    reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
 
 
     if reaction_end == None:
@@ -37,7 +37,7 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, r
         key = f"{current_start}:{current_end}"
 
         if key not in cache:
-            cache[key] = get_chunk_score(basics, reaction_start, reaction_end, current_start, current_end) 
+            cache[key] = get_chunk_score(reaction, reaction_start, reaction_end, current_start, current_end) 
 
         chunk_score = cache[key]
 
@@ -134,7 +134,7 @@ def find_correlation_end(current_start, reaction_start, basics, options, step, r
 
         # print(f"RECURSING AROUND {break_point / sr} - {next_end_at / sr} with neg_slope_avg of {neg_slope_avg}")
 
-        return find_correlation_end(current_start, reaction_start, basics, options, step = step // 2, reaction_end = break_point, end_at = next_end_at, max_score = max_score, cache = cache )
+        return find_correlation_end(reaction, current_start, reaction_start, step = step // 2, reaction_end = break_point, end_at = next_end_at, max_score = max_score, cache = cache )
     else: 
         reaction_end = break_point
         current_end = current_start + reaction_end - reaction_start
@@ -163,7 +163,7 @@ segment_scope_cache = {}
 def initialize_segment_end_cache():
     segment_scope_cache.clear()
 
-def scope_segment(basics, options, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types):
+def scope_segment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types):
 
     scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size})'
     
@@ -172,19 +172,18 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
         return segment_scope_cache[scope_key]
 
 
-    reverse_search_bound = options.get('reverse_search_bound')
-    peak_tolerance = options.get('peak_tolerance')
-    n_samples = options.get('n_samples')
-    first_n_samples = options.get('first_n_samples')
+    reverse_search_bound = conf.get('reverse_search_bound')
+    peak_tolerance = conf.get('peak_tolerance')
+    n_samples = conf.get('n_samples')
+    first_n_samples = conf.get('first_n_samples')
 
-    base_audio = basics.get('base_audio')
-    reaction_audio = basics.get('reaction_audio')
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    base_audio_vol_diff = basics.get('song_percentile_loudness')
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
-    hop_length = basics.get('hop_length')
-    sr = basics.get('sr')
+    base_audio = conf.get('base_audio_data')
+    reaction_audio = reaction.get('reaction_audio_data')
+    base_audio_mfcc = conf.get('base_audio_mfcc')
+    base_audio_vol_diff = conf.get('song_percentile_loudness')
+    reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
+    reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
+    hop_length = conf.get('hop_length')
 
 
     #####################
@@ -212,7 +211,7 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
     # print(f'\nDoing reverse index search  reaction_start={reaction_start+candidate_segment_start}  current_start={current_start}  {reverse_chunk_size} {len(candidate_reaction_chunk)} {len(open_base_chunk)}')
 
     reverse_index = find_next_segment_start_candidates(
-                        basics = basics, 
+                        reaction = reaction, 
                         open_chunk=open_base_chunk, 
                         open_chunk_mfcc=base_audio_mfcc[:, round(current_start / hop_length):round(open_end / hop_length)], 
                         open_chunk_vol_diff=base_audio_vol_diff[round(current_start / hop_length):round(open_end / hop_length)], 
@@ -253,7 +252,7 @@ def scope_segment(basics, options, current_start, reaction_start, candidate_segm
     # print(f"Start segment {current_start / sr}-{(current_start + n_samples) / sr} at {reaction_start / sr}")
 
 
-    candidate_current_end, candidate_reaction_end = find_correlation_end(current_start, reaction_start, basics, options, step = n_samples, cache={})
+    candidate_current_end, candidate_reaction_end = find_correlation_end(reaction, current_start, reaction_start, step = n_samples, cache={})
     # print(candidate_current_end - current_start, candidate_reaction_end - reaction_start)        
 
 

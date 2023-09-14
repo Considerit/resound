@@ -5,7 +5,7 @@ from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, Com
 from utilities import conversion_frame_rate, conversion_audio_sample_rate
 
 
-def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, ext: str, extend_by=0, use_fill=True):
+def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, extend_by=0, use_fill=True):
 
     print(f"Frame rate: {conversion_frame_rate}, Audio rate: {conversion_audio_sample_rate}")
     temp_dir, _ = os.path.splitext(output_file)

@@ -1,8 +1,9 @@
 import random, copy
 
-from cross_expander.scoring_and_similarity import calculate_partial_score, path_score
 from cross_expander.bounds import in_bounds, get_bound
 
+from utilities import conversion_audio_sample_rate as sr
+from utilities import conf 
 
 prune_types = {}
 paths_visited = {}
@@ -30,12 +31,11 @@ def initialize_path_pruning():
     last_checkpoint_cache.clear()
 
 
-def should_prune_path(basics, options, current_path, current_path_checkpoint_scores, best_finished_path, current_start, reaction_start, path_counts):
+def should_prune_path(reaction, current_path, current_path_checkpoint_scores, best_finished_path, current_start, reaction_start, path_counts):
     global prune_types
 
-    checkpoints = basics.get('checkpoints')
-    reaction_audio = basics.get('reaction_audio')
-    sr = basics.get('sr')
+    checkpoints = conf.get('checkpoints')
+    reaction_audio = reaction.get('reaction_audio_data')
 
     depth = len(current_path)
 
@@ -71,7 +71,7 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
             return True
         paths_visited[path_key] = 1
 
-    alignment_bounds = options.get('alignment_bounds')
+    alignment_bounds = conf.get('alignment_bounds')
     if alignment_bounds is not None:
         upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
         if not in_bounds(upper_bound, current_start, reaction_start):
@@ -84,9 +84,9 @@ def should_prune_path(basics, options, current_path, current_path_checkpoint_sco
 
 
 last_checkpoint_cache = {}
-def find_last_checkpoint_crossed(basics, current_start):
+def find_last_checkpoint_crossed(current_start):
     global last_checkpoint_cache
-    checkpoints = basics.get('checkpoints')
+    checkpoints = conf.get('checkpoints')
 
     if current_start not in last_checkpoint_cache:
         previous_checkpoint = -1
@@ -99,26 +99,24 @@ def find_last_checkpoint_crossed(basics, current_start):
     return last_checkpoint_cache[current_start]
 
 
-def print_prune_data(basics):
+def print_prune_data():
     global prune_types
 
-    sr = basics.get('sr')
-    checkpoints = basics.get('checkpoints')
+    checkpoints = conf.get('checkpoints')
 
     for k,v in prune_types.items():
         print(f"\t{k}: {v}")
 
 
-def initialize_checkpoints(basics): 
-    base_audio = basics.get('base_audio')
-    sr = basics.get('sr')
+def initialize_checkpoints(): 
+    base_audio = conf.get('base_audio_data')
 
     samples_per_checkpoint = 2 * sr 
 
     timestamps = []
     s = 6
     while s < len(base_audio):
-        if s / basics.get('sr') >= 6:
+        if s / sr >= 6:
             timestamps.append(s)
         s += samples_per_checkpoint
 

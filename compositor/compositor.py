@@ -14,7 +14,7 @@ from moviepy.editor import VideoFileClip
 from moviepy.video.fx.all import crop
 from moviepy.audio.fx import all as audio_fx
 
-from utilities import conversion_frame_rate, conversion_audio_sample_rate
+from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate
 
 from compositor.layout import create_layout_for_composition
 
@@ -44,7 +44,10 @@ from compositor.layout import create_layout_for_composition
 # be any size up to the resolution of a modern macbook pro. These constraints are soft. 
 
 
-def compose_reactor_compilation(basics, song, base_video_path, reactions, output_path, options, extend_by=0, output_size=(1792, 1120)):
+def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
+
+    output_path = conf.get('compilation_path')
+    base_video_path = conf.get('base_video_path')
 
     if os.path.exists(output_path):
       print("Compilation already exists", output_path)
@@ -52,21 +55,17 @@ def compose_reactor_compilation(basics, song, base_video_path, reactions, output
 
     print(f"Creating compilation for {output_path}")
 
-    draft = options.get('draft', False)
+    draft = conf.get('draft', False)
 
     base_video = VideoFileClip(base_video_path)
 
     width, height = output_size
 
-    base_video, positions, cell_size = create_layout_for_composition(song, base_video, width, height, reactions)
+    base_video, cell_size = create_layout_for_composition(base_video, width, height)
 
-    clips, audio_clips, clip_length, base_video = create_clips(basics, song, base_video, positions, cell_size, draft)
+    clips, audio_clips, clip_length, base_video = create_clips(base_video, cell_size, draft)
 
-
-
-
-
-    final_clip = compose_clips(song, base_video, clips, audio_clips, clip_length, extend_by, output_size)
+    final_clip = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
 
     # Save the result
     if draft:
@@ -82,7 +81,7 @@ def compose_reactor_compilation(basics, song, base_video_path, reactions, output
 
 
 
-def compose_clips(song, base_video, clips, audio_clips, clip_length, extend_by, output_size):
+def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size):
     duration = max(base_video.duration, clip_length)
     # duration = 30 
 
@@ -106,20 +105,31 @@ def compose_clips(song, base_video, clips, audio_clips, clip_length, extend_by, 
     return final_clip
 
 
-def create_clips(basics, song, base_video, positions, cell_size, draft):
+def create_clips(base_video, cell_size, draft):
     audio_clips = []
     audio_clips.append(base_video.audio)
 
     featured_clips = []
     other_clips = []
 
+    total_reactors = 0 
+    for name, reaction in conf.get('reactions').items():
+      total_reactors += len(reaction.get('reactors'))
+
+
     base_audio_as_array = base_video.audio.to_soundarray()
-    reactor_colors = generate_hsv_colors(len(positions), 1, .6)
+    reactor_colors = generate_hsv_colors(total_reactors, 1, .6)
     clip_length = 0
-    for i, (reaction, pos) in enumerate(positions):
+
+    for name, reaction in conf.get('reactions').items():
+      reactors = reaction.get('reactors')
+      for reactor in reactors: 
+        reactor_color = reactor_colors.pop()
+        x,y = reactor['grid_assignment']
+
         featured = reaction['featured']
 
-        clip = reaction['clip']
+        clip = reactor['clip']
         volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
         volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
 
@@ -132,15 +142,14 @@ def create_clips(basics, song, base_video, positions, cell_size, draft):
 
         clip = clip.resize((size, size))
         if not draft:
-          clip = create_masked_video(clip, border_color=reactor_colors[i], border_thickness=10, width=size, height=size, as_circle=featured)
+          clip = create_masked_video(clip, border_color=reactor_color, border_thickness=10, width=size, height=size, as_circle=featured)
 
-        x,y = pos
         clip = clip.set_position((x - size / 2, y - size / 2))
 
         if clip_length < clip.duration:
           clip_length = clip.duration
 
-        clip = incorporate_asides(basics, song, reaction, clip)
+        clip = incorporate_asides(reaction, clip)
 
         if featured:
           featured_clips.append(clip)
@@ -148,24 +157,29 @@ def create_clips(basics, song, base_video, positions, cell_size, draft):
           other_clips.append(clip)
 
 
-    # Create the composite video
 
-    include_base_video = song['include_base_video']    
+    include_base_video = conf['include_base_video']    
     clips = other_clips + featured_clips
     if include_base_video and not draft:
-        base_video = incorporate_asides(basics, song, reaction, base_video)
+        base_video = incorporate_asides(None, base_video)
         clips = [base_video] + clips
 
     return (clips, audio_clips, clip_length, base_video)
 
 
 
-def incorporate_asides(basics, song, reaction, clip):
-  asides = song.get('asides', None)
-  if asides is None:
-    return clip
+def incorporate_asides(current_reaction, clip):
+  # other_asides = []
+  # # for name, reaction in conf.get('reactions').items():
+  # #   reactors = reaction.get('reactors')
+  # #   for reactor in reactors: 
 
-  # TODO!
+  # if current_reaction:
+  #   asides = current_reaction.get('asides', None)
+  #   if asides is None:
+  #     return clip
+
+  # # TODO!
   
   return clip
 

@@ -13,7 +13,7 @@ import tempfile
 from typing import List, Tuple
 
 
-from utilities import trim_and_concat_video, prepare_reactions, extract_audio, get_audio_duration
+from utilities import trim_and_concat_video, extract_audio, get_audio_duration
 
 
 def visualize_dtw_path_and_segments(dtw_path, dtw_path_backwards, base_audio, react_audio, hop_length, segments, base_segments, refined_video_segments=None):

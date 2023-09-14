@@ -76,9 +76,16 @@ import math
 import matplotlib.pyplot as plt
 import pickle
 
+from utilities import conf
 
 
-def create_reactor_view(react_path, base_path, replacement_audio=None, show_facial_recognition=False): 
+
+def create_reactor_view(reaction, show_facial_recognition=False): 
+
+  react_path = reaction.get('aligned_path')
+  base_path = conf.get('base_video_path')
+  replacement_audio = reaction["backchannel_audio"]
+
   base_reaction_path, base_video_ext = os.path.splitext(react_path)
 
   output_files = []
@@ -114,7 +121,22 @@ def create_reactor_view(react_path, base_path, replacement_audio=None, show_faci
           crop_video(react_path, output_file, replacement_audio, len(reactors), int(w), int(h), centroids)
           output_files.append(output_file)
 
-  return output_files
+  cropped_reactors = []
+  for file in output_files:
+    cropped_reactors.append({
+      'key': file,
+      'reaction': reaction, # circular reference      
+      'clip': VideoFileClip(file),
+      'orientation': get_orientation(file),
+    })
+  return cropped_reactors
+
+def get_orientation(input_file):
+    base_name, ext = os.path.splitext(input_file)
+    parts = base_name.split('-')
+    orientation = parts[-1] if len(parts) > 3 else 'center'
+    return orientation
+
 
 
 def replace_audio(video, audio_path, num_reactors):

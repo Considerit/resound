@@ -6,8 +6,8 @@ from scipy.signal import correlate, find_peaks
 from cross_expander.scoring_and_similarity import mfcc_similarity, relative_volume_similarity
 
 
-from utilities import on_press_key
-
+from utilities import conf, on_press_key
+from utilities import conversion_audio_sample_rate as sr
 
 
 def unique(list1):
@@ -51,18 +51,16 @@ on_press_key('˚', toggle_plots) # option-k
 # Even if it doesn't select it.
 force_ground_truth = False
 
-def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
+def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
     global seg_start_cache
     global paths_at_segment_start
 
-
-    sr = basics.get('sr')
-    hop_length = basics.get('hop_length')
+    hop_length = conf.get('hop_length')
 
     full_search = current_path is not None
 
     if force_ground_truth and full_search: 
-        gt = basics.get('ground_truth')
+        gt = reaction.get('ground_truth')
         if gt: 
             gt_current_start = 0
             alright = False
@@ -199,9 +197,9 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
             open_chunk_here_vol_diff = open_chunk_vol_diff[round(candidate_index / hop_length): round((candidate_index + current_chunk_size) / hop_length)       ]
 
             open_chunk_here_mfcc = open_chunk_mfcc[:,      round(candidate_index / hop_length): round((candidate_index + current_chunk_size) / hop_length)       ]
-            mfcc_score = mfcc_similarity(sr, mfcc1=open_chunk_here_mfcc, mfcc2=closed_chunk_mfcc)  
+            mfcc_score = mfcc_similarity(mfcc1=open_chunk_here_mfcc, mfcc2=closed_chunk_mfcc)  
 
-            relative_volume_score = relative_volume_similarity(sr, vol_diff1=open_chunk_here_vol_diff, vol_diff2=closed_chunk_vol_diff)
+            relative_volume_score = relative_volume_similarity(vol_diff1=open_chunk_here_vol_diff, vol_diff2=closed_chunk_vol_diff)
 
             scores.append( (candidate_index, mfcc_score, relative_volume_score, correlation_score, mfcc_correlation_score) ) 
             
@@ -238,7 +236,7 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
 
                 good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .5)
                 good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + (1 - peak_tolerance) * .25)
-                good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + (1 - peak_tolerance) * .5) 
+                good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + (1 - peak_tolerance) * .8) 
                 good_by_mfcc_correlation = full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25)  
 
                 if good_by_mfcc or good_by_rel_vol or good_by_correlation or good_by_mfcc_correlation: 
@@ -291,7 +289,7 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
                 # (abs(closed_start - 148 * sr) < 2 * sr and open_start < 634 * sr), # dicodec genesis; should generate 649
 
 
-                (abs(closed_start - 145 * sr) < 2 * sr and open_start < 284 * sr), # thatsnotactingeither suicide; should generate 450
+                # (abs(closed_start - 145 * sr) < 2 * sr and open_start < 284 * sr), # thatsnotactingeither suicide; should generate 450
 
             ]
             has_point_of_interest = False
@@ -345,7 +343,7 @@ def find_next_segment_start_candidates(basics, open_chunk, open_chunk_mfcc, open
         candidates = [c[0] for c in candidates]
 
         if force_ground_truth and full_search and open_start == 0: 
-            gt = basics.get('ground_truth')
+            gt = reaction.get('ground_truth')
             if gt: 
                 new_candidates = []
 

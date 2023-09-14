@@ -1,5 +1,6 @@
 from scipy import signal
 import numpy as np
+from utilities import conversion_audio_sample_rate as sr
 
 
 def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=512):
@@ -153,8 +154,8 @@ def highpass_filter(data, cutoff, fs, order=5):
 
 
 
-def match_audio(reaction_audio, song_audio, sr):
-    # reaction_audio = equalize_spectra(song_audio, reaction_audio, sr_reaction)
+def match_audio(reaction_audio, song_audio):
+    # reaction_audio = equalize_spectra(song_audio, reaction_audio)
 
     # # Compute dB scale for volume normalization
     # db_song = librosa.amplitude_to_db(np.abs(librosa.stft(song_audio)))
@@ -167,7 +168,7 @@ def match_audio(reaction_audio, song_audio, sr):
 
     reaction_audio = adaptive_normalize_volume(song_audio, reaction_audio, segment_length)
 
-    # reaction_audio = adaptive_pitch_matching(song_audio, reaction_audio, segment_length, sr) 
+    # reaction_audio = adaptive_pitch_matching(song_audio, reaction_audio, segment_length) 
 
     # reaction_audio = spectral_subtraction_with_stft(reaction_audio, song_audio)
 
@@ -229,7 +230,7 @@ def adaptive_normalize_volume(song, reaction, segment_length):
 
     return normalized_reaction
 
-def adaptive_pitch_matching(song, reaction, segment_length, sr):
+def adaptive_pitch_matching(song, reaction, segment_length):
     # Make sure that the song and reaction are numpy arrays
     assert isinstance(song, np.ndarray) and isinstance(reaction, np.ndarray)
     # Make sure the segment length is a positive integer
@@ -265,7 +266,7 @@ def adaptive_pitch_matching(song, reaction, segment_length, sr):
 from scipy.fftpack import fft, ifft
 
 
-def equalize_spectra(audio1, audio2, sr):
+def equalize_spectra(audio1, audio2):
     # Compute the Fourier transform of both signals
     fft_audio1 = fft(audio1)
     fft_audio2 = fft(audio2)

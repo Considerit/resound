@@ -2,7 +2,7 @@ import os
 import copy
 import glob
 
-from utilities import prepare_reactions, extract_audio
+from utilities import prepare_reactions, extract_audio, conf, make_conf
 from inventory import download_and_parse_reactions, get_manifest_path
 from cross_expander import create_aligned_reaction_video
 from face_finder import create_reactor_view
@@ -11,8 +11,6 @@ from compositor import compose_reactor_compilation
 
 import cProfile
 import pstats
-
-
 
 
 
@@ -34,120 +32,90 @@ def clean_up(song_def: dict):
             print(f"Error occurred while deleting file {wav_file}: {e}")
 
 
-def handle_reaction_video(song:dict, output_dir: str, react_video, base_video, base_audio_data, base_audio_path, options, extend_by=15):
+def handle_reaction_video(reaction, extend_by=15):
 
+    output_file = reaction.get('aligned_path')
 
-    react_video_name, react_video_ext = os.path.splitext(react_video)
-    output_file = os.path.join(output_dir, os.path.basename(react_video_name) + f"-CROSS-EXPANDER.mp4")
-
-    # if '40' not in react_video_name:
+    # if '40' not in reaction['channel']:
     #     return
 
-    print("processing ", react_video_name)
+    print("processing ", reaction['channel'])
     # Create the output video file name
 
-    create_aligned_reaction_video(song, react_video_ext, output_file, react_video, base_video, base_audio_data, base_audio_path, options, extend_by=extend_by)
+    create_aligned_reaction_video(reaction, extend_by=extend_by)
 
-    if not options["isolate_commentary"]:
+    if not conf["isolate_commentary"]:
         return []
 
-    _,sr,aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
+    _,_,aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
+    reaction["aligned_audio_path"] = aligned_reaction_audio_path
 
-    isolated_commentary = process_reactor_audio(output_dir, aligned_reaction_audio_path, base_audio_path, extended_by=extend_by, sr=sr)
+    reaction["backchannel_audio"] = process_reactor_audio(reaction, extended_by=extend_by)
     
-    if not options["create_reactor_view"]:
+    if not conf["create_reactor_view"]:
         return []
 
-    faces = create_reactor_view(output_file, base_video, replacement_audio=isolated_commentary, show_facial_recognition=False)
-
-    return faces
-
-
+    # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
+    reaction["reactors"] = create_reactor_view(reaction, show_facial_recognition=False)
 
 
 
 from moviepy.editor import VideoFileClip
 
+
 def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', include_base_video = True, options = {}):
 
 
+
+    failed_reactions = []
+
+
     try:
-        song = f"{song_def['artist']} - {song_def['song']}"
-        song_directory = os.path.join('Media', song)
-        reactions_dir = 'reactions'
-        failed_reactions = []
-
-        compilation_path = os.path.join(song_directory, f"{song} (compilation).mp4")
-        if options.get('draft', False):
-            compilation_path += "fast.mp4" 
-
-        if os.path.exists(compilation_path):
-          print("Compilation already exists", compilation_path)
-          return []
 
 
+        make_conf(song_def, options, output_dir)
 
-        full_output_dir = os.path.join(song_directory, output_dir)
-        if not os.path.exists(full_output_dir):
-           # Create a new directory because it does not exist
-           os.makedirs(full_output_dir)
+        temp_directory = conf.get("temp_directory")
+        song_directory = conf.get('song_directory')
 
-
-
-        print("Processing directory", song_directory, "Outputting to", output_dir)
-
-        lock_file = os.path.join(full_output_dir, 'locked')
+        lock_file = os.path.join(temp_directory, 'locked')
         if os.path.exists( lock_file  ):
-            print("...Skipping because another process is already working on this video")
+            print(f"...Skipping {song_def['song']} because another process is already working on this video")
             return []
 
         lock = open(lock_file, 'w')
         lock.write(f"yo")
         lock.close()
 
+        compilation_path = conf.get('compilation_path')
 
-        if options.get('download_and_parse'):
+        if os.path.exists(compilation_path):
+          print("Compilation already exists", compilation_path)
+          return []
+
+        print("Processing directory", song_directory, "Outputting to", output_dir)
+
+        if conf.get('download_and_parse'):
             download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'])
 
-        if options.get('only_manifest', False):
+        if conf.get('only_manifest', False):
             if os.path.exists(lock_file):
                 os.remove(lock_file)
 
             return []
 
-        manifest = open(get_manifest_path(song_def['artist'], song_def['song']), "r")
-
-
-        base_video, react_videos = prepare_reactions(song_directory)
-
-
-        # Extract the base audio and get the sample rate
-        base_audio_data, _, base_audio_path = extract_audio(base_video)
-
-
-        reaction_dir = os.path.join(song_directory, reactions_dir)
-
-        reactors = []
 
         extend_by = 15
-        for i, react_video in enumerate(react_videos):
-            # if 'Cliff' not in react_video:
+        for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+
+            # if 'Cliff' not in reaction.get('channel'):
             #     continue
 
             try:
                 # profiler = cProfile.Profile()
                 # profiler.enable()
 
-                faces = handle_reaction_video(song_def, full_output_dir, react_video, base_video, base_audio_data, base_audio_path, copy.deepcopy(options), extend_by=extend_by)
-                
-                if len(faces) > 1:
-                    outputs = [{'file': f, 'group': i + 1} for f in faces]
-                else:
-                    outputs = [{'file': f} for f in faces]
-
-                reactors.extend(outputs)
-
-
+                handle_reaction_video(reaction, extend_by=extend_by)
 
                 # profiler.disable()
                 # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
@@ -156,32 +124,13 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
             except Exception as e: 
                 traceback.print_exc()
                 print(e)
-                failed_reactions.append((react_video, e))
+                failed_reactions.append((reaction.get('channel'), e))
 
-        reaction_videos = []
-        for reactor in reactors: 
-            input_file = reactor['file']
 
-            featured = False
-            
-            for featured_r in song_def['featured']:
-              if featured_r in input_file:
-                featured = True
-                break
+        if conf['create_compilation']:
+            compose_reactor_compilation(extend_by=extend_by)
+    
 
-            print(f"\tQueuing up {input_file}")
-
-            reaction = {
-                'key': input_file,
-                'clip': VideoFileClip(input_file),
-                'orientation': get_orientation(input_file),
-                'group': reactor.get('group', None),
-                'featured': featured
-            }
-            reaction_videos.append(reaction)
-
-        if len(reaction_videos) > 0 and options['create_compilation']:
-            compose_reactor_compilation(song_def, base_video, reaction_videos, compilation_path, options, extend_by=extend_by)
     except KeyboardInterrupt as e:
         if os.path.exists(lock_file):
             os.remove(lock_file)
@@ -198,11 +147,6 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         os.remove(lock_file)
     return failed_reactions
 
-def get_orientation(input_file):
-    base_name, ext = os.path.splitext(input_file)
-    parts = base_name.split('-')
-    orientation = parts[-1] if len(parts) > 3 else 'center'
-    return orientation
 
 
 import traceback
@@ -233,7 +177,7 @@ if __name__ == '__main__':
         "isolate_commentary": True,
         "create_reactor_view": True,
         "create_compilation": True,
-        "download_and_parse": True,
+        "download_and_parse": False,
         "draft": True
     }
     failures = []

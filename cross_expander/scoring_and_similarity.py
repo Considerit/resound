@@ -3,27 +3,25 @@ import librosa
 import math
 
 from utilities.audio_processing import audio_percentile_loudness
+from utilities import conversion_audio_sample_rate as sr
+from utilities import conf
 
-def get_chunk_score(basics, reaction_start, reaction_end, current_start, current_end):
+def get_chunk_score(reaction, reaction_start, reaction_end, current_start, current_end):
 
-    base_audio = basics.get('base_audio')
-    reaction_audio = basics.get('reaction_audio')
-
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    base_audio_vol_diff = basics.get('song_percentile_loudness')
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
-    sr = basics.get('sr')
-    hop_length = basics.get('hop_length')
+    base_audio_mfcc = conf.get('base_audio_mfcc')
+    reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
+    hop_length = conf.get('hop_length')
 
     mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
     mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
 
+    # base_audio_vol_diff = conf.get('song_percentile_loudness')
+    # reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')    
     # voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
     # voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
     
-    mfcc_score = mfcc_similarity(sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
-    # rel_volume_alignment = relative_volume_similarity(sr, vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
+    mfcc_score = mfcc_similarity(mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
+    # rel_volume_alignment = relative_volume_similarity(vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
 
     # alignment = math.log(1 + 100 * mfcc_score) * math.log(1 + rel_volume_alignment)
     alignment = mfcc_score
@@ -77,19 +75,19 @@ def append_or_extend_segment(my_path, segment):
 
 
 
-def calculate_partial_score(current_path, checkpoint_ts, basics):
+def calculate_partial_score(current_path, checkpoint_ts, reaction):
     result = truncate_path(current_path, checkpoint_ts)
     if result is None: 
         return None
     (adjusted_reaction_end, modified_path) = result
     # truncate current path back to current_ts
-    score = path_score(modified_path, basics, relative_to = checkpoint_ts) 
+    score = path_score(modified_path, reaction, relative_to = checkpoint_ts) 
 
     return adjusted_reaction_end, score
 
 
 
-def mfcc_similarity(sr, audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=None):
+def mfcc_similarity(audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=None):
 
     # Compute MFCCs for each audio chunk
     if mfcc1 is None: 
@@ -117,7 +115,7 @@ def mfcc_similarity(sr, audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=
 
 
 
-def relative_volume_similarity(sr, audio_chunk1=None, audio_chunk2=None, vol_diff1=None, vol_diff2=None, hop_length=1):
+def relative_volume_similarity(audio_chunk1=None, audio_chunk2=None, vol_diff1=None, vol_diff2=None, hop_length=1):
 
     # Compute MFCCs for each audio chunk
     if vol_diff1 is None: 
@@ -156,14 +154,14 @@ def relative_volume_similarity(sr, audio_chunk1=None, audio_chunk2=None, vol_dif
 
 
 
-def create_reaction_mfcc_from_path(path, basics):
+def create_reaction_mfcc_from_path(path, reaction):
 
     # these mfcc variables are the result of calls to librosa.feature.mfcc, thus
     # they have a shape of (num_mfcc, length of audio track). The length of the 
     # reaction_audio_mfcc track is greater than the length of base_audio_mfcc track. 
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    hop_length = basics.get('hop_length')
+    reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
+    base_audio_mfcc = conf.get('base_audio_mfcc')
+    hop_length = conf.get('hop_length')
 
     total_length = 0
     for reaction_start, reaction_end, current_start, current_end, is_filler in path:
@@ -208,14 +206,14 @@ def create_reaction_mfcc_from_path(path, basics):
 
     return path_mfcc
 
-def create_reaction_vol_diff_from_path(path, basics):
+def create_reaction_vol_diff_from_path(path, reaction):
 
     # these mfcc variables are the result of calls to librosa.feature.mfcc, thus
     # they have a shape of (num_mfcc, length of audio track). The length of the 
     # reaction_audio_mfcc track is greater than the length of base_audio_mfcc track. 
-    reaction_audio_mfcc = basics.get('reaction_percentile_loudness')
-    base_audio_mfcc = basics.get('song_percentile_loudness')
-    hop_length = basics.get('hop_length')
+    reaction_audio_mfcc = reaction.get('reaction_percentile_loudness')
+    base_audio_mfcc = conf.get('song_percentile_loudness')
+    hop_length = conf.get('hop_length')
 
     total_length = 0
     for reaction_start, reaction_end, current_start, current_end, is_filler in path:
@@ -278,17 +276,16 @@ def initialize_path_score():
 
 use_summed_sequence = False
 
-def path_score(path, basics, relative_to=None): 
+def path_score(path, reaction, relative_to=None): 
     global path_score_cache
     global path_score_cache_perf
 
-    base_audio = basics.get('base_audio')
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    base_audio_vol_diff = basics.get('song_percentile_loudness')
-    hop_length = basics.get('hop_length')
-    reaction_audio = basics.get('reaction_audio')
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    sr = basics.get('sr')
+    base_audio = conf.get('base_audio_data')
+    base_audio_mfcc = conf.get('base_audio_mfcc')
+    # base_audio_vol_diff = conf.get('song_percentile_loudness')
+    hop_length = conf.get('hop_length')
+    reaction_audio = reaction['reaction_audio_data']
+    reaction_audio_mfcc = reaction['reaction_audio_mfcc']    
 
     key = f"{len(base_audio)} {len(reaction_audio)} {str(path)} {relative_to}"
     if key in path_score_cache:
@@ -357,13 +354,13 @@ def path_score(path, basics, relative_to=None):
 
 
     if use_summed_sequence:
-        alignment = path_mfcc_segment_sum_score(path, basics)
+        alignment = path_mfcc_segment_sum_score(path, reaction)
     else:
-        path_mfcc = create_reaction_mfcc_from_path(path, basics)
-        mfcc_alignment = mfcc_similarity(sr, mfcc1=base_audio_mfcc[:,:total_length], mfcc2=path_mfcc)
+        path_mfcc = create_reaction_mfcc_from_path(path, reaction)
+        mfcc_alignment = mfcc_similarity(mfcc1=base_audio_mfcc[:,:total_length], mfcc2=path_mfcc)
 
-        # path_vol_diff = create_reaction_vol_diff_from_path(path, basics)
-        # rel_vol_alignment = relative_volume_similarity(sr, vol_diff1=base_audio_vol_diff[:total_length], vol_diff2=path_vol_diff)
+        # path_vol_diff = create_reaction_vol_diff_from_path(path, reaction)
+        # rel_vol_alignment = relative_volume_similarity(vol_diff1=base_audio_vol_diff[:total_length], vol_diff2=path_vol_diff)
 
         alignment = 100 * mfcc_alignment #* math.log10(1 + rel_vol_alignment)
 
@@ -380,26 +377,18 @@ def path_score(path, basics, relative_to=None):
     return path_score_cache[key]
 
 
-def find_best_path(candidate_paths, basics):
+def find_best_path(reaction, candidate_paths):
 
     print(f"Finding the best of {len(candidate_paths)} paths")
 
-    sr = basics.get('sr')
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    base_audio_vol_diff = basics.get('song_percentile_loudness')
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
-    hop_length = basics.get('hop_length')
-    gt = basics.get('ground_truth')
-
-
+    gt = reaction.get('ground_truth')
 
     assert( len(candidate_paths) > 0 )
     
     paths_with_scores = []
 
     for path in candidate_paths:
-        paths_with_scores.append([path, path_score(path, basics)])
+        paths_with_scores.append([path, path_score(path, reaction)])
 
     best_score = 0 
     best_early_completion_score = 0
@@ -444,7 +433,7 @@ def find_best_path(candidate_paths, basics):
             else:
                 gtp = ""
             print(f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]} {gtp}")
-            print_path(path, basics)
+            print_path(path, reaction)
 
     if gt: 
         max_gt = 0
@@ -460,17 +449,16 @@ def find_best_path(candidate_paths, basics):
         print("***** Best Ground Truth Path *****")
 
         print(f"\tScore={best_scores[0]}  EarlyThrough={best_scores[1]}  Similarity={best_scores[2]} Duration={best_scores[3]} {max_gt}")
-        print_path(best_gt_path, basics)
+        print_path(best_gt_path, reaction)
 
 
 
     return paths_by_score[0][0]
 
 
-def print_path(path, basics):
-    sr = basics.get('sr')
-    base_audio = basics.get('base_audio')
-    gt = basics.get('ground_truth')
+def print_path(path, reaction):
+    
+    gt = reaction.get('ground_truth')
 
     if gt: 
         print(f"Ground Truth Overlap {ground_truth_overlap(path, gt)}%")
@@ -480,8 +468,8 @@ def print_path(path, basics):
 
         gt_pr = ""
         if not is_filler: 
-            mfcc_score = get_segment_mfcc_score(basics, sequence)
-            rel_volume_alignment = get_segment_rel_vol_score(basics, sequence)
+            mfcc_score = get_segment_mfcc_score(reaction, sequence)
+            rel_volume_alignment = get_segment_rel_vol_score(reaction, sequence)
         
             if gt: 
                 total_overlap = 0
@@ -494,10 +482,10 @@ def print_path(path, basics):
 
         print(f"\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}] {gt_pr}")
     
-    print(f"\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, basics)} relvol={path_rel_vol_segment_sum_score(path, basics)}")
+    print(f"\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, reaction)} relvol={path_rel_vol_segment_sum_score(path, reaction)}")
 
-def path_mfcc_segment_sum_score(path, basics):
-    base_audio = basics.get('base_audio')
+def path_mfcc_segment_sum_score(path, reaction):
+    base_audio = conf.get('base_audio_data')
 
     mfcc_sequence_sum_score = 0
 
@@ -505,7 +493,7 @@ def path_mfcc_segment_sum_score(path, basics):
         reaction_start, reaction_end, current_start, current_end, is_filler = sequence
 
         if not is_filler: 
-            mfcc_score = get_segment_mfcc_score(basics, sequence)
+            mfcc_score = get_segment_mfcc_score(reaction, sequence)
         
             duration_factor = (current_end - current_start) / len(base_audio)
             mfcc_sequence_sum_score    += mfcc_score * duration_factor
@@ -515,8 +503,8 @@ def path_mfcc_segment_sum_score(path, basics):
 
     return mfcc_sequence_sum_score
 
-def path_rel_vol_segment_sum_score(path, basics):
-    base_audio = basics.get('base_audio')
+def path_rel_vol_segment_sum_score(path, reaction):
+    base_audio = conf.get('base_audio_data')
 
     rel_vol_sequence_sum_score = 0
 
@@ -524,7 +512,7 @@ def path_rel_vol_segment_sum_score(path, basics):
         reaction_start, reaction_end, current_start, current_end, is_filler = sequence
 
         if not is_filler: 
-            rel_volume_alignment = get_segment_rel_vol_score(basics, sequence)
+            rel_volume_alignment = get_segment_rel_vol_score(reaction, sequence)
         
             duration_factor = (current_end - current_start) / len(base_audio)
             rel_vol_sequence_sum_score += rel_volume_alignment * duration_factor
@@ -586,7 +574,7 @@ def get_segment_id(segment):
     reaction_start, reaction_end, current_start, current_end, is_filler = segment
     return f"{reaction_start} {reaction_end} {current_start} {current_end} {is_filler}"
 
-def get_segment_mfcc_score(basics, segment):
+def get_segment_mfcc_score(reaction, segment):
     reaction_start, reaction_end, current_start, current_end, is_filler = segment
 
     if is_filler:
@@ -596,20 +584,20 @@ def get_segment_mfcc_score(basics, segment):
 
     key = get_segment_id(segment)
     if key not in segment_mfcc_scores:
-      sr = basics.get('sr')
-      base_audio_mfcc = basics.get('base_audio_mfcc')
-      reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-      hop_length = basics.get('hop_length')
+      
+      base_audio_mfcc = conf.get('base_audio_mfcc')
+      reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
+      hop_length = conf.get('hop_length')
 
       mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
       mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
-      mfcc_score = mfcc_similarity(sr, mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
+      mfcc_score = mfcc_similarity(mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
 
       segment_mfcc_scores[key] = 1000 * mfcc_score
 
     return segment_mfcc_scores[key]
 
-def get_segment_rel_vol_score(basics, segment):
+def get_segment_rel_vol_score(reaction, segment):
     reaction_start, reaction_end, current_start, current_end, is_filler = segment
 
     if is_filler:
@@ -619,14 +607,14 @@ def get_segment_rel_vol_score(basics, segment):
 
     key = get_segment_id(segment)
     if key not in segment_rel_vol_scores:
-      sr = basics.get('sr')
-      base_audio_vol_diff = basics.get('song_percentile_loudness')
-      reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
-      hop_length = basics.get('hop_length')
+      
+      base_audio_vol_diff = conf.get('song_percentile_loudness')
+      reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
+      hop_length = conf.get('hop_length')
 
       voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
       voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
-      rel_volume_alignment = relative_volume_similarity(sr, vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
+      rel_volume_alignment = relative_volume_similarity(vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
 
       segment_rel_vol_scores[key] = 10 * rel_volume_alignment
 

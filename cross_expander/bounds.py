@@ -1,5 +1,6 @@
 
-
+from utilities import conversion_audio_sample_rate as sr
+from utilities import conf
 
 # I have two audio files: a base audio file that contains something like a song and a reaction audio file that contains 
 # someone reacting to that base audio file. It includes the base audio, and more. 
@@ -24,20 +25,19 @@
 #   accomplish the integrity checking, walk backwards from the last timestamp.
 
 
-def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
+def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
     from cross_expander.find_segment_start import find_next_segment_start_candidates
 
     # profiler = cProfile.Profile()
     # profiler.enable()
 
-    base_audio = basics.get('base_audio')
-    reaction_audio = basics.get('reaction_audio')
-    sr = basics.get('sr')
-    hop_length = basics.get('hop_length')
-    reaction_audio_mfcc = basics.get('reaction_audio_mfcc')
-    reaction_audio_vol_diff = basics.get('reaction_percentile_loudness')
-    base_audio_mfcc = basics.get('base_audio_mfcc')
-    base_audio_vol_diff = basics.get('song_percentile_loudness')
+    base_audio = conf.get('base_audio')
+    reaction_audio = reaction.get('reaction_audio_data')
+    hop_length = conf.get('hop_length')
+    reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
+    reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
+    base_audio_mfcc = conf.get('base_audio_mfcc')
+    base_audio_vol_diff = conf.get('song_percentile_loudness')
 
     clip_length = int(2 * sr)
     base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
@@ -83,7 +83,7 @@ def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkp
             # Find the candidate indices for the start of the matching segment in the reaction audio
 
             candidates = find_next_segment_start_candidates(
-                                    basics=basics, 
+                                    reaction=reaction, 
                                     open_chunk=reaction_audio[start:], 
                                     open_chunk_mfcc=reaction_audio_mfcc[:, round(start / hop_length):],
                                     open_chunk_vol_diff=reaction_audio_vol_diff[round(start / hop_length):],
@@ -133,7 +133,7 @@ def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkp
             new_bound = previous_bound
             print ("**********")
             print("Could not find bound with integrity!!!! Trying again with higher tolerance and shifted checkpoints.", timestamps_samples[i] / sr)
-            return create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkpoint=seconds_per_checkpoint+10, peak_tolerance=peak_tolerance * .9)
+            return create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=seconds_per_checkpoint+10, peak_tolerance=peak_tolerance * .9)
         else:
             # print(f"New bound for {timestamps[i]} is {max(candidates)}", candidates, bounds[i])
             new_bound = max( candidates  )
@@ -146,7 +146,7 @@ def create_reaction_alignment_bounds(basics, first_n_samples, seconds_per_checkp
         print(f"\t{base_ts / sr}  <=  {last_reaction_match / sr}")
 
 
-    gt = basics.get('ground_truth')
+    gt = reaction.get('ground_truth')
     if gt: 
         print("Checking if ground truth is within alignment bounds")
         current_start = 0

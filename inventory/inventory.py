@@ -1,5 +1,5 @@
-from decouple import config
-api_key = config("Youtube_API_KEY")
+from decouple import config as decouple_config
+api_key = decouple_config("Youtube_API_KEY")
 
 
 import requests
@@ -9,8 +9,7 @@ import os
 import subprocess
 from pyyoutube import Client, PyYouTubeException
 
-
-from utilities import prepare_reactions
+from utilities import conf
 
 
 client = Client(api_key=api_key)

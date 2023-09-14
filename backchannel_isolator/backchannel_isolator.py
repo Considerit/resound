@@ -12,7 +12,8 @@ from scipy import signal
 from backchannel_isolator.track_separation import separate_vocals
 
 from utilities.audio_processing import audio_percentile_loudness
-
+from utilities import conversion_audio_sample_rate as sr
+from utilities import conf
 
 # I have two audio files. One file is a song. The other file is a reaction — a recording of 
 # one or two people reacting to the song. The file contains a possibly distorted, though 
@@ -65,7 +66,7 @@ def construct_mask(diff, threshold):
             i += 1
     return dilated_mask
 
-def create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, threshold, silence_threshold=.001, plot=False, window=1000, std_dev=None):
+def create_mask_by_relative_perceptual_loudness_difference(song, reaction, threshold, silence_threshold=.001, plot=False, window=1000, std_dev=None):
 
     print('song percentile loudness')
     song_percentile_loudness = audio_percentile_loudness(song, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
@@ -87,8 +88,8 @@ def create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reacti
 
     if plot: 
         # Create a time array for plotting
-        time_song = np.arange(song_percentile_loudness.shape[0]) / sr_song
-        time_reaction = np.arange(reaction_percentile_loudness.shape[0]) / sr_reaction
+        time_song = np.arange(song_percentile_loudness.shape[0]) / sr
+        time_reaction = np.arange(reaction_percentile_loudness.shape[0]) / sr
 
         # Plot the percentile loudnesses
         plt.figure(figsize=(12, 8))
@@ -127,12 +128,12 @@ def create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reacti
     return dilated_mask, diff, song_percentile_loudness, reaction_percentile_loudness
 
 
-# def create_mask_by_relative_pitch_difference(song, sr_song, reaction, sr_reaction, threshold, plot=False):
+# def create_mask_by_relative_pitch_difference(song, reaction, threshold, plot=False):
 #     # Calculate the pitch of each audio
 #     print("\tsong pitch")
-#     song_pitch = calculate_pitch_level(song, sr_song)
+#     song_pitch = calculate_pitch_level(song)
 #     print("\treaction pitch")
-#     reaction_pitch = calculate_pitch_level(reaction, sr_reaction)
+#     reaction_pitch = calculate_pitch_level(reaction, sr)
 
 #     # Calculate the percentile pitch of each audio
 #     print("\tpercentile song pitch")
@@ -151,7 +152,7 @@ def create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reacti
 
 
 
-def process_mask(mask, min_segment_length, sr):
+def process_mask(mask, min_segment_length):
     # Number of frames corresponding to the minimum segment length
     min_segment_frames = int(min_segment_length * sr / 512)  # 512 is the default hop length in librosa's mfcc function
 
@@ -189,7 +190,7 @@ def process_mask(mask, min_segment_length, sr):
 
     return segments
 
-def merge_segments(segments, min_segment_length, max_gap_length, sr):
+def merge_segments(segments, min_segment_length, max_gap_length):
     if len(segments) == 0:
         return []
 
@@ -223,7 +224,7 @@ def merge_segments(segments, min_segment_length, max_gap_length, sr):
 
     return merged_segments
 
-def pad_segments(segments, sr, length, pad_beginning=0.1, pad_ending=0.1):
+def pad_segments(segments, length, pad_beginning=0.1, pad_ending=0.1):
     # Convert padding length from seconds to samples
     pad_length_beginning = int(pad_beginning * sr)
     pad_length_end = int(pad_ending * sr)
@@ -270,6 +271,7 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
 
     assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
+    assert sr == sr_reaction, f"Sample rate must be equal to global value"
 
 
     # if mono:
@@ -296,27 +298,27 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
 
     # print("calculating short volume diff")
-    # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh)
+    # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh)
 
     # print("calculating short volume diff")
-    # mask12, diff12 = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, std_dev=1000/4)
+    # mask12, diff12 = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, std_dev=1000/4)
 
     print("calculating long volume diff")
-    percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=1 * sr_reaction, plot=False)
+    percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, window=1 * sr, plot=False)
     long_mask1, long_diff1, song_percentile_pitch, reaction_percentile_pitch = percep_mask
     
     # print("calculating long volume diff2")
-    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=sr_reaction / 2)
+    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, window=sr / 2)
     # long_mask12, long_diff12, song_percentile_pitch, reaction_percentile_pitch = percep_mask
 
     # print("calculating long volume diff")
-    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, sr_song, reaction, sr_reaction, percent_volume_diff_thresh, window=4 * sr_reaction, plot=False)
+    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, window=4 * sr, plot=False)
     # long_mask2, long_diff2, song_percentile_pitch, reaction_percentile_pitch = percep_mask
 
 
 
     # print('calculating pitch diff')
-    # mask2, diff2, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_pitch_difference(song, sr_song, reaction, sr_reaction, threshold=50, plot=False)
+    # mask2, diff2, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_pitch_difference(song, reaction, threshold=50, plot=False)
 
 
     # print('calculating diffs and masks')
@@ -395,8 +397,8 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
         print('plotting')
 
         # Create a time array for plotting
-        time_song = np.arange(song_percentile_pitch.shape[0]) / sr_song
-        time_reaction = np.arange(reaction_percentile_pitch.shape[0]) / sr_reaction
+        time_song = np.arange(song_percentile_pitch.shape[0]) / sr
+        time_reaction = np.arange(reaction_percentile_pitch.shape[0]) / sr
 
         # Plot the percentile pitches
         plt.figure(figsize=(12, 10))  # Increase figure size for 6 subplots
@@ -513,10 +515,10 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     # mask = confirmed_dilated_mask
     mask = long_mask1
 
-    segments = process_mask(mask, min_segment_length / 1000, sr_reaction)
+    segments = process_mask(mask, min_segment_length / 1000)
 
-    padded_segments = pad_segments(segments, sr_reaction, len(reaction), pad_beginning=0.5, pad_ending=0.1)
-    merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames, sr_reaction)
+    padded_segments = pad_segments(segments, len(reaction), pad_beginning=0.5, pad_ending=0.1)
+    merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
 
     suppressed_reaction = apply_segments(reaction, merged_segments)
 
@@ -530,7 +532,7 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     #     suppressed_reaction = np.squeeze(suppressed_reaction)
 
     
-    sf.write(output_path, suppressed_reaction.T, sr_reaction)
+    sf.write(output_path, suppressed_reaction.T, sr)
 
     # suppressed_reaction = post_process_audio(suppressed_reaction, original_sr_reaction)
     # # Now you can save suppressed_reaction into a file
@@ -548,8 +550,10 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
 
 
-def process_reactor_audio(output_dir, reaction_audio, base_audio, sr, extended_by=0):
-
+def process_reactor_audio(reaction, extended_by=0):
+    output_dir = conf.get('temp_directory')
+    reaction_audio = reaction.get('aligned_audio_path')
+    base_audio = conf.get('base_audio_path')
 
     reaction_vocals_path, song_vocals_path = separate_vocals(output_dir, base_audio, reaction_audio, post_process=True)
     output_path = os.path.splitext(reaction_vocals_path)[0] + "_isolated_commentary.wav"
