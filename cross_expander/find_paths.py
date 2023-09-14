@@ -54,7 +54,7 @@ from utilities import conversion_audio_sample_rate as sr
 from cross_expander.pruning_search import should_prune_path, initialize_path_pruning, prune_types, initialize_checkpoints, print_prune_data
 
 from cross_expander.find_segment_start import find_next_segment_start_candidates, initialize_segment_start_cache
-from cross_expander.find_segment_end import scope_segment, initialize_segment_end_cache
+from cross_expander.find_segment_end import find_segment_end, check_for_start_adjustment, initialize_segment_end_cache
 from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, print_path, calculate_partial_score
 from cross_expander.scoring_and_similarity import initialize_segment_tracking, truncate_path, append_or_extend_segment
 from cross_expander.bounds import create_reaction_alignment_bounds, get_bound
@@ -256,38 +256,53 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
                 return [None]
         #########
 
-        # for candidate in candidate_starts:
-        #     print(f"\t\t\tcandidate start={(reaction_start + candidate) / sr}")
+        if depth > 0 and 0 not in candidate_starts:
+            candidate_starts.append(0)  # always consider the continuation
+
+
+        # Create two unique paths if there is a candidate starting point adjustment.
+        starting_points = []
+        for candidate_segment_start in candidate_starts:
+            # print(f"\t\t\tcandidate start={(reaction_start + candidate_segment_start) / sr}")
+            starting_points.append( (candidate_segment_start, current_start, copy.deepcopy(current_path))  )
+
+            adjusted_start = check_for_start_adjustment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size)
+            if adjusted_start is not None and adjusted_start > 0:
+
+                my_adjusted_path = copy.deepcopy(current_path)
+
+                filler_segment = [reaction_start - adjusted_start, reaction_start, current_start, current_start + adjusted_start, True]
+                append_or_extend_segment(my_adjusted_path, filler_segment)
+                starting_points.append( (candidate_segment_start + adjusted_start, current_start + adjusted_start, my_adjusted_path)    )
+
+
 
         paths = []
-        open_path(depth, len(candidate_starts))
-        
-        for ci, candidate_segment_start in enumerate(candidate_starts):
+        open_path(depth, len(starting_points))
+
+
+        for ci, (candidate_segment_start, next_start, my_path) in enumerate(starting_points):
+
             if depth == 0:
                 print(f"STARTING DEPTH ZERO from {candidate_segment_start / sr}")
 
-            my_path = copy.deepcopy(current_path)
-
-            scoping_needed = True
-            next_start = current_start
+            find_end = True
             next_reaction_start = reaction_start
 
-            while scoping_needed:
-                segment, next_start, next_reaction_start = scope_segment(reaction, next_start, next_reaction_start, candidate_segment_start, current_chunk_size, prune_types)
+            while find_end:
+                segment, next_start, next_reaction_start = find_segment_end(reaction, next_start, next_reaction_start, candidate_segment_start, current_chunk_size, prune_types)
                 if segment:
-                    back_fill_needed = segment[-1]
+                    backfill_was_needed = segment[-1]
                     append_or_extend_segment(my_path, segment)
                 elif next_reaction_start < len(reaction_audio) - 1: 
-                    back_fill_needed = True
+                    backfill_was_needed = True
                     print("did not find segment", next_start/sr, next_reaction_start/sr)
                     increment = int(sr * .25)
                     segment = (reaction_start - increment, reaction_start, current_start, current_start + increment, True)
                     append_or_extend_segment(my_path, segment)
 
-                scoping_needed = back_fill_needed
+                find_end = backfill_was_needed
 
-            # TODO: Allow scope_segment to create two unique paths if it thinks it wants to recommend a negative start.
-            #       my_path above would become my_paths, and below would be a loop over all my_paths.
             filler = segment[-1]
             if (not recursive and filler and len(my_path) < 10) or (recursive and (not greedy_branching or ci < greedy_branching) and (not probe_to_time or next_start < probe_to_time)):
 
@@ -590,7 +605,7 @@ def align_by_checkpoint_probe(reaction):
             if len(past_the_checkpoint) > 0:
                 print(f"\tFinished checkpoint {checkpoint_ts}. Kept {len(best_past_the_checkpoint)} of {len(past_the_checkpoint)} ({100 * len(best_past_the_checkpoint) / len(past_the_checkpoint)}%)")
                 print(f"best path at checkpoint\t", print_path(best_path_past_checkpoint, reaction))
-            if False and len(past_the_checkpoint) > 1000:
+            if True or len(past_the_checkpoint) > 1000:
                 if len(past_the_checkpoint) > 1:
                     plot_candidates(all_by_score)
 

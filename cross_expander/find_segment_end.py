@@ -163,18 +163,21 @@ segment_scope_cache = {}
 def initialize_segment_end_cache():
     segment_scope_cache.clear()
 
-def scope_segment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types):
 
-    scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size})'
-    
-    if scope_key in segment_scope_cache:
-        prune_types['scope_cached'] += 1
-        return segment_scope_cache[scope_key]
 
+
+#####################
+# Sometimes we're off in our segment start because, e.g. a reactor doesn't start from the beginning. So our very first match 
+# is really low quality, which can cause problems like never popping out of the first segment. 
+# To address this, we do a reverse match for a segment start: find the best start of reaction_chunk 
+# in base_audio[current_start:]. The match should be at the beginning. If it isn't, then we're off base. 
+# We have missing base audio. We can then try to backfill that by matching the missing segment with a 
+# smaller minimum segment size (size of the missing chunk), so that we 
+# (1) recover that base audio and (2) are aligned for subsequent sequences.  
+def check_for_start_adjustment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size):
 
     reverse_search_bound = conf.get('reverse_search_bound')
     peak_tolerance = conf.get('peak_tolerance')
-    n_samples = conf.get('n_samples')
     first_n_samples = conf.get('first_n_samples')
 
     base_audio = conf.get('base_audio_data')
@@ -185,15 +188,6 @@ def scope_segment(reaction, current_start, reaction_start, candidate_segment_sta
     reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
     hop_length = conf.get('hop_length')
 
-
-    #####################
-    # Sometimes we're off in our segment start because, e.g. a reactor doesn't start from the beginning. So our very first match 
-    # is really low quality, which can cause problems like never popping out of the first segment. 
-    # To address this, we do a reverse match for a segment start: find the best start of reaction_chunk 
-    # in base_audio[current_start:]. The match should be at the beginning. If it isn't, then we're off base. 
-    # We have missing base audio. We can then try to backfill that by matching the missing segment with a 
-    # smaller minimum segment size (size of the missing chunk), so that we 
-    # (1) recover that base audio and (2) are aligned for subsequent sequences.  
 
     open_end = min(current_start+current_chunk_size+int(reverse_search_bound * sr), len(base_audio))
     reverse_chunk_size = min(current_chunk_size, open_end - current_start)
@@ -224,27 +218,44 @@ def scope_segment(reaction, current_start, reaction_start, candidate_segment_sta
                         closed_start=reaction_start + candidate_segment_start, 
                         distance=first_n_samples)
 
-
-
     if reverse_index and len(reverse_index) > 0:
         reverse_index = reverse_index[0]
     # print('reverse index:', reverse_index / sr)
 
-    if reverse_index and reverse_index > sr / 100: 
+    if reverse_index and reverse_index > 0: #sr / 100: 
         # print(f"Better match for base segment found later in reaction: using filler from base video from {current_start / sr} to {(current_start + reverse_index) / sr} with {(reaction_start - reverse_index) / sr} to {(reaction_start) / sr}")
         
         # seek to a frame boundary
         while (reverse_index - current_start) % samples_per_frame() > 0 and reverse_index < len(reaction_audio) and current_start + reverse_index < len(base_audio):
             reverse_index += 1
 
+        # segment = [reaction_start - reverse_index, reaction_start, current_start, current_start + reverse_index, True]
 
-        segment = [reaction_start - reverse_index, reaction_start, current_start, current_start + reverse_index, True]
+        # reverse_candidate_found = (segment, current_start + reverse_index, reaction_start)
 
-        # segment = (reaction_start, reaction_start + reverse_index, current_start, current_start + reverse_index, reaction_start - reverse_index < 0)
+    return reverse_index
 
-        # segment_scope_cache[scope_key] = (segment, current_start + reverse_index, reaction_start)
 
-        return (segment, current_start + reverse_index, reaction_start)
+
+
+
+
+def find_segment_end(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types):
+
+
+    reverse_candidate_found = check_for_start_adjustment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size)
+
+
+    scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size})'
+    
+    if scope_key in segment_scope_cache:
+        prune_types['scope_cached'] += 1
+        return segment_scope_cache[scope_key]
+
+    n_samples = conf.get('n_samples')
+
+    base_audio = conf.get('base_audio_data')
+    reaction_audio = reaction.get('reaction_audio_data')
 
     #########################################
 
