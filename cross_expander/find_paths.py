@@ -83,54 +83,12 @@ from utilities.audio_processing import audio_percentile_loudness
 
 
 best_finished_path = {}
-path_counts = {}
-def initialize_path_counts():
-    global path_counts 
-    path_counts.clear()
-    initialize_path_counts_for_depth(-1)
-    initialize_path_counts_for_depth(0)
-
-def initialize_path_counts_for_depth(depth): 
-    global path_counts 
-    path_counts[depth] = {
-        'open': 0,
-        'completed': 0,
-        'current_starts': {}
-    }
-
-def open_path(depth, cnt=1):
-    global path_counts
-    path_counts[depth]['open'] += cnt
-    path_counts[-1]['open'] += cnt
-
-def complete_path(depth, cnt=1):
-    global path_counts
-    if depth not in path_counts:
-        initialize_path_counts_for_depth(depth)    
-    path_counts[depth]['completed'] += cnt
-    path_counts[-1]['completed'] += cnt
-
-def print_paths(current_start, reaction_start, depth, path_counts):
-    print(f"Paths at point: {current_start / sr:.1f} {reaction_start / sr:.1f} [depth={depth}]")
-
-    try: 
-        for ddd, progress in path_counts.items():
-            if progress['open'] > 0:
-                print(f"\tDepth {ddd}: [{progress['completed']} / {progress['open']} = {100 * progress['completed'] / progress['open']:.1f}%] [remaining={progress['open'] - progress['completed']}]")
-            else:
-                print(f"\tDepth {ddd}: [{progress['completed']} / {progress['open']}")
-
-    except: 
-        print("Could not print") 
-
-
     
 
 
 
 def branching_search(reaction, current_path=None, current_path_checkpoint_scores=None, current_start=0, reaction_start=0, continuations=None, greedy_branching=False, recursive=True, probe_to_time=False, peak_tolerance=None): 
     global best_finished_path
-    global path_counts
 
     if (probe_to_time and current_start >= probe_to_time):
         continuations.append([current_path, current_path_checkpoint_scores, current_start, reaction_start])
@@ -157,11 +115,8 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
 
     # print(f"\t\tDepth={depth} Reaction Start={reaction_start / sr} Current_start={current_start / sr}")
 
-    if depth not in path_counts:
-        initialize_path_counts_for_depth(depth)
-
     # print_path(current_path, reaction)
-    if should_prune_path(reaction, current_path, best_finished_path, current_start, reaction_start, path_counts):
+    if should_prune_path(reaction, current_path, best_finished_path, current_start, reaction_start):
         # print('\t\tPRUNED')
         return [None]
 
@@ -246,13 +201,11 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
                 return [current_path]
             elif ( current_start / len(base_audio) > .75 ):
                 # print(f"Could not find match in remainder of reaction video!!! Skipping forward.")
-                open_path(depth)
-
                 filler_segment = (reaction_start - increment, reaction_start, current_start - increment, current_start, True)
                 append_or_extend_segment(current_path, filler_segment)
 
                 result = branching_search(reaction, current_path, copy.copy(current_path_checkpoint_scores), current_start, reaction_start, continuations=continuations, greedy_branching=greedy_branching, recursive=recursive, probe_to_time=probe_to_time, peak_tolerance=peak_tolerance)
-                complete_path(depth)
+
                 return result
             else: # if this occurs earlier in the reaction, it almost always results from a poor match
                 return [None]
@@ -280,8 +233,6 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
 
 
         paths = []
-        open_path(depth, len(starting_points))
-
 
         for ci, (candidate_segment_start, next_start, my_path) in enumerate(starting_points):
 
@@ -324,7 +275,6 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
                     if full_path is not None:
                         paths.append(full_path)
 
-                complete_path(depth)
             else: 
                 continuations.append([my_path, copy.copy(current_path_checkpoint_scores), next_start, next_reaction_start])
 
@@ -437,7 +387,6 @@ def get_score_for_overall_comparison(score):
 
 
 def align_by_checkpoint_probe(reaction):
-    global path_counts
     global best_finished_path
     global print_when_possible
 
@@ -611,7 +560,6 @@ def align_by_checkpoint_probe(reaction):
                 
 
                 depth = len(path)
-                complete_path(depth)
 
                 # Don't prune out paths until we're at the checkpoint just before current_end of the latest path. 
                 # These are very low cost options to keep, and it gives them a chance to shine and not prematurely pruned.
@@ -732,14 +680,12 @@ def plot_candidates(data):
     plt.show()
 
 def find_alignments(reaction):
-    global path_counts
     global best_finished_path
     global print_when_possible
 
     initialize_segment_start_cache()
     initialize_segment_end_cache()
     initialize_path_score()
-    initialize_path_counts()
     initialize_path_pruning()
     initialize_segment_tracking()
 

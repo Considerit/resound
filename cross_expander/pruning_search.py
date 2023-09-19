@@ -32,7 +32,7 @@ def initialize_path_pruning():
     last_checkpoint_cache.clear()
 
 
-def should_prune_path(reaction, current_path, best_finished_path, current_start, reaction_start, path_counts):
+def should_prune_path(reaction, current_path, best_finished_path, current_start, reaction_start):
     global prune_types
 
     checkpoints = conf.get('checkpoints')
@@ -40,18 +40,6 @@ def should_prune_path(reaction, current_path, best_finished_path, current_start,
     base_audio_length = len(conf.get('base_audio_data'))
 
     depth = len(current_path)
-
-    max_visited = 0 
-    for ddd, cnt in path_counts.items():
-        if cnt['open'] > max_visited:
-            max_visited = cnt['open']
-
-    total_visited = path_counts[-1]['open']
-
-    if current_start not in path_counts[depth]['current_starts']:
-        path_counts[depth]['current_starts'][current_start] = 0
-    path_counts[depth]['current_starts'][current_start] += 1
-
 
     spacing_min_length = 2.5 * sr
     spacing_max_separation = 15 * sr
