@@ -47,6 +47,8 @@ def handle_reaction_video(reaction, extend_by=15):
     if not conf["isolate_commentary"]:
         return []
 
+    conf['load_reaction'](reaction['channel'])
+
     _,_,aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
     reaction["aligned_audio_path"] = aligned_reaction_audio_path
 
@@ -73,15 +75,18 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
     try:
 
 
-        make_conf(song_def, options, output_dir)
+        locked = make_conf(song_def, options, output_dir)
+
+        if locked:
+            print(f"...Skipping {song_def['song']} because another process is already working on this video")
+            return []
+
 
         temp_directory = conf.get("temp_directory")
         song_directory = conf.get('song_directory')
 
         lock_file = os.path.join(temp_directory, 'locked')
-        if os.path.exists( lock_file  ):
-            print(f"...Skipping {song_def['song']} because another process is already working on this video")
-            return []
+
 
         lock = open(lock_file, 'w')
         lock.write(f"yo")
@@ -172,11 +177,12 @@ if __name__ == '__main__':
             failures.append((song, failed)) 
 
     options = {
-        "output_alignment_metadata": True,
-        "output_alignment_video": True,
-        "isolate_commentary": True,
-        "create_reactor_view": True,
-        "create_compilation": True,
+        "create_alignment": True,
+        "save_alignment_metadata": False,
+        "output_alignment_video": False,
+        "isolate_commentary": False,
+        "create_reactor_view": False,
+        "create_compilation": False,
         "download_and_parse": False,
         "draft": True
     }
