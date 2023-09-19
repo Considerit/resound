@@ -459,9 +459,9 @@ def find_best_path(reaction, candidate_paths):
 def print_path(path, reaction):
     
     gt = reaction.get('ground_truth')
-
+    print("\t\t****************")
     if gt: 
-        print(f"Ground Truth Overlap {ground_truth_overlap(path, gt)}%")
+        print(f"\t\tGround Truth Overlap {ground_truth_overlap(path, gt)}%")
 
     for sequence in path:
         reaction_start, reaction_end, current_start, current_end, is_filler = sequence
@@ -480,9 +480,9 @@ def print_path(path, reaction):
         else: 
             mfcc_score = rel_volume_alignment = 0 
 
-        print(f"\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}] {gt_pr}")
+        print(f"\t\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}] {gt_pr}")
     
-    print(f"\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, reaction)} relvol={path_rel_vol_segment_sum_score(path, reaction)}")
+    print(f"\t\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, reaction)} relvol={path_rel_vol_segment_sum_score(path, reaction)}")
 
 def path_mfcc_segment_sum_score(path, reaction):
     base_audio = conf.get('base_audio_data')

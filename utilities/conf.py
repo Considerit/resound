@@ -13,6 +13,7 @@ def make_conf(song_def, options, temp_directory):
 
   conf.update(options)
 
+
   song = f"{song_def['artist']} - {song_def['song']}"
 
   song_directory = os.path.join('Media', song)
@@ -26,6 +27,12 @@ def make_conf(song_def, options, temp_directory):
   if not os.path.exists(full_output_dir):
      # Create a new directory because it does not exist
      os.makedirs(full_output_dir)
+
+
+  lock_file = os.path.join(full_output_dir, 'locked')
+  if os.path.exists( lock_file  ):
+      return True
+
 
   conf.update({
     "artist": song_def['artist'],
@@ -41,51 +48,58 @@ def make_conf(song_def, options, temp_directory):
     "temp_directory": full_output_dir
   })
 
-  base_video_path, base_audio_data, base_audio_path = load_base_video()
+
+  def load_reactions():
+    from inventory import get_manifest_path
+
+    manifest = open(get_manifest_path(conf['artist'], conf['song_name']), "r")
+    reaction_videos = prepare_reactions()
+
+    temp_directory = conf.get('temp_directory')
+
+    reactions = {}
+
+
+    for reaction_video_path in reaction_videos:
+      channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
+
+      ground_truth = song_def.get('ground_truth', {}).get(channel, None)
+      if ground_truth: 
+          ground_truth = [ (int(s * sr), int(e * sr)) for (s,e) in ground_truth]
+
+      reactions[channel] = {
+        'channel': channel,
+        'video_path': reaction_video_path, 
+        'aligned_path': os.path.join(temp_directory, os.path.basename(channel) + f"-CROSS-EXPANDER.mp4"),
+        'featured': channel in song_def.get('featured', []),
+        'asides': song_def.get('asides', {}).get(channel, None),
+        'ground_truth': ground_truth
+      }
+
+    conf['reactions'] = reactions
+
+  def load_reaction(channel):
+    reaction_conf = conf.get('reactions')[channel]
+
+    if not conf.get('base_video_path'):
+      load_base_video()
+
+    if not reaction_conf.get('reaction_audio_data'):
+      reaction_video_path = reaction_conf['video_path']
+      reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_video_path)
+      reaction_conf["reaction_audio_data"] = reaction_audio_data
+      reaction_conf['reaction_audio_path'] = reaction_audio_path
+
 
   conf.update({
-    'base_video_path': base_video_path,
-    'base_audio_data': base_audio_data,
-    'base_audio_path': base_audio_path
+    'load_base_video': load_base_video,
+    'load_reaction': load_reaction
   })
 
-  conf['reactions'] = load_reactions(song_def)
+  load_reactions()
 
 
-  return conf
-
-
-def load_reactions(song_def):
-  from inventory import get_manifest_path
-
-  manifest = open(get_manifest_path(conf['artist'], conf['song_name']), "r")
-  reaction_videos = prepare_reactions()
-
-  temp_directory = conf.get('temp_directory')
-
-  reactions = {}
-
-
-  for reaction_video_path in reaction_videos:
-    channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
-    reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_video_path)
-
-    ground_truth = song_def.get('ground_truth', {}).get(channel, None)
-    if ground_truth: 
-        ground_truth = [ (int(s * sr), int(e * sr)) for (s,e) in ground_truth]
-
-    reactions[channel] = {
-      'channel': channel,
-      'video_path': reaction_video_path, 
-      'reaction_audio_data': reaction_audio_data,
-      'reaction_audio_path': reaction_audio_path,
-      'aligned_path': os.path.join(temp_directory, os.path.basename(channel) + f"-CROSS-EXPANDER.mp4"),
-      'featured': channel in song_def.get('featured', []),
-      'asides': song_def.get('asides', {}).get(channel, None),
-      'ground_truth': ground_truth
-    }
-
-  return reactions
+  return False
 
 
 def load_base_video():
@@ -122,7 +136,13 @@ def load_base_video():
 
     base_audio_data, _, base_audio_path = extract_audio(base_video_path)
 
-    return (base_video_path, base_audio_data, base_audio_path)
+    conf.update({
+      'base_video_path': base_video_path,
+      'base_audio_data': base_audio_data,
+      'base_audio_path': base_audio_path
+    })
+
+
 
 def prepare_reactions():
 

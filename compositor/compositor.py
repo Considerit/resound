@@ -53,6 +53,8 @@ def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
       print("Compilation already exists", output_path)
       return
 
+    conf['load_reaction'](reaction['channel'])
+
     print(f"Creating compilation for {output_path}")
 
     draft = conf.get('draft', False)

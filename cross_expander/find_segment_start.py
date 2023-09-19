@@ -36,14 +36,6 @@ def initialize_segment_start_cache():
 
 
 
-show_plots = False
-def toggle_plots():
-    global show_plots
-    show_plots = not show_plots
-
-on_press_key('˚', toggle_plots) # option-k
-
-
 # For debugging:
 # If ground truth is defined, we try to filter down to only the paths
 # that include the ground truth. It isn't perfect, but can really help
@@ -94,9 +86,7 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
         cross_max = np.max(correlation)
         # Find peaks
         peak_indices, _ = find_peaks(correlation, height=cross_max*peak_tolerance, distance=distance)
-        peak_indices = peak_indices.tolist()
-
-        peak_indices = [ [correct_peak_index(pi, current_chunk_size), correlation[pi], 0] for pi in peak_indices  ]
+        peak_indices = [ [correct_peak_index(pi, current_chunk_size), correlation[pi], 0] for pi in peak_indices.tolist()  ]
 
 
 
@@ -176,14 +166,17 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
         assert( len(closed_chunk) == current_chunk_size)
 
 
-        peak_indices = unique(peak_indices)
-
         scores = []
         max_mfcc_score = 0
         max_correlation_score = 0
         max_relative_volume_score = 0
         max_mfcc_correlation_score = 0
+
+        candidates_seen = {}
         for candidate_index, correlation_score, mfcc_correlation_score in peak_indices:
+            if candidate_index in candidates_seen: # ensure unique indices
+                continue
+            candidates_seen[candidate_index] = True
 
             if upper_bound is not None and not math.isinf(upper_bound) and upper_bound < candidate_index + open_start:
                 continue
@@ -234,10 +227,11 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
             for candidate in scores:
                 (candidate_index, mfcc_score, rel_vol_score, correlation_score, mfcc_correlation_score) = candidate
 
-                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .5)
+                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25)
+                good_by_mfcc_correlation = full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25)  
+
                 good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + (1 - peak_tolerance) * .25)
                 good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + (1 - peak_tolerance) * .8) 
-                good_by_mfcc_correlation = full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25)  
 
                 if good_by_mfcc or good_by_rel_vol or good_by_correlation or good_by_mfcc_correlation: 
                     candidates.append(candidate)
@@ -252,7 +246,7 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
                     continuity_score = score
                     continuity = candidate                
 
-            # Sometimes there is a rhythm that causes scope_segment to frequently drop out of it, and then find_next_segment_start_candidates
+            # Sometimes there is a rhythm that causes find_segment_end to frequently drop out of it, and then find_next_segment_start_candidates
             # returns the next part, with some others. This can cause bad branching. So we'll just return the continuation if we 
             # measure it as the best next segment.
             if prune_for_continuity and continuity_found and continuity_score > .98 * max_score:
@@ -265,7 +259,7 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
 
 
         # candidates_by_time = [c[0] for c in candidates]
-        candidates.sort(key=lambda x: .5 * x[1] / max_mfcc_score + .125 * x[2] / max_relative_volume_score + .125 * x[3] / max_correlation_score, reverse=True)
+        candidates.sort(key=lambda x: .5 * x[1] / max_mfcc_score + .5 * x[3] / max_correlation_score, reverse=True)
 
         # Helps us examine how the system is perceiving candidate starting locations
         if full_search:
@@ -291,23 +285,29 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
 
                 # (abs(closed_start - 145 * sr) < 2 * sr and open_start < 284 * sr), # thatsnotactingeither suicide; should generate 450
 
+                # (abs(closed_start - 1.2 * sr) < .15 * sr and open_start < 53 * sr), # dan wheeler crutch; should generate continuity 52.4
+
             ]
             has_point_of_interest = False
             for pi in points_of_interest:
                 has_point_of_interest = has_point_of_interest or pi
 
-            if has_point_of_interest or show_plots:
+            if has_point_of_interest:
                 plt.figure(figsize=(21, 6))
                 
                 plt.subplot(1, 3, 1)
                 plt.title("Standard Correlation")
-                new_x_values = np.arange(len(correlation)) / sr + open_start / sr
+                new_x_values = [ (x + open_start) / sr for x in range(len(correlation))]  #np.arange(len(correlation)) / sr + open_start / sr
                 plt.plot(new_x_values, correlation)
                 # print(peak_indices)
-                plt.scatter(new_x_values[[p[0] for p in peak_indices]], [p[1] for p in peak_indices], color='blue')
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in peak_indices], [p[1] for p in peak_indices], color='blue')
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores], [p[3] for p in scores], color='red')
+
                 plt.axhline(y=cross_max * (peak_tolerance + (1 - peak_tolerance) * .5), color='b', linestyle='--')
                 plt.xlabel("Time (s)")
                 plt.grid(True)  # Adds grid lines
+
+                plt.xlim(left=open_start / sr, right=new_x_values[-1])
 
                 plt.subplot(1, 3, 2)
                 plt.title("Aggregate MFCC Correlation")
@@ -321,6 +321,7 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
                 plt.xlabel("Time (s)")
                 plt.grid(True)  # Adds grid lines
                 plt.ylim(bottom=0)
+                plt.xlim(left=open_start / sr, right=new_x_values[-1])
 
                 plt.subplot(1, 3, 3)
                 plt.title(f"selected for current_start {closed_start / sr}")
@@ -328,8 +329,8 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
                 # plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [.5 * x[1] / max_mfcc_score + .125 * x[2] / max_relative_volume_score + .125 * x[3] / max_correlation_score for x in candidates], color='red')
                 # plt.scatter([int(c[0] / sr + open_start / sr) for c in scores if c not in candidates], [.5 * x[1] / max_mfcc_score + .125 * x[2] / max_relative_volume_score + .125 * x[3] / max_correlation_score for x in scores if x not in candidates], color='blue')
 
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[1] / max_mfcc_score for x in scores], color='purple')
                 plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[1] / max_mfcc_score for x in candidates], color='green')
-                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores if c not in candidates], [x[1] / max_mfcc_score for x in scores if x not in candidates], color='purple')
 
                 plt.xlim(left=open_start / sr, right=new_x_values[-1])
                 plt.ylim(bottom=0)
