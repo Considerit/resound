@@ -160,8 +160,10 @@ def find_correlation_end(reaction, current_start, reaction_start, step, reaction
 # Given a starting index into the reaction, find a good ending index
 
 segment_scope_cache = {}
+start_adjustment_cache = {}
 def initialize_segment_end_cache():
     segment_scope_cache.clear()
+    start_adjustment_cache.clear()
 
 
 
@@ -176,11 +178,22 @@ def initialize_segment_end_cache():
 # (1) recover that base audio and (2) are aligned for subsequent sequences.  
 def check_for_start_adjustment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size):
 
+    base_audio = conf.get('base_audio_data')
     reverse_search_bound = conf.get('reverse_search_bound')
+
+    open_end = min(current_start+current_chunk_size+int(reverse_search_bound * sr), len(base_audio))
+    reverse_chunk_size = min(current_chunk_size, open_end - current_start)
+
+    scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size}, {reverse_chunk_size})'
+    
+    if scope_key in start_adjustment_cache:
+        return start_adjustment_cache[scope_key]
+
+
+
     peak_tolerance = conf.get('peak_tolerance')
     first_n_samples = conf.get('first_n_samples')
 
-    base_audio = conf.get('base_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
     base_audio_mfcc = conf.get('base_audio_mfcc')
     base_audio_vol_diff = conf.get('song_percentile_loudness')
@@ -189,8 +202,6 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
     hop_length = conf.get('hop_length')
 
 
-    open_end = min(current_start+current_chunk_size+int(reverse_search_bound * sr), len(base_audio))
-    reverse_chunk_size = min(current_chunk_size, open_end - current_start)
 
     candidate_reaction_chunk_start = reaction_start + candidate_segment_start
     candidate_reaction_chunk_end = reaction_start + candidate_segment_start + reverse_chunk_size
@@ -233,6 +244,7 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
 
         # reverse_candidate_found = (segment, current_start + reverse_index, reaction_start)
 
+    start_adjustment_cache[scope_key] = reverse_index
     return reverse_index
 
 
