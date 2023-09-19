@@ -32,7 +32,7 @@ def initialize_path_pruning():
     last_checkpoint_cache.clear()
 
 
-def should_prune_path(reaction, current_path, best_finished_path, current_start, reaction_start):
+def should_prune_path(reaction, current_path, current_start, reaction_start):
     global prune_types
 
     checkpoints = conf.get('checkpoints')
