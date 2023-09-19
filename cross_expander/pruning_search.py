@@ -3,7 +3,7 @@ import random, copy
 from cross_expander.bounds import in_bounds, get_bound
 
 from utilities import conversion_audio_sample_rate as sr
-from utilities import conf 
+from utilities import conf, on_press_key
 
 prune_types = {}
 paths_visited = {}
@@ -13,6 +13,7 @@ def initialize_path_pruning():
     prunes = [  "queue_prune",
                 "best_score",
                 "bounds",
+                "spacing",
                 "scope_cached",
                 "continuity",
                 'duplicate_path_prune',
@@ -31,11 +32,12 @@ def initialize_path_pruning():
     last_checkpoint_cache.clear()
 
 
-def should_prune_path(reaction, current_path, current_path_checkpoint_scores, best_finished_path, current_start, reaction_start, path_counts):
+def should_prune_path(reaction, current_path, best_finished_path, current_start, reaction_start, path_counts):
     global prune_types
 
     checkpoints = conf.get('checkpoints')
     reaction_audio = reaction.get('reaction_audio_data')
+    base_audio_length = len(conf.get('base_audio_data'))
 
     depth = len(current_path)
 
@@ -50,18 +52,20 @@ def should_prune_path(reaction, current_path, current_path_checkpoint_scores, be
         path_counts[depth]['current_starts'][current_start] = 0
     path_counts[depth]['current_starts'][current_start] += 1
 
-    # if random.random() < .001:
-    #     depths = list(path_counts.keys())
-    #     depths.sort()
-    #     print("***********************")
-    #     print("Current_starts by depth")
-    #     for ddepth in depths:
-    #         print(f"\t{ddepth}:")
-    #         starts = list(path_counts[ddepth]['current_starts'].keys())
-    #         starts.sort()
-    #         for sstart in starts:
-    #             cnt = path_counts[ddepth]['current_starts'][sstart]
-    #             print(f"\t\t{sstart} [{sstart / sr:.1f}]: {path_counts[ddepth]['current_starts'][sstart]}")
+
+    spacing_min_length = 2.5 * sr
+    spacing_max_separation = 15 * sr
+    path_without_fillers = [p for p in current_path if not p[-1]]
+    if len(path_without_fillers) >= 3 and current_start < .75 * base_audio_length:
+        first = path_without_fillers[-3]
+        middle = path_without_fillers[-2]
+        last = path_without_fillers[-1]
+        if not first[-1] and not middle[-1] and not last[-1]: # ignore fillers
+            # if first[1] - first[0] < spacing_min_length and middle[1] - middle[0] < spacing_min_length and last[1] - last[0] < spacing_min_length:
+            if (first[1] - first[0]) + (middle[1] - middle[0]) + (last[1] - last[0]) < 3 * spacing_min_length:
+                if middle[0] - first[1] > spacing_max_separation and last[0] - middle[1] > spacing_max_separation:
+                    prune_types["spacing"] += 1
+                    return True
 
     if len(current_path) > 0:
         path_key = str(current_path)
@@ -114,10 +118,13 @@ def initialize_checkpoints():
     samples_per_checkpoint = 2 * sr 
 
     timestamps = []
-    s = 6
+    start = s = 6
     while s < len(base_audio):
-        if s / sr >= 6:
+        if s / sr >= start:
             timestamps.append(s)
         s += samples_per_checkpoint
 
     return timestamps
+
+
+on_press_key('ø', print_prune_data)
