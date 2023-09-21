@@ -6,6 +6,10 @@ from utilities.audio_processing import audio_percentile_loudness
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
+
+from prettytable import PrettyTable
+
+
 def get_chunk_score(reaction, reaction_start, reaction_end, current_start, current_end):
 
     base_audio_mfcc = conf.get('base_audio_mfcc')
@@ -54,22 +58,6 @@ def truncate_path(current_path, timestamp):
         return None
 
     return (adjusted_reaction_end, modified_path)
-
-
-def append_or_extend_segment(my_path, segment):
-    if len(my_path) == 0:
-        my_path.append(segment)
-        return
-
-    (previous_reaction_start, previous_reaction_end, previous_start, previous_end, previous_is_filler) = my_path[-1]
-    (new_reaction_start, new_reaction_end, new_start, new_end, new_is_filler) = segment
-
-    if new_reaction_start - previous_reaction_end > 1 or new_is_filler or new_is_filler != previous_is_filler:
-        my_path.append(segment)
-    else: 
-        my_path[-1][1] = new_reaction_end
-        my_path[-1][3] = new_end 
-
 
 
 
@@ -292,7 +280,8 @@ def path_score(path, reaction, relative_to=None):
         path_score_cache_perf['hits'] += 1
         return path_score_cache[key]
 
-    path_score_cache_perf['misses'] += 1
+    elif 'misses' in path_score_cache_perf:
+        path_score_cache_perf['misses'] += 1
 
     # print(f"path score cache hits/misses = {path_score_cache_perf['hits']} / {path_score_cache_perf['misses']}")
 
@@ -422,12 +411,12 @@ def find_best_path(reaction, candidate_paths):
     paths_by_score = sorted(paths_with_scores, key=lambda x: x[1][0], reverse=True)
 
     print("Paths by score:")
-    for path,scores in paths_by_score:
+    for idx, (path,scores) in enumerate(paths_by_score):
         if gt: 
             gtpp = ground_truth_overlap(path, gt)
 
 
-        if scores[0] > 0.9:
+        if scores[0] > 0.9 and idx < 20:
             if gt:
                 gtp = f"Ground Truth: {gtpp}%"
             else:
@@ -461,12 +450,18 @@ def print_path(path, reaction):
     gt = reaction.get('ground_truth')
     print("\t\t****************")
     if gt: 
-        print(f"\t\tGround Truth Overlap {ground_truth_overlap(path, gt)}%")
+        print(f"\t\tGround Truth Overlap {ground_truth_overlap(path, gt):.1f}%")
+    print(f"\t\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, reaction):.3f} relvol={path_rel_vol_segment_sum_score(path, reaction):.1f}")
+
+    x = PrettyTable()
+    x.border = False
+    x.align = "r"
+    x.field_names = ["\t\t", "", "Base", "Reaction", "mfcc", "rel_vol", "ground truth"]
 
     for sequence in path:
         reaction_start, reaction_end, current_start, current_end, is_filler = sequence
 
-        gt_pr = ""
+        gt_pr = "-"
         if not is_filler: 
             mfcc_score = get_segment_mfcc_score(reaction, sequence)
             rel_volume_alignment = get_segment_rel_vol_score(reaction, sequence)
@@ -476,13 +471,16 @@ def print_path(path, reaction):
                 for gt_sequence in gt:
                     total_overlap += calculate_overlap(sequence, gt_sequence)
 
-                gt_pr = f"{100 * total_overlap / (sequence[1] - sequence[0])}%"
+                gt_pr = f"{100 * total_overlap / (sequence[1] - sequence[0]):.1f}%"
         else: 
-            mfcc_score = rel_volume_alignment = 0 
+            mfcc_score = rel_volume_alignment = 0
 
-        print(f"\t\t\t{'*' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score}] [relvol: {rel_volume_alignment}] {gt_pr}")
+        x.add_row(["\t\t",'x' if is_filler else '', f"{float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}", f"{float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f}", f"{round(mfcc_score)}", f"{round(rel_volume_alignment)}", gt_pr ])
+
+
+        # print(f"\t\t\t{'x' if is_filler else ''}base: {float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}  reaction: {float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f} [mfcc: {mfcc_score:.3f}] [relvol: {rel_volume_alignment:.1f}] {gt_pr}")
     
-    print(f"\t\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, reaction)} relvol={path_rel_vol_segment_sum_score(path, reaction)}")
+    print(x)
 
 def path_mfcc_segment_sum_score(path, reaction):
     base_audio = conf.get('base_audio_data')

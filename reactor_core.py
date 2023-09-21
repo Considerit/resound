@@ -2,12 +2,16 @@ import os
 import copy
 import glob
 
+from prettytable import PrettyTable
+
 from utilities import prepare_reactions, extract_audio, conf, make_conf
 from inventory import download_and_parse_reactions, get_manifest_path
 from cross_expander import create_aligned_reaction_video
 from face_finder import create_reactor_view
 from backchannel_isolator import process_reactor_audio
 from compositor import compose_reactor_compilation
+from cross_expander.scoring_and_similarity import print_path, ground_truth_overlap
+
 
 import cProfile
 import pstats
@@ -131,6 +135,10 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
                 print(e)
                 failed_reactions.append((reaction.get('channel'), e))
 
+            print_progress()
+
+            unload_reaction(name)
+
 
         if conf['create_compilation']:
             compose_reactor_compilation(extend_by=extend_by)
@@ -144,6 +152,11 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         raise(e)
 
     except Exception as e:
+        if os.path.exists(lock_file):
+            os.remove(lock_file)
+        else:
+            print("Could not find lockfile to clean up")
+
         traceback.print_exc()
         print(e)
         
@@ -151,6 +164,32 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
     if os.path.exists(lock_file):
         os.remove(lock_file)
     return failed_reactions
+
+
+def print_progress():
+    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+        if reaction.get('best_path'):
+            print(f"************* best path for {name} ****************")
+            print_path(reaction.get('best_path'), reaction)
+
+    x = PrettyTable()
+    x.field_names = ["Name", "Ground Truth", "Score", "Target Score"]
+    x.align = "r"
+
+    print("****************")
+    print(f"Score Summary for reactions to {conf.get('song_key')}")
+
+    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+
+        if reaction.get('best_path'):
+            if reaction.get('ground_truth'):
+                overlap = f"{ground_truth_overlap(reaction.get('best_path'), reaction.get('ground_truth')):.1f}%"
+            else: 
+                overlap = '-'
+            x.add_row([reaction.get('channel'),overlap, reaction.get('best_path_score')[0], reaction.get('target_score', None) or '-', ])
+        else:
+            x.add_row([reaction.get('channel'), '-', '-', reaction.get('target_score', None) or '-'])
+    print(x)
 
 
 
@@ -161,7 +200,7 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = "cheetah"
+    output_dir = "magnum"
 
     for song in finished:
         clean_up(song)
@@ -178,13 +217,15 @@ if __name__ == '__main__':
 
     options = {
         "create_alignment": True,
-        "save_alignment_metadata": False,
-        "output_alignment_video": False,
-        "isolate_commentary": False,
-        "create_reactor_view": False,
-        "create_compilation": False,
-        "download_and_parse": False,
-        "draft": True
+        "save_alignment_metadata": True,
+        "output_alignment_video": True,
+        "isolate_commentary": True,
+        "create_reactor_view": True,
+        "create_compilation": True,
+        "download_and_parse": True,
+        "alignment_test": False,
+        "force_ground_truth_paths": False,
+        "draft": False
     }
     failures = []
     for song in drafts: 

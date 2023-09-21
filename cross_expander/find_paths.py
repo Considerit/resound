@@ -33,8 +33,10 @@
 
 import os
 import librosa
+import random
 import matplotlib.pyplot as plt
 from decimal import Decimal, getcontext
+from prettytable import PrettyTable
 
 
 from cross_expander.create_trimmed_video import trim_and_concat_video
@@ -51,7 +53,6 @@ from cross_expander.scoring_and_similarity import path_score, find_best_path, in
 from cross_expander.scoring_and_similarity import initialize_segment_tracking, truncate_path
 from cross_expander.bounds import create_reaction_alignment_bounds
 from cross_expander.branching_search import branching_search
-
 
 
 from utilities.audio_processing import audio_percentile_loudness
@@ -73,7 +74,7 @@ def update_paths(reaction, paths, new_paths):
         if new_path is not None:
             score = path_score(new_path, reaction)
             if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
-                old_best_path = best_finished_path.get('path', None)
+                # old_best_path = best_finished_path.get('path', None)
                 best_finished_path.update({
                     "path": new_path,
                     "score": score,
@@ -82,26 +83,9 @@ def update_paths(reaction, paths, new_paths):
                 print(f"**** New best score is {best_finished_path['score']}")
                 print_path(new_path, reaction)
 
-                if old_best_path:
-                    print("Comparative checkpoint scores:")
-                    checkpoints = conf.get('checkpoints')
-                    
-                    for ts in checkpoints: 
-                        _, old_best_score = calculate_partial_score(old_best_path, ts, reaction)
-                        _, new_best_score = calculate_partial_score(best_finished_path['path'], ts, reaction)
-                        print(f"\t{ts / sr}: {new_best_score[0] / old_best_score[0]}")
-                else: 
-                    print("...No old best score to compare")
-
             paths.append(new_path)
 
-def get_score_ratio_at_checkpoint(reaction, candidate, best_candidate, scoring_function, checkpoint):
-    path, checkpoint_scores, current_start, reaction_start = candidate        
-    best_path, best_checkpoint_scores, best_current_start, best_reaction_start = best_candidate
-
-    score = checkpoint_scores[checkpoint]
-    best_score = best_checkpoint_scores[checkpoint]
-
+def get_score_ratio_at_checkpoint(reaction, score, best_score, scoring_function, checkpoint):
     if scoring_function(best_score) == 0:
         return 1
 
@@ -147,7 +131,18 @@ def get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate
         diff += 1
         best_diff += 1
 
+    if best_diff < 0 and diff < 0:
+        return best_diff / diff
+    elif best_diff > 0 and diff > 0:
+        return diff / best_diff
+    elif diff < 0:
+        return abs(diff - best_diff) /  (-2 * diff + best_diff)
+
+    else: # best_diff < 0, can't happen
+        assert(False)
+
     if best_diff < 0:
+
         return best_diff / diff
     else:
         return diff / best_diff
@@ -160,6 +155,60 @@ def get_score_for_tight_bound(score):
 
 def get_score_for_overall_comparison(score):
     return score[2]
+
+def get_score_for_location(score):
+    return score[0]
+
+def check_path_quality(path):
+
+    # Poor quality: 
+    #  - reaction separation greater than .1s and less than 1s and no filler
+    #  - three+ non filler segments less than 2.5 seconds with spacing between
+    #  - first segment is less than 3s, followed by 60s+ of space...
+    #      ...or first two segments are separated by .1s and average < 6s
+    short_segments = 0
+    short_separation = 0
+
+    for i, (reaction_start, reaction_end, current_start, current_end, filler) in enumerate(path): 
+        if filler:
+            continue
+
+        if i > 0: 
+            space_before = reaction_start - path[i-1][1]
+            filler_before = path[i-1][4]
+        else:
+            filler_before = False
+            space_before = 0
+
+        if i < len(path) - 1:
+            space_after = path[i+1][0] - reaction_end
+            filler_after = path[i+1][4]
+        else:
+            filler_after = False
+            space_after = 0 
+
+        if i == 0 and len(path) > 1 and not filler_after and space_after > 60 * sr and (reaction_end - reaction_start) < 3 * sr:
+            return False
+
+        if i == 0 and len(path) > 2 and not filler_after and space_after > .1 * sr and path[i+2][0] - path[i+1][1] > .1 * sr and ((reaction_end - reaction_start) + (path[1][1] - path[1][0])) < 6 * sr:
+            return False
+
+        if (not filler_before and .1 * sr < space_before < sr) or (not filler_after and .1 * sr < space_after < sr):
+            return False
+
+        if (reaction_end - reaction_start) < 2.5 * sr:
+
+            # we're not going to consider the last segment, because we might add to it the next time it branches
+            if (i == 0 or space_before > sr / 10 ) and i < len(path) - 1 and space_after > sr / 10:
+                short_segments += 1
+                if short_segments >= 3:
+                    return False
+
+    return True
+
+
+
+
 
 
 
@@ -180,7 +229,16 @@ def align_by_checkpoint_probe(reaction):
 
     print("Getting starting points")
     starting_points = []
-    new_paths = branching_search(reaction, current_path=[], current_path_checkpoint_scores={}, current_start=0, reaction_start=0, continuations=starting_points, recursive=False, peak_tolerance=conf.get('peak_tolerance')*.75)
+    new_paths = branching_search(reaction, 
+                                 current_path=[], 
+                                 current_path_checkpoint_scores={}, 
+                                 current_start=0, 
+                                 reaction_start=0, 
+                                 continuations=starting_points, 
+                                 recursive=False, 
+                                 peak_tolerance=conf.get('peak_tolerance')*.25)
+                                            # if changing the initial peak tolerance, check with suicide/that'snotacting
+
     update_paths(reaction, paths, new_paths)
 
     checkpoints = [c for c in checkpoints]
@@ -193,44 +251,40 @@ def align_by_checkpoint_probe(reaction):
         'location': 0,
         'diff_tight': 0,
         'diff_light': 0,
-        'fill': 0
+        'location_diff': 0,
+        'fill': 0, 
+        'quality': 0
     }
-
-
-    # for path, checkpoint_scores, current_start, reaction_start in starting_points:
-    #     print_path(path, reaction)
 
     for idx,checkpoint_ts in enumerate(checkpoints): 
         past_the_checkpoint = []
 
         if checkpoint_ts is not None:
-            print(f"Processing checkpoint {checkpoint_ts / sr} ({idx / len(checkpoints)*100}%)")
+            print(f"\nProcessing checkpoint {round(checkpoint_ts / sr)}s ({idx / len(checkpoints)*100:.1f}%) of {reaction['channel']} / {conf.get('song_key')}")
         else: 
             print(f"To the end! ({idx / len(checkpoints)})")
 
 
-        starting_points.sort(key=lambda x: x[3])
-        needed_branch = 0
+        # starting_points.sort(key=lambda x: x[3])
         for idx2, starting_point in enumerate(starting_points):
             path, checkpoint_scores, current_start, reaction_start = starting_point
 
+            print(f"\t[{idx / len(checkpoints)*100:.1f}% / {100 * idx2 / len(starting_points):.1f}%] Reaction: {reaction_start / sr:.8f} Base: {current_start / sr:.4f} ... {len(past_the_checkpoint)} continuations", end="\r")
+
             if (checkpoint_ts and current_start >= checkpoint_ts):
                 past_the_checkpoint.append([path, checkpoint_scores, current_start, reaction_start])
-                print(f"\t[{100 * idx2 / len(starting_points)}%]...{len(past_the_checkpoint)} continuations", end='\r')
 
             else: 
-                print(f"\tStarting now at {reaction_start / sr} ({current_start / sr}) [{100 * idx2 / len(starting_points)}%]...{len(past_the_checkpoint)} continuations found so far")
                 continuations = []
                 new_paths = branching_search(reaction, current_path=path, current_path_checkpoint_scores=checkpoint_scores, current_start=current_start, reaction_start=reaction_start, continuations=continuations, recursive=True, probe_to_time=checkpoint_ts)
                 update_paths(reaction, paths, new_paths)
                 past_the_checkpoint.extend(continuations)
-                needed_branch += 1
                 # if abs( reaction_start / sr - 623.5551473922902 ) < .5:
                 #     print(f"\t\t Interest! {current_start / sr} {reaction_start / sr}") 
                 #     for path, checkpoint_scores, current_start, reaction_start in continuations:
                 #         print(f"\t\t\t {current_start / sr}  {reaction_start / sr}", path[-1])
 
-
+        print("")
 
         plotting = False and len(past_the_checkpoint) > 1000
 
@@ -246,14 +300,9 @@ def align_by_checkpoint_probe(reaction):
 
             percent_through = 100 * checkpoint_ts / len(base_audio)
 
-            prunes = {
-                'tight': 0,
-                'light': 0,
-                'location': 0,
-                'diff_tight': 0,
-                'diff_light': 0,
-                'fill': 0
-            }
+            prunes = {}
+            for k,v in prunes_all.items():
+                prunes[k] = 0 
 
 
             checkpoint_threshold_tight = .85
@@ -265,86 +314,84 @@ def align_by_checkpoint_probe(reaction):
 
 
 
-            checkpoint_threshold_tight = .9
+            checkpoint_threshold_tight = .85
             checkpoint_threshold_light = .5
             checkpoint_threshold_location = .99
             checkpoint_threshold_fill = .8
             location_rounding = 100
 
 
+            checkpoint_threshold_tight = .9  # Black Pegasus / Suicide can't go to .8 when light threshold = .5 (ok, that's only true w/o the path quality filters)
+            checkpoint_threshold_light = .5    # > .15 doesn't work for Black Pegasus / Suicide in conjunction with high tight threshold (>.9)
+            checkpoint_threshold_location = .95  
+            checkpoint_threshold_fill = .8
+            location_rounding = 10
 
-            best_score_past_checkpoint = 0 
+
+            best_score_past_checkpoint = None
+            best_value_past_checkpoint = 0 
             best_path_past_checkpoint = None
-            best_past_the_checkpoint = []
             best_candidate_past_the_checkpoint = None
-            reaction_ends = {}
+
+
+            best_score_to_point = None
+            best_value_to_point = 0 
+            best_path_to_point = None
+            best_candidate_to_point = None                 
+
             all_by_current_location = {}
-
-
             all_by_score = []
 
-            best_scores_to_point = {}
 
             checkpoints_reversed = [c for c in checkpoints if c and c <= checkpoint_ts][::-1]
 
+            # Score candidates and get the reaction_end at the checkpoint
+            candidates = []
             for x, candidate in enumerate(past_the_checkpoint):
-                path, checkpoint_scores, current_start, reaction_start = candidate
+                path = candidate[0]
 
-                if checkpoint_ts not in checkpoint_scores:
+
+                passes_path_quality = check_path_quality(path)
+
+                if passes_path_quality: 
+                    score_at_each_checkpoint = candidate[1]
                     reaction_end, score_at_checkpoint = calculate_partial_score(path, checkpoint_ts, reaction)
-                    reaction_ends[x] = reaction_end
-                    checkpoint_scores[checkpoint_ts] = score_at_checkpoint
+                    candidates.append([candidate, reaction_end, score_at_checkpoint])
+                    score_at_each_checkpoint[checkpoint_ts] = score_at_checkpoint
+
+                    value = get_score_for_overall_comparison(score_at_checkpoint)
+
+                    if value > best_value_past_checkpoint: 
+                        best_value_past_checkpoint = value
+                        best_score_past_checkpoint = score_at_checkpoint
+                        best_path_past_checkpoint = path
+                        best_candidate_past_the_checkpoint = candidate
                 else: 
-                    if x not in reaction_ends:
-                        result = truncate_path(path, checkpoint_ts)
-                        if result is None:
-                            continue
-                        reaction_end, _ = result
-                        reaction_ends[x] = reaction_end
-                    reaction_end = reaction_ends[x]
+                    prunes['quality'] += 1
 
-                rounded_reaction_end = int(reaction_end * 100) / 100
-                if rounded_reaction_end not in best_scores_to_point:
-                    for y, candidate2 in enumerate(past_the_checkpoint):
-                        path2, checkpoint_scores2, current_start2, reaction_start2 = candidate2
+            candidates.sort( key=lambda x: (x[1], -x[2][0]) )  # sort by reaction_end, with a tie breaker of -overall score. 
+                                                               # The negative is so that the best score comes first, for 
+                                                               # pruning purposes.
 
-                        if checkpoint_ts not in checkpoint_scores2:
-                            reaction_end2, score_at_checkpoint2 = calculate_partial_score(path2, checkpoint_ts, reaction)
-                            reaction_ends[y] = reaction_end2
-                            checkpoint_scores2[checkpoint_ts] = score_at_checkpoint2
-                        else: 
-                            if y not in reaction_ends:
-                                result = truncate_path(path, checkpoint_ts)
-                                if result is None:
-                                    continue
-                                reaction_end2, _ = result
-                                reaction_ends[y] = reaction_end2
-                            reaction_end2 = reaction_ends[y]                    
-                            score_at_checkpoint2 = checkpoint_scores2[checkpoint_ts]
+            for expanded_candidate in candidates:
+                candidate, reaction_end, score_at_checkpoint = expanded_candidate
+                path, score_at_each_checkpoint, current_start, reaction_start = candidate
 
+                value = get_score_for_tight_bound(score_at_checkpoint)
+                if  value > best_value_to_point:
+                    best_value_to_point = value
+                    best_score_to_point = score_at_checkpoint
+                    best_path_to_point = path
+                    best_candidate_to_point = candidate                
 
-                        if reaction_end2 <= rounded_reaction_end and get_score_for_tight_bound(score_at_checkpoint2) >= best_scores_to_point.get(rounded_reaction_end, [0])[0]:
-                            best_scores_to_point[rounded_reaction_end] = [get_score_for_tight_bound(score_at_checkpoint2), path2, candidate2]
-
-                        if get_score_for_overall_comparison(score_at_checkpoint2) > best_score_past_checkpoint:
-                            best_score_past_checkpoint = get_score_for_overall_comparison(score_at_checkpoint2)
-                            best_path_past_checkpoint = path2
-                            best_candidate_past_the_checkpoint = candidate2
-
-                best_score_to_point, best_path_to_point, best_candidate_to_point = best_scores_to_point[rounded_reaction_end]
-
-                score_at_checkpoint = checkpoint_scores[checkpoint_ts]
-                
-
-                depth = len(path)
 
                 # Don't prune out paths until we're at the checkpoint just before current_end of the latest path. 
                 # These are very low cost options to keep, and it gives them a chance to shine and not prematurely pruned.
                 passes_time = idx < len(checkpoints) - 1 and checkpoints[idx + 1] and path[-1][3] and path[-1][3] > checkpoints[idx + 1]
 
-                passes_tight = passes_time or checkpoint_threshold_tight < get_score_ratio_at_checkpoint(reaction, candidate, best_candidate_to_point, get_score_for_tight_bound, checkpoint_ts) 
-                passes_mfcc = passes_time or checkpoint_threshold_light < get_score_ratio_at_checkpoint(reaction, candidate, best_candidate_past_the_checkpoint, get_score_for_overall_comparison, checkpoint_ts)
-                passes_fill = passes_time or checkpoint_threshold_fill < score_at_checkpoint[3] or percent_through < 20
+                passes_tight = passes_time or checkpoint_threshold_tight <= get_score_ratio_at_checkpoint(reaction, score_at_checkpoint, best_score_to_point, get_score_for_tight_bound, checkpoint_ts) 
+                passes_mfcc = passes_time or checkpoint_threshold_light <= get_score_ratio_at_checkpoint(reaction, score_at_checkpoint, best_score_past_checkpoint, get_score_for_overall_comparison, checkpoint_ts)
+                passes_fill = passes_time or checkpoint_threshold_fill <= score_at_checkpoint[3] or percent_through < 20
 
                 if not passes_tight: 
                     prunes['tight'] += 1
@@ -355,8 +402,8 @@ def align_by_checkpoint_probe(reaction):
 
                 if passes_tight and passes_mfcc and passes_fill:
 
-                    passes_tight_diff = checkpoint_threshold_tight < get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_to_point, get_score_for_tight_bound, checkpoint_ts) 
-                    passes_mfcc_diff = checkpoint_threshold_light < get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_past_the_checkpoint, get_score_for_overall_comparison, checkpoint_ts)
+                    passes_tight_diff = checkpoint_threshold_tight <= get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_to_point, get_score_for_tight_bound, checkpoint_ts) 
+                    passes_mfcc_diff = checkpoint_threshold_light <= get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_past_the_checkpoint, get_score_for_overall_comparison, checkpoint_ts)
 
                     if not passes_tight_diff: 
                         prunes['diff_tight'] += 1
@@ -364,11 +411,10 @@ def align_by_checkpoint_probe(reaction):
                         prunes['diff_light'] += 1
 
                     if passes_tight_diff and passes_mfcc_diff:
-                        best_past_the_checkpoint.append(candidate)
                         location = f"{int(location_rounding * current_start / sr)} {int(location_rounding * reaction_start / sr)}"
                         if location not in all_by_current_location:
                             all_by_current_location[location] = []
-                        all_by_current_location[location].append( [candidate, score_at_checkpoint]  )
+                        all_by_current_location[location].append( expanded_candidate  )
 
                 if plotting:
                     ideal_filter = passes_time and passes_tight and passes_mfcc and passes_fill and passes_tight_diff and passes_mfcc_diff
@@ -376,36 +422,67 @@ def align_by_checkpoint_probe(reaction):
 
 
 
-            filtered_best_past_the_checkpoint = []
+            best_past_the_checkpoint = []
 
             for location, candidates in all_by_current_location.items():
                 if len(candidates) < 2:
-                    filtered_best_past_the_checkpoint.append(candidates[0][0])
+                    best_past_the_checkpoint.append(candidates[0][0])
                 else:
                     kept = 0
                     best_at_location = 0
-                    for candidate, score in candidates:
-                        if score[0] > best_at_location:
-                            best_at_location = score[0]
+                    best_score_at_location = None
+                    best_candidate_at_location = None
 
-                    for candidate, score in candidates:
+                    for candidate, reaction_end, score in candidates:
+                        if get_score_for_location(score) > best_at_location:
+                            best_at_location = get_score_for_location(score)
+                            best_candidate_at_location = candidate
+                            best_score_at_location = score
+
+                    for candidate, reaction_end, score in candidates:
                         relative_current_end = candidate[0][-1][3]
                         passes_time = idx < len(checkpoints) - 1 and checkpoints[idx + 1] and relative_current_end and relative_current_end > checkpoints[idx + 1]
-                        if passes_time or score[0] / best_at_location > checkpoint_threshold_location:
-                            filtered_best_past_the_checkpoint.append(candidate)
+                        passes_location = get_score_for_location(score) / best_at_location >= checkpoint_threshold_location
+                        if passes_time or passes_location:
+                            passes_location_diff = checkpoint_threshold_location <= get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_at_location, get_score_for_location, checkpoint_ts) 
+                            
+                            if passes_location_diff:
+                                best_past_the_checkpoint.append(candidate)
+                            else: 
+                                prunes['location_diff'] += 1
                         else: 
                             prunes['location'] += 1
 
 
-            best_past_the_checkpoint = filtered_best_past_the_checkpoint
-
-
             if len(past_the_checkpoint) > 0:
-                print(f"\tFinished checkpoint {checkpoint_ts}. Kept {len(best_past_the_checkpoint)} of {len(past_the_checkpoint)} ({100 * len(best_past_the_checkpoint) / len(past_the_checkpoint)}%)")
-                print(f"best path at checkpoint\t", print_path(best_path_past_checkpoint, reaction))
+                print(f"\tKept {len(best_past_the_checkpoint)} of {len(past_the_checkpoint)} ({100 * len(best_past_the_checkpoint) / len(past_the_checkpoint):.1f}%)")
+                print(f"\tBest path at checkpoint:")
+                print_path(best_path_past_checkpoint, reaction)
+
+
+
+                # if idx > 0 and len(best_past_the_checkpoint) > 1000:
+                #     print("RANDOM")
+                #     for p in random.sample(best_past_the_checkpoint, 25):
+                #         print_path(p[0], reaction)
+
+
+                print("")
+
+                x = PrettyTable()
+                x.border = False
+                x.align = "r"
+                x.field_names = ['\t', 'Prune type', 'Checkpoint', 'Overall']
                 for k,v in prunes.items():
-                    prunes_all[k] += v                    
-                    print(f"\tPrune {k}: {v} [{prunes_all[k]}]")
+                    prunes_all[k] += v   
+                    x.add_row(['\t', k, v, prunes_all[k]])  
+
+                    # print(f"\tPrune {k}: {v} [{prunes_all[k]}]")
+                print(x)
+
+
+
+
 
 
             if plotting:
@@ -496,19 +573,6 @@ def cross_expander_aligner(reaction):
     n_samples = int(step_size * sr)
     first_n_samples = int(min_segment_length_in_seconds * sr)
 
-    hop_length = conf['hop_length'] = 256
-    n_mfcc = 20
-
-    reaction_audio = reaction['reaction_audio_data']
-    base_audio = conf.get('base_audio_data')
-
-    if not 'base_audio_mfcc' in conf:
-        conf['base_audio_mfcc'] = librosa.feature.mfcc(y=base_audio, sr=sr, n_mfcc=n_mfcc, hop_length=hop_length)
-        conf['song_percentile_loudness'] = audio_percentile_loudness(base_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=hop_length)
-
-    if not 'reaction_audio_mfcc' in reaction:
-        reaction['reaction_audio_mfcc'] = librosa.feature.mfcc(y=reaction_audio, sr=sr, n_mfcc=n_mfcc, hop_length=hop_length)
-        reaction['reaction_percentile_loudness'] = audio_percentile_loudness(reaction_audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=hop_length)
 
     conf['checkpoints'] = initialize_checkpoints()
     conf['n_samples'] = n_samples
@@ -520,15 +584,11 @@ def cross_expander_aligner(reaction):
 
     sequences = compress_segments(path)
 
-    reaction_sample_rate = Decimal(sr)
-    final_sequences = [ ( Decimal(s[0]) / reaction_sample_rate, Decimal(s[1]) / reaction_sample_rate, Decimal(s[2]) / reaction_sample_rate, Decimal(s[3]) / reaction_sample_rate, s[4]) for s in sequences ]
-    
-
     ground_truth = reaction.get('ground_truth')
     if ground_truth:
         compute_precision_recall(sequences, ground_truth, tolerance=1.5)
 
-    return final_sequences
+    return sequences
 
 
 
@@ -544,10 +604,13 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
     conf.setdefault("peak_tolerance", .5)
     conf.setdefault("expansion_tolerance", .85)
 
-    if conf['create_alignment']:
+    if conf['create_alignment'] or conf['alignment_test']:
         alignment_metadata_file = os.path.splitext(output_file)[0] + '.pckl'
+
+        conf['load_reaction'](reaction['channel'])
+
         if not os.path.exists(alignment_metadata_file):
-            conf['load_reaction'](reaction['channel'])
+            
 
             # Determine the number of decimal places to try avoiding frame boundary errors given python rounding issues
             fr = Decimal(universal_frame_rate())
@@ -555,25 +618,31 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
             precision_str = str(precision)
             getcontext().prec = len(precision_str.split('.')[-1])
 
-            final_sequences = cross_expander_aligner(reaction)
+            best_path = cross_expander_aligner(reaction)
             
 
             print("\nsequences:")
 
-            for sequence in final_sequences:
-                print(f"\t{'*' if sequence[4] else ''}base: {float(sequence[2])}-{float(sequence[3])}  reaction: {float(sequence[0])}-{float(sequence[1])}")
+            for segment in best_path:
+                print(f"\t{'*' if segment[4] else ''}base: {float(segment[2])}-{float(segment[3])}  reaction: {float(segment[0])}-{float(segment[1])}")
 
             if conf['save_alignment_metadata']:
-                save_object_to_file(alignment_metadata_file, final_sequences)
+                save_object_to_file(alignment_metadata_file, best_path)
         else: 
-            final_sequences = read_object_from_file(alignment_metadata_file)
+            best_path = read_object_from_file(alignment_metadata_file)
 
-    if not os.path.exists(output_file) and conf["output_alignment_video"]:
-        react_video = reaction.get('video_path')
-        base_video = conf.get('base_video_path')
-        conf['load_reaction'](reaction['channel'])
+        reaction['best_path'] = best_path
+        reaction['best_path_score'] = path_score(best_path, reaction)
 
-        trim_and_concat_video(react_video, final_sequences, base_video, output_file, extend_by = extend_by, use_fill = conf.get('include_base_video', True))
+        if not os.path.exists(output_file) and conf["output_alignment_video"]:
+            react_video = reaction.get('video_path')
+            base_video = conf.get('base_video_path')
+            conf['load_reaction'](reaction['channel'])
+
+            reaction_sample_rate = Decimal(sr)
+            best_path_converted = [ ( Decimal(s[0]) / reaction_sample_rate, Decimal(s[1]) / reaction_sample_rate, Decimal(s[2]) / reaction_sample_rate, Decimal(s[3]) / reaction_sample_rate, s[4]) for s in reaction['best_path'] ]
+
+            trim_and_concat_video(react_video, best_path_converted, base_video, output_file, extend_by = extend_by, use_fill = conf.get('include_base_video', True))
     
 
     return output_file

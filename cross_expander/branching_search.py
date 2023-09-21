@@ -32,6 +32,10 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
         continuations.append([current_path, current_path_checkpoint_scores, current_start, reaction_start])
         return [None]
 
+    if should_prune_path(reaction, current_path, current_start, reaction_start):
+        # print('\t\tPRUNED')
+        return [None]
+
     if peak_tolerance is None:
         peak_tolerance = conf.get('peak_tolerance')
 
@@ -47,19 +51,17 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
     reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
     hop_length = conf.get('hop_length')
 
-    step = first_n_samples = conf.get('first_n_samples')
-
     depth = len(current_path)
+
+    
+
 
     # print(f"\t\tDepth={depth} Reaction Start={reaction_start / sr} Current_start={current_start / sr}")
 
-    if should_prune_path(reaction, current_path, current_start, reaction_start):
-        # print('\t\tPRUNED')
-        return [None]
     
     try: 
 
-
+        step = first_n_samples = conf.get('first_n_samples')
         current_end = min(current_start + step, len(base_audio))
         chunk = base_audio[current_start:current_end]
         current_chunk_size = current_end - current_start
@@ -87,7 +89,6 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
         alignment_bounds = conf.get('alignment_bounds')
         if alignment_bounds is not None:
             upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
-
 
         candidate_starts = find_next_segment_start_candidates(
                                 reaction=reaction, 
@@ -197,7 +198,7 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
                 # print('recursing', filler, my_path)
                 continued_paths = branching_search(reaction,
                     current_path=my_path, 
-                    current_path_checkpoint_scores=copy.copy(current_path_checkpoint_scores), 
+                    current_path_checkpoint_scores=copy.copy(current_path_checkpoint_scores),
                     current_start=next_start, 
                     reaction_start=next_reaction_start, 
                     continuations=continuations, 
@@ -222,3 +223,17 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
         traceback.print_exc()
         print(e)
         return [None]
+
+
+def append_or_extend_segment(my_path, segment):
+    if len(my_path) == 0:
+        my_path.append(segment)
+        return
+    (previous_reaction_start, previous_reaction_end, previous_start, previous_end, previous_is_filler) = my_path[-1]
+    (new_reaction_start, new_reaction_end, new_start, new_end, new_is_filler) = segment
+    if new_reaction_start - previous_reaction_end > 1 or new_is_filler or new_is_filler != previous_is_filler:
+        my_path.append(segment)
+    else: 
+        my_path[-1][1] = new_reaction_end
+        my_path[-1][3] = new_end 
+
