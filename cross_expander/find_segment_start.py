@@ -41,11 +41,13 @@ def initialize_segment_start_cache():
 # that include the ground truth. It isn't perfect, but can really help
 # to figure out if the system at least generates the ground truth path.
 # Even if it doesn't select it.
-force_ground_truth = False
 
 def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
     global seg_start_cache
     global paths_at_segment_start
+
+    force_ground_truth = conf.get("force_ground_truth_paths")
+
 
     hop_length = conf.get('hop_length')
 
@@ -227,11 +229,11 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
             for candidate in scores:
                 (candidate_index, mfcc_score, rel_vol_score, correlation_score, mfcc_correlation_score) = candidate
 
-                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25)
-                good_by_mfcc_correlation = full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25)  
+                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25) and mfcc_score > max_mfcc_score * peak_tolerance * .75
+                good_by_mfcc_correlation = full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25) and mfcc_score > max_mfcc_score * peak_tolerance
 
                 good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + (1 - peak_tolerance) * .25)
-                good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + (1 - peak_tolerance) * .8) 
+                good_by_rel_vol = rel_vol_score >= max_relative_volume_score * (peak_tolerance + (1 - peak_tolerance) * .8) #and correlation_score >= max_correlation_score * peak_tolerance * .75
 
                 if good_by_mfcc or good_by_rel_vol or good_by_correlation or good_by_mfcc_correlation: 
                     candidates.append(candidate)
