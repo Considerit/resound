@@ -16,8 +16,8 @@ def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=None):
     return rms_interp
 
 
-def calculate_loudness(audio, window_size=100):
-    loudness = calculate_perceptual_loudness(audio)
+def calculate_loudness(audio, window_size=100, hop_length=None):
+    loudness = calculate_perceptual_loudness(audio, hop_length=hop_length)
 
     # Define a Gaussian window
     window = signal.windows.gaussian(window_size, std=window_size/10)
@@ -80,7 +80,7 @@ def calculate_percentile_loudness2(loudness, window_size=1000, std_dev=None, hop
 
 def audio_percentile_loudness(audio, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=1 ):
 
-    loudness = calculate_loudness(audio, window_size=loudness_window_size)
+    loudness = calculate_loudness(audio, window_size=loudness_window_size, hop_length=hop_length)
 
     percentile_loudness = calculate_percentile_loudness(loudness, window_size=percentile_window_size, std_dev=std_dev_percentile, hop_length=hop_length)
 

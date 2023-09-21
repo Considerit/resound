@@ -196,8 +196,10 @@ def crop_video2(video_file, output_file, replacement_audio, x, y, w, h, centroid
       cropped_video = replace_audio(cropped_video, replacement_audio)
 
     # Write the cropped video to a file
-    cropped_video.write_videofile(output_file, codec="libx264", audio_codec="aac", fps=30,
-                                  ffmpeg_params=['-pix_fmt', 'yuv420p'])
+    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=30,
+                                  ffmpeg_params=['-pix_fmt', 'yuv420p','-q:v', '40'])
+
+
 
     # Close the video clip
     video.close()
@@ -251,8 +253,8 @@ def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, c
         cropped_video = replace_audio(cropped_video, replacement_audio, num_reactors)
 
     # Write the cropped video to a file
-    cropped_video.write_videofile(output_file, codec="libx264", audio_codec="aac", fps=30,
-                                ffmpeg_params=['-pix_fmt', 'yuv420p'])
+    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=30,
+                                ffmpeg_params=['-pix_fmt', 'yuv420p', '-q:v', '40'])
 
     # Close the video clip
     video.close()
@@ -289,9 +291,8 @@ detector = None
 
 def get_faces_from(img):
   global detector
-  if detector is None: 
-    from mtcnn import MTCNN
-    detector = MTCNN()
+  from mtcnn import MTCNN
+  detector = MTCNN()
 
   faces = detector.detect_faces(img)
 

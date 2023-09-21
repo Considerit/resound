@@ -103,7 +103,8 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     final_clip.resize(height=height, width=width)
 
     # Generate the final output video
-    final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
+    # final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
+    final_clip.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
 
 
     # Close the video files

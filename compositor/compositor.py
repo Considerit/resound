@@ -53,8 +53,6 @@ def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
       print("Compilation already exists", output_path)
       return
 
-    conf['load_reaction'](reaction['channel'])
-
     print(f"Creating compilation for {output_path}")
 
     draft = conf.get('draft', False)
@@ -74,12 +72,13 @@ def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
       fast_path = output_path + "fast.mp4"
       if not os.path.exists(fast_path):
         final_clip.resize(.25).set_fps(12).write_videofile(output_path + "fast.mp4", 
-                                         codec='libx264', 
+                                         codec="h264_videotoolbox", 
                                          audio_codec="aac", 
+                                         ffmpeg_params=['-q:v', '10'], 
                                          preset='ultrafast')
 
     else:
-      final_clip.write_videofile(output_path, codec='libx264', audio_codec="aac")
+      final_clip.write_videofile(output_path, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
 
 
 
