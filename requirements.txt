@@ -1,17 +1,13 @@
 soundfile
 numpy
-subprocess
-cv2
-json
+opencv-python
 moviepy
-decimal
 librosa
 matplotlib
 scipy
-sklearn
+scikit-learn
 pydub
 pygetwindow
-traceback
 noisereduce
 spleeter
 objgraph
@@ -19,3 +15,7 @@ python-youtube
 requests
 python-decouple
 pynput
+PrettyTable
+pympler
+torch
+mtcnn

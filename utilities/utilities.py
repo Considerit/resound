@@ -294,7 +294,8 @@ def toggle_profiling():
 
 def print_profiling():
     global profile_when_possible
-    if profile_when_possible:
+    global profiler
+    if profile_when_possible and profiler:
         profiler.disable()
         stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
         stats.print_stats()

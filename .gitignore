@@ -5,3 +5,6 @@ pretrained_models
 *.mp4
 .env
 *.coffee
+
+*pycache*
+.python*
