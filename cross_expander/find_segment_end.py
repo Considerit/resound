@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from cross_expander.scoring_and_similarity import get_chunk_score
-from cross_expander.find_segment_start import find_next_segment_start_candidates
+from cross_expander.find_segment_start import find_segment_starts
 
 from utilities import conf, samples_per_frame, universal_frame_rate, is_close
 from utilities import conversion_audio_sample_rate as sr
@@ -215,7 +215,7 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
 
     # print(f'\nDoing reverse index search  reaction_start={reaction_start+candidate_segment_start}  current_start={current_start}  {reverse_chunk_size} {len(candidate_reaction_chunk)} {len(open_base_chunk)}')
 
-    reverse_index = find_next_segment_start_candidates(
+    reverse_index = find_segment_starts(
                         reaction = reaction, 
                         open_chunk=open_base_chunk, 
                         open_chunk_mfcc=base_audio_mfcc[:, round(current_start / hop_length):round(open_end / hop_length)], 
@@ -253,10 +253,6 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
 
 
 def find_segment_end(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types):
-
-
-    reverse_candidate_found = check_for_start_adjustment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size)
-
 
     scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size})'
     

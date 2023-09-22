@@ -5,7 +5,7 @@ import os
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf, print_profiling
 
-from cross_expander.find_segment_start import find_next_segment_start_candidates
+from cross_expander.find_segment_start import find_segment_starts
 from cross_expander.pruning_search import should_prune_path, prune_types
 from cross_expander.find_segment_end import find_segment_end, check_for_start_adjustment
 from cross_expander.bounds import get_bound
@@ -90,7 +90,7 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
         if alignment_bounds is not None:
             upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
 
-        candidate_starts = find_next_segment_start_candidates(
+        candidate_starts = find_segment_starts(
                                 reaction=reaction, 
                                 open_chunk=reaction_audio[reaction_start:],                   
                                 open_chunk_mfcc=reaction_audio_mfcc[:, max(0, round(reaction_start / hop_length)):], 

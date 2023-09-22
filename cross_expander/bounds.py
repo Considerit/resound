@@ -15,7 +15,7 @@ from utilities import conf
 #   - For each timestamp, select two adjacent 2 sec clips on either side of the timestamp. We use two clips to 
 #     minimize the chance that the reactor has paused in the middle of both clips. 
 #   - For each clip, find the latest match in the reaction audio to that clip, using the function 
-#     find_next_segment_start_candidates. Don't bother using parameters, I'll fill that in. Assume you get 
+#     find_segment_starts. Don't bother using parameters, I'll fill that in. Assume you get 
 #     a list of candidate matching indexes of the clip in the reaction audio. Take the greatest of these matching 
 #     indexes, between the two clips. This will be the bound value for this timestamp. 
 #   - Now ensure the integrity of these timestamp bounds. Make sure that every earlier timestamp bound a is 
@@ -26,7 +26,7 @@ from utilities import conf
 
 
 def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
-    from cross_expander.find_segment_start import find_next_segment_start_candidates
+    from cross_expander.find_segment_start import find_segment_starts
 
     # profiler = cProfile.Profile()
     # profiler.enable()
@@ -82,7 +82,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         for start, end, chunk, chunk_mfcc, chunk_vol_diff in segments:
             # Find the candidate indices for the start of the matching segment in the reaction audio
 
-            candidates = find_next_segment_start_candidates(
+            candidates = find_segment_starts(
                                     reaction=reaction, 
                                     open_chunk=reaction_audio[start:], 
                                     open_chunk_mfcc=reaction_audio_mfcc[:, round(start / hop_length):],

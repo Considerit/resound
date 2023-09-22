@@ -45,9 +45,7 @@ def initialize_segment_start_cache():
 # to figure out if the system at least generates the ground truth path.
 # Even if it doesn't select it.
 
-
-
-def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
+def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
     global full_search_start_cache
     global full_search_cache    
 
@@ -272,7 +270,7 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
                     continuity_score = score
                     continuity = candidate                
 
-            # Sometimes there is a rhythm that causes find_segment_end to frequently drop out of it, and then find_next_segment_start_candidates
+            # Sometimes there is a rhythm that causes find_segment_end to frequently drop out of it, and then find_segment_starts
             # returns the next part, with some others. This can cause bad branching. So we'll just return the continuation if we 
             # measure it as the best next segment.
             if prune_for_continuity and continuity_found and continuity_score > .98 * max_score:
