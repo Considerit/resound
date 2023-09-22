@@ -33,18 +33,18 @@ def get_chunk_score(reaction, reaction_start, reaction_end, current_start, curre
 
 
 
-def truncate_path(current_path, timestamp): 
+def truncate_path(current_path, end, start=0): 
     modified_path = []
     adjusted_reaction_end = None
 
     for segment in current_path:
         (reaction_start, reaction_end, current_start, current_end, filler) = segment
-        if current_end >= timestamp:
-            if current_start > timestamp:
+        if current_end >= end:
+            if current_start > end:
                 break
 
-            to_trim = current_end - timestamp
-            current_end = timestamp
+            to_trim = current_end - end
+            current_end = end
             reaction_end -= to_trim
             modified_path.append( (reaction_start, reaction_end, current_start, current_end, filler) )
             adjusted_reaction_end = reaction_end
@@ -54,8 +54,19 @@ def truncate_path(current_path, timestamp):
             adjusted_reaction_end = reaction_end
 
     if adjusted_reaction_end is None: 
-        print(f"WEIRD! Could not calculate partial score for {checkpoint_ts} {current_path}")
-        return None
+        raise Exception(f"WEIRD! Could not calculate partial score for {checkpoint_ts} {current_path}")
+
+    if start > 0:
+        back_adjusted_path = modified_path
+        modified_path = []
+        for segment in back_adjusted_path:
+            (reaction_start, reaction_end, current_start, current_end, filler) = segment
+
+            if current_end > start:
+                if current_start < start:
+                    modified_path.append( (reaction_start + (start - current_start), reaction_end, start, current_end, filler) )
+                else:
+                    modified_path.append(segment)
 
     return (adjusted_reaction_end, modified_path)
 
@@ -63,19 +74,14 @@ def truncate_path(current_path, timestamp):
 
 
 
-def calculate_partial_score(current_path, checkpoint_ts, reaction):
-    result = truncate_path(current_path, checkpoint_ts)
-    if result is None: 
-        return None
-    (adjusted_reaction_end, modified_path) = result
-    # truncate current path back to current_ts
-    score = path_score(modified_path, reaction, relative_to = checkpoint_ts) 
-
-    return adjusted_reaction_end, score
+def calculate_partial_score(reaction, current_path, end, start=0, use_summed_sequence=False):
+    adjusted_reaction_end, modified_path = truncate_path(current_path, end=end, start=start)
+    score = path_score(modified_path, reaction, relative_to = end - start, start=start, use_summed_sequence=use_summed_sequence)     
+    return (adjusted_reaction_end, score)
 
 
 
-def mfcc_similarity(audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=None):
+def mfcc_similarity(audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=None, verbose=False):
 
     # Compute MFCCs for each audio chunk
     if mfcc1 is None: 
@@ -99,6 +105,7 @@ def mfcc_similarity(audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfcc2=None
     mse = np.mean((mfcc1 - mfcc2)**2)
 
     similarity = len(mfcc1) / (1 + mse)
+
     return similarity
 
 
@@ -181,15 +188,11 @@ def create_reaction_mfcc_from_path(path, reaction):
             length = reaction_end - reaction_start
             segment = reaction_audio_mfcc[:,reaction_start:reaction_end]
         else:
-            length = 0
-            # current_start = round(current_start / hop_length)
-            # current_end = round(current_end / hop_length)
-
-            # length = current_end - current_start
-            # segment = base_audio_mfcc[:,current_start:current_end]
+            length = math.floor((current_end - current_start) / hop_length)
 
         if length > 0:
-            path_mfcc[:,start:start+length] = segment
+            if not is_filler:
+                path_mfcc[:,start:start+length] = segment
             start += length
 
     return path_mfcc
@@ -262,9 +265,9 @@ def initialize_path_score():
     
 
 
-use_summed_sequence = False
 
-def path_score(path, reaction, relative_to=None): 
+
+def path_score(path, reaction, relative_to=None, start_at=0, use_summed_sequence = False): 
     global path_score_cache
     global path_score_cache_perf
 
@@ -275,7 +278,8 @@ def path_score(path, reaction, relative_to=None):
     reaction_audio = reaction['reaction_audio_data']
     reaction_audio_mfcc = reaction['reaction_audio_mfcc']    
 
-    key = f"{len(base_audio)} {len(reaction_audio)} {str(path)} {relative_to}"
+    key = f"{len(base_audio)} {len(reaction_audio)} {str(path)} {relative_to} {use_summed_sequence}"
+
     if key in path_score_cache:
         path_score_cache_perf['hits'] += 1
         return path_score_cache[key]
@@ -310,15 +314,11 @@ def path_score(path, reaction, relative_to=None):
 
         if not is_filler:
             duration += (reaction_end - reaction_start)
-            reaction_start = round(reaction_start / hop_length)
-            reaction_end = round(reaction_end / hop_length)
-            total_length += reaction_end - reaction_start            
+            total_length += round((reaction_end - reaction_start) / hop_length)
 
         else:
             fill += current_end - current_start
-            current_start = round(current_start / hop_length)
-            current_end = round(current_end / hop_length)
-            total_length += current_end - current_start
+            total_length += round((current_end - current_start) / hop_length)
 
 
 
@@ -343,11 +343,11 @@ def path_score(path, reaction, relative_to=None):
 
 
     if use_summed_sequence:
-        alignment = path_mfcc_segment_sum_score(path, reaction)
+        alignment = 1000 * path_mfcc_segment_sum_score(path, reaction)
     else:
         path_mfcc = create_reaction_mfcc_from_path(path, reaction)
-        mfcc_alignment = mfcc_similarity(mfcc1=base_audio_mfcc[:,:total_length], mfcc2=path_mfcc)
-
+        start_at = int(start_at / hop_length)
+        mfcc_alignment = mfcc_similarity(mfcc1=base_audio_mfcc[:,start_at:start_at+total_length], mfcc2=path_mfcc, verbose=False)
         # path_vol_diff = create_reaction_vol_diff_from_path(path, reaction)
         # rel_vol_alignment = relative_volume_similarity(vol_diff1=base_audio_vol_diff[:total_length], vol_diff2=path_vol_diff)
 
@@ -377,7 +377,7 @@ def find_best_path(reaction, candidate_paths):
     paths_with_scores = []
 
     for path in candidate_paths:
-        paths_with_scores.append([path, path_score(path, reaction)])
+        paths_with_scores.append([path, path_score(path, reaction, use_summed_sequence=False)])
 
     best_score = 0 
     best_early_completion_score = 0
@@ -497,12 +497,12 @@ def path_mfcc_segment_sum_score(path, reaction):
 
         if not is_filler: 
             mfcc_score = get_segment_mfcc_score(reaction, sequence)
-        
+
+            if math.isnan(mfcc_score):
+                mfcc_score = 0  
+
             duration_factor = (current_end - current_start) / len(base_audio)
             mfcc_sequence_sum_score    += mfcc_score * duration_factor
-
-    if math.isnan(mfcc_sequence_sum_score):
-        return 0
 
     return mfcc_sequence_sum_score
 

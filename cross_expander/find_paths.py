@@ -35,6 +35,8 @@ import os
 import librosa
 import random
 import matplotlib.pyplot as plt
+import time
+
 from decimal import Decimal, getcontext
 from prettytable import PrettyTable
 
@@ -72,16 +74,16 @@ def update_paths(reaction, paths, new_paths):
     global best_finished_path
     for new_path in new_paths: 
         if new_path is not None:
-            score = path_score(new_path, reaction)
-            if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
-                # old_best_path = best_finished_path.get('path', None)
-                best_finished_path.update({
-                    "path": new_path,
-                    "score": score,
-                    "partials": {}
-                    })
-                print(f"**** New best score is {best_finished_path['score']}")
-                print_path(new_path, reaction)
+            # score = path_score(new_path, reaction)
+            # if 'score' not in best_finished_path or best_finished_path['score'][0] < score[0]:
+            #     # old_best_path = best_finished_path.get('path', None)
+            #     best_finished_path.update({
+            #         "path": new_path,
+            #         "score": score,
+            #         "partials": {}
+            #         })
+            #     print(f"**** New best score is {best_finished_path['score']}")
+            #     print_path(new_path, reaction)
 
             paths.append(new_path)
 
@@ -252,7 +254,7 @@ def align_by_checkpoint_probe(reaction):
         'diff_tight': 0,
         'diff_light': 0,
         'location_diff': 0,
-        'quality': 0
+        'quality': 0,
     }
 
     for idx,checkpoint_ts in enumerate(checkpoints): 
@@ -303,11 +305,9 @@ def align_by_checkpoint_probe(reaction):
             for k,v in prunes_all.items():
                 prunes[k] = 0 
 
-
-            checkpoint_threshold_tight = .9  # Black Pegasus / Suicide can't go to .8 when light threshold = .5 (ok, that's only true w/o the path quality filters)
-            checkpoint_threshold_light = .5    # > .15 doesn't work for Black Pegasus / Suicide in conjunction with high tight threshold (>.9)
-            checkpoint_threshold_location = .95  
-            location_rounding = 10
+            # weed out candidates based on heuristics for poor path quality
+            vetted_candidates = [c for c in past_the_checkpoint if check_path_quality(c[0])]
+            prunes['quality'] += len(past_the_checkpoint) - len(vetted_candidates)
 
 
             best_score_past_checkpoint = None
@@ -315,41 +315,43 @@ def align_by_checkpoint_probe(reaction):
             best_path_past_checkpoint = None
             best_candidate_past_the_checkpoint = None
 
-
             best_score_to_point = None
             best_value_to_point = 0 
             best_path_to_point = None
             best_candidate_to_point = None                 
 
+
+            checkpoint_threshold_tight = .9  # Black Pegasus / Suicide can't go to .8 when light threshold = .5 (ok, that's only true w/o the path quality filters)
+            checkpoint_threshold_light = .5    # > .15 doesn't work for Black Pegasus / Suicide in conjunction with high tight threshold (>.9)
+            checkpoint_threshold_location = .95  
+            location_rounding = 10
+
             all_by_current_location = {}
             all_by_score = []
 
-
             checkpoints_reversed = [c for c in checkpoints if c and c <= checkpoint_ts][::-1]
 
-            # Score candidates and get the reaction_end at the checkpoint
+
+            # if checkpoint_ts > 60 * sr: 
+            #     start_at = round(checkpoint_ts - 60 * sr)
+            # else: 
+            #     start_at = 0
+            start_at = 0
+
             candidates = []
-            for x, candidate in enumerate(past_the_checkpoint):
-                path = candidate[0]
+            for candidate in vetted_candidates:
+                path, score_at_each_checkpoint, current_start, reaction_start = candidate
+                reaction_end, score_at_checkpoint = calculate_partial_score(reaction, path, end=checkpoint_ts, start=start_at)
+                candidates.append([candidate, reaction_end, score_at_checkpoint])
+                score_at_each_checkpoint[checkpoint_ts] = score_at_checkpoint
 
+                value = get_score_for_overall_comparison(score_at_checkpoint)
 
-                passes_path_quality = check_path_quality(path)
-
-                if passes_path_quality: 
-                    score_at_each_checkpoint = candidate[1]
-                    reaction_end, score_at_checkpoint = calculate_partial_score(path, checkpoint_ts, reaction)
-                    candidates.append([candidate, reaction_end, score_at_checkpoint])
-                    score_at_each_checkpoint[checkpoint_ts] = score_at_checkpoint
-
-                    value = get_score_for_overall_comparison(score_at_checkpoint)
-
-                    if value > best_value_past_checkpoint: 
-                        best_value_past_checkpoint = value
-                        best_score_past_checkpoint = score_at_checkpoint
-                        best_path_past_checkpoint = path
-                        best_candidate_past_the_checkpoint = candidate
-                else: 
-                    prunes['quality'] += 1
+                if value > best_value_past_checkpoint: 
+                    best_value_past_checkpoint = value
+                    best_score_past_checkpoint = score_at_checkpoint
+                    best_path_past_checkpoint = path
+                    best_candidate_past_the_checkpoint = candidate
 
             candidates.sort( key=lambda x: (x[1], -x[2][0]) )  # sort by reaction_end, with a tie breaker of -overall score. 
                                                                # The negative is so that the best score comes first, for 
@@ -396,8 +398,8 @@ def align_by_checkpoint_probe(reaction):
                         all_by_current_location[location].append( expanded_candidate  )
 
                 if plotting:
-                    ideal_filter = passes_time and passes_tight and passes_mfcc and passes_tight_diff and passes_mfcc_diff
-                    all_by_score.append([get_score_for_overall_comparison(score_at_checkpoint), score_at_checkpoint[3], ideal_filter, path])
+                    ideal_filter = passes_time or (passes_tight and passes_mfcc and passes_tight_diff and passes_mfcc_diff)
+                    all_by_score.append([score_at_checkpoint, ideal_filter, path, summed_score_at_checkpoint])
 
 
 
@@ -466,7 +468,7 @@ def align_by_checkpoint_probe(reaction):
 
             if plotting:
                 if len(past_the_checkpoint) > 1:
-                    plot_candidates(all_by_score)
+                    plot_candidates(reaction, all_by_score)
 
             starting_points = best_past_the_checkpoint
 
@@ -483,13 +485,14 @@ def align_by_checkpoint_probe(reaction):
 
 
 
-def plot_candidates(data):
+def plot_candidates(reaction, data):
     
     # Separate the data into different lists for easier plotting
-    scores = [item[0] for item in data]
-    # depths = [item[1] for item in data]
-    depths = [item[3][0][0] / sr for item in data]   # plotting scores of paths that start from a particular reaction_start 
-    selected = [item[2] for item in data]
+    scores = [item[0][2] for item in data]
+    # depths = [item[2][0][0] / sr for item in data]   # plotting scores of paths that start from a particular reaction_start 
+    depths = [item[3][2] / sr for item in data]   # plotting summed score 
+
+    selected = [item[1] for item in data]
 
     # Create the plot
     plt.figure()
@@ -507,7 +510,7 @@ def plot_candidates(data):
     # Add labels and title
     plt.xlabel('FILL')
     plt.ylabel('MFCC')
-    plt.title('MFCC vs FILL')
+    plt.title(f"{reaction.get('channel')} / {conf.get('song_key')}")
 
     # Show the plot
     plt.show()
