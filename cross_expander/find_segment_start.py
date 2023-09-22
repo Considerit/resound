@@ -28,10 +28,13 @@ def correct_peak_index(peak_index, chunk_len):
 
 seg_start_cache = {}
 paths_at_segment_start = {}
+full_search_cache = {}
+
 def initialize_segment_start_cache():
     global seg_start_cache
 
     seg_start_cache.clear()
+    full_search_cache.clear()
     paths_at_segment_start.clear()
 
 
@@ -42,7 +45,12 @@ def initialize_segment_start_cache():
 # to figure out if the system at least generates the ground truth path.
 # Even if it doesn't select it.
 
+
+
 def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
+    global full_search_start_cache
+    global full_search_cache    
+
     global seg_start_cache
     global paths_at_segment_start
 
@@ -69,8 +77,24 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
                 return -1 
 
 
-    key = f"{open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
-    
+    key = f"{conf.get('song_key')} {open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
+
+    if full_search:
+        full_search_key = f"{conf.get('song_key')} {closed_start} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
+        if full_search_key in full_search_cache:
+            prior_open_start, prior_candidates = full_search_cache[full_search_key]
+            if prior_open_start <= open_start:
+                new_candidates = [c for c in prior_candidates if c >= open_start]
+                if prune_types:
+                    prune_types['full_search_start_cache'] += 1
+
+                # print(f"HIT at {open_start}! {full_search_start_cache[True]} / {(full_search_start_cache[True] + full_search_start_cache[False])} ({100 * full_search_start_cache[True] / (full_search_start_cache[True] + full_search_start_cache[False]):.1f}%) ({100 * full_search_start_cache['earlier'] / (full_search_start_cache['earlier'] + full_search_start_cache[False]):.1f}%)")
+                # print("new", new_candidates)   
+                # print("old", modified_candidates)   
+
+                return [c - open_start for c in prior_candidates]
+
+
     if key not in seg_start_cache:
 
         # print(key)
@@ -259,9 +283,8 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
                 seg_start_cache[key] = candidates
                 return candidates
 
-
         # candidates_by_time = [c[0] for c in candidates]
-        candidates.sort(key=lambda x: .5 * x[1] / max_mfcc_score + .5 * x[3] / max_correlation_score, reverse=True)
+        # candidates.sort(key=lambda x: .5 * x[1] / max_mfcc_score + .5 * x[3] / max_correlation_score, reverse=True)
 
         # Helps us examine how the system is perceiving candidate starting locations
         if full_search:
@@ -368,8 +391,17 @@ def find_next_segment_start_candidates(reaction, open_chunk, open_chunk_mfcc, op
 
 
 
+        candidates.sort()
+
+        if full_search:
+            modified_candidates = [c + open_start for c in candidates]
+            full_search_cache[full_search_key] = (open_start, modified_candidates)
+
         seg_start_cache[key] = candidates
     else:
+        if prune_types:
+            prune_types['exact_search_start_cache'] += 1
+
         candidates = seg_start_cache[key]
 
     return candidates

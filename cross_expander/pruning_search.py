@@ -18,7 +18,8 @@ def initialize_path_pruning():
                 "continuity",
                 'duplicate_path_prune',
                 'mfcc_correlate_overlap',
-                'manual_branch_prune'
+                'exact_search_start_cache',
+                'full_search_start_cache'
               ]
 
     for prune_type in prunes:
