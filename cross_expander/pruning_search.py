@@ -12,8 +12,7 @@ def initialize_path_pruning():
     global prune_types
     prunes = [  
                 "bounds",
-                "spacing",
-                "quality", 
+                "poor_path_branching", 
                 "scope_cached",
                 "continuity",
                 'duplicate_path_prune',
@@ -40,8 +39,8 @@ def should_prune_path(reaction, current_path, current_start, reaction_start):
     base_audio_length = len(conf.get('base_audio_data'))
 
 
-    if current_start < .95 * base_audio_length and path_quality_is_poor(current_path):
-        prune_types["spacing"] += 1
+    if current_start < .95 * base_audio_length and is_path_quality_poor(current_path):
+        prune_types["poor_path_branching"] += 1
         return True
 
     if len(current_path) > 0:
@@ -64,11 +63,11 @@ def should_prune_path(reaction, current_path, current_start, reaction_start):
     return False    
 
 
-# Poor quality: 
-#  - not considering fillers, 
-#  - reaction separation greater than .1s and less than 1s and no filler
 
-def path_quality_is_poor(path):
+
+
+
+def is_path_quality_poor(path):
     global prune_types
 
     spacing_min_length = 2.5 * sr
@@ -82,7 +81,6 @@ def path_quality_is_poor(path):
             # if first[1] - first[0] < spacing_min_length and middle[1] - middle[0] < spacing_min_length and last[1] - last[0] < spacing_min_length:
             if (first[1] - first[0]) + (middle[1] - middle[0]) + (last[1] - last[0]) < 3 * spacing_min_length:
                 if middle[0] - first[1] > spacing_max_separation and last[0] - middle[1] > spacing_max_separation:
-                    prune_types["spacing"] += 1
                     return True
 
 
