@@ -4,7 +4,7 @@ import glob
 
 from prettytable import PrettyTable
 
-from utilities import prepare_reactions, extract_audio, conf, make_conf
+from utilities import prepare_reactions, extract_audio, conf, make_conf, unload_reaction
 from inventory import download_and_parse_reactions, get_manifest_path
 from cross_expander import create_aligned_reaction_video
 from face_finder import create_reactor_view
@@ -89,18 +89,19 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
         temp_directory = conf.get("temp_directory")
         song_directory = conf.get('song_directory')
 
-        lock_file = os.path.join(temp_directory, 'locked')
-
-
-        lock = open(lock_file, 'w')
-        lock.write(f"yo")
-        lock.close()
 
         compilation_path = conf.get('compilation_path')
 
         if os.path.exists(compilation_path):
           print("Compilation already exists", compilation_path)
           return []
+
+
+        lock_file = os.path.join(temp_directory, 'locked')
+        lock = open(lock_file, 'w')
+        lock.write(f"yo")
+        lock.close()
+
 
         print("Processing directory", song_directory, "Outputting to", output_dir)
 
@@ -170,7 +171,7 @@ def print_progress():
     for i, (name, reaction) in enumerate(conf.get('reactions').items()):
         if reaction.get('best_path'):
             print(f"************* best path for {name} ****************")
-            print_path(reaction.get('best_path'), reaction)
+            print_path(reaction.get('best_path'), reaction, ignore_score='reaction_audio_data' not in reaction)
 
     x = PrettyTable()
     x.field_names = ["Name", "Ground Truth", "Score", "Target Score"]
@@ -219,11 +220,11 @@ if __name__ == '__main__':
         "create_alignment": True,
         "save_alignment_metadata": True,
         "output_alignment_video": True,
-        "isolate_commentary": True,
-        "create_reactor_view": True,
-        "create_compilation": True,
+        "isolate_commentary": False,
+        "create_reactor_view": False,
+        "create_compilation": False,
         "download_and_parse": True,
-        "alignment_test": False,
+        "alignment_test": True,
         "force_ground_truth_paths": False,
         "draft": False
     }

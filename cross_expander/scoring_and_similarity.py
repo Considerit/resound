@@ -445,13 +445,15 @@ def find_best_path(reaction, candidate_paths):
     return paths_by_score[0][0]
 
 
-def print_path(path, reaction):
+def print_path(path, reaction, ignore_score=False):
     
     gt = reaction.get('ground_truth')
     print("\t\t****************")
     if gt: 
         print(f"\t\tGround Truth Overlap {ground_truth_overlap(path, gt):.1f}%")
-    print(f"\t\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, reaction):.3f} relvol={path_rel_vol_segment_sum_score(path, reaction):.1f}")
+
+    if not ignore_score:
+        print(f"\t\tSum sequence scores: mfcc={path_mfcc_segment_sum_score(path, reaction):.3f} relvol={path_rel_vol_segment_sum_score(path, reaction):.1f}")
 
     x = PrettyTable()
     x.border = False
@@ -463,8 +465,11 @@ def print_path(path, reaction):
 
         gt_pr = "-"
         if not is_filler: 
-            mfcc_score = get_segment_mfcc_score(reaction, sequence)
-            rel_volume_alignment = get_segment_rel_vol_score(reaction, sequence)
+            if not ignore_score:
+                mfcc_score = get_segment_mfcc_score(reaction, sequence)
+                rel_volume_alignment = get_segment_rel_vol_score(reaction, sequence)
+            else:
+                mfcc_score = rel_volume_alignment = 0
         
             if gt: 
                 total_overlap = 0

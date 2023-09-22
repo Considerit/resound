@@ -129,6 +129,8 @@ def unload_reaction(channel):
 
 
 def load_base_video():
+    from silence import get_edge_silence
+
     song_directory = conf.get('song_directory')
 
     base_video_path_webm = os.path.join(song_directory, f"{os.path.basename(song_directory)}.webm")
