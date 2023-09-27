@@ -69,8 +69,17 @@ def make_conf(song_def, options, temp_directory):
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
 
       ground_truth = song_def.get('ground_truth', {}).get(channel, None)
+      ground_truth_path = None
       if ground_truth: 
           ground_truth = [ (int(s * sr), int(e * sr)) for (s,e) in ground_truth]
+          ground_truth_path = []
+          current_start = 0
+          for reaction_start, reaction_end in ground_truth:
+            current_end = current_start + reaction_end - reaction_start
+
+            ground_truth_path.append( (reaction_start, reaction_end, current_start, current_end, False)   )
+
+            current_start += reaction_end - reaction_start
 
       target_score = song_def.get('target_scores', {}).get(channel, None)
 
@@ -82,6 +91,7 @@ def make_conf(song_def, options, temp_directory):
           'featured': channel in song_def.get('featured', []),
           'asides': song_def.get('asides', {}).get(channel, None),
           'ground_truth': ground_truth,
+          'ground_truth_path': ground_truth_path,
           'target_score': target_score
         }
 
@@ -168,14 +178,15 @@ def load_base_video():
     base_audio_mfcc = librosa.feature.mfcc(y=base_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
     song_percentile_loudness = audio_percentile_loudness(base_audio_data, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=conf.get('hop_length'))
 
-
-    conf.update({
+    base_data = {
       'base_video_path': base_video_path,
       'base_audio_data': base_audio_data,
       'base_audio_path': base_audio_path,
       'song_percentile_loudness': song_percentile_loudness,
       'base_audio_mfcc': base_audio_mfcc
-    })
+    }
+
+    conf.update(base_data)
 
 
 
