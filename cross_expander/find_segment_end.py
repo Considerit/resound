@@ -10,9 +10,7 @@ def find_correlation_end(reaction, current_start, reaction_start, step, reaction
     expansion_tolerance = conf.get('expansion_tolerance')
 
     base_audio = conf.get('base_audio_data')
-    base_audio_mfcc = conf.get('base_audio_mfcc')
     reaction_audio = reaction.get('reaction_audio_data')
-    reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
 
 
     if reaction_end == None:
@@ -129,6 +127,8 @@ def find_correlation_end(reaction, current_start, reaction_start, step, reaction
 
             break
 
+    if break_point is None:
+        break_point = len(reaction_audio)
 
     if step > 250:
 
@@ -226,6 +226,7 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
                         current_chunk_size=reverse_chunk_size, 
                         peak_tolerance=peak_tolerance, 
                         open_start=current_start, 
+                        full_search=False,
                         closed_start=reaction_start + candidate_segment_start, 
                         distance=first_n_samples)
 
