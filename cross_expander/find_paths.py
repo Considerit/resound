@@ -2,6 +2,7 @@ import os
 import random
 import matplotlib.pyplot as plt
 import time
+import numpy as np
 
 from prettytable import PrettyTable
 
@@ -10,8 +11,6 @@ from utilities import conf, print_profiling, conversion_audio_sample_rate as sr
 from cross_expander.pruning_search import print_prune_data, is_path_quality_poor, prune_types
 from cross_expander.scoring_and_similarity import print_path, calculate_partial_score
 from cross_expander.branching_search import branching_search
-
-
 
 
 def align_by_checkpoint_probe(reaction):
@@ -92,7 +91,8 @@ def align_by_checkpoint_probe(reaction):
 
         print("")
 
-        plotting = False and len(past_the_checkpoint) > 1000
+        plot_relationships = False #or len(past_the_checkpoint) > 1000
+        plot_candidate_paths = True
 
         if checkpoint_ts is None:
             # should be finished!
@@ -112,7 +112,7 @@ def align_by_checkpoint_probe(reaction):
                     prunes[k] = 0 
 
             # weed out candidates based on heuristics for poor path quality
-            vetted_candidates = [c for c in past_the_checkpoint if checkpoint_ts > .95 * song_length or not is_path_quality_poor(c[0])]
+            vetted_candidates = [c for c in past_the_checkpoint if checkpoint_ts > .95 * song_length or not is_path_quality_poor(reaction, c[0])]
             prunes['poor_path_checkpoint'] += len(past_the_checkpoint) - len(vetted_candidates)
 
 
@@ -127,13 +127,24 @@ def align_by_checkpoint_probe(reaction):
             best_candidate_to_point = None                 
 
 
-            checkpoint_threshold_tight = .9  # Black Pegasus / Suicide can't go to .8 when light threshold = .5 (ok, that's only true w/o the path quality filters)
-            checkpoint_threshold_light = .5    # > .15 doesn't work for Black Pegasus / Suicide in conjunction with high tight threshold (>.9)
+
+            checkpoint_threshold_tight = checkpoint_threshold_tight_diff = .9  # Black Pegasus / Suicide can't go to .8 when light threshold = .5 (ok, that's only true w/o the path quality filters)
+            checkpoint_threshold_light = checkpoint_threshold_light_diff = .5    # > .15 doesn't work for Black Pegasus / Suicide in conjunction with high tight threshold (>.9)
             checkpoint_threshold_location = .95  
             location_rounding = 10
 
+
+            # checkpoint_threshold_tight = .7  # Black Pegasus / Suicide can't go to .8 when light threshold = .5 (ok, that's only true w/o the path quality filters)
+            # checkpoint_threshold_tight_diff = .7
+            # checkpoint_threshold_light = .2 + .3 * (checkpoint_ts / song_length)    
+            # checkpoint_threshold_light_diff = .5    # > .15 doesn't work for Black Pegasus / Suicide in conjunction with high tight threshold (>.9)
+            # checkpoint_threshold_location = .6  
+            # location_rounding = 10
+
             all_by_current_location = {}
             all_by_score = []
+
+            candidates_to_plot = []
 
             checkpoints_reversed = [c for c in checkpoints if c and c <= checkpoint_ts][::-1]
 
@@ -147,8 +158,8 @@ def align_by_checkpoint_probe(reaction):
             candidates = []
             for candidate in vetted_candidates:
                 path, score_at_each_checkpoint, current_start, reaction_start = candidate
-                reaction_end, score_at_checkpoint = calculate_partial_score(reaction, path, end=checkpoint_ts, start=start_at)
-                candidates.append([candidate, reaction_end, score_at_checkpoint])
+                reaction_end, score_at_checkpoint, truncated_path = calculate_partial_score(reaction, path, end=checkpoint_ts, start=start_at)
+                candidates.append([candidate, reaction_end, score_at_checkpoint, truncated_path])
                 score_at_each_checkpoint[checkpoint_ts] = score_at_checkpoint
 
                 value = get_score_for_overall_comparison(score_at_checkpoint)
@@ -164,7 +175,7 @@ def align_by_checkpoint_probe(reaction):
                                                                # pruning purposes.
 
             for expanded_candidate in candidates:
-                candidate, reaction_end, score_at_checkpoint = expanded_candidate
+                candidate, reaction_end, score_at_checkpoint, truncated_path = expanded_candidate
                 path, score_at_each_checkpoint, current_start, reaction_start = candidate
 
                 value = get_score_for_tight_bound(score_at_checkpoint)
@@ -189,8 +200,8 @@ def align_by_checkpoint_probe(reaction):
 
                 if passes_tight and passes_mfcc:
 
-                    passes_tight_diff = passes_time or checkpoint_threshold_tight <= get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_to_point, get_score_for_tight_bound, checkpoint_ts) 
-                    passes_mfcc_diff = passes_time or checkpoint_threshold_light <= get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_past_the_checkpoint, get_score_for_overall_comparison, checkpoint_ts)
+                    passes_tight_diff = passes_time or checkpoint_threshold_tight_diff <= get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_to_point, get_score_for_tight_bound, checkpoint_ts) 
+                    passes_mfcc_diff = passes_time or checkpoint_threshold_light_diff <= get_score_ratio_at_checkpoint_diff(checkpoints_reversed, reaction, candidate, best_candidate_past_the_checkpoint, get_score_for_overall_comparison, checkpoint_ts)
 
                     if not passes_tight_diff: 
                         prunes['diff_tight'] += 1
@@ -203,9 +214,9 @@ def align_by_checkpoint_probe(reaction):
                             all_by_current_location[location] = []
                         all_by_current_location[location].append( expanded_candidate  )
 
-                if plotting:
+                if plot_relationships: 
                     ideal_filter = passes_time or (passes_tight and passes_mfcc and passes_tight_diff and passes_mfcc_diff)
-                    all_by_score.append([score_at_checkpoint, ideal_filter, path, summed_score_at_checkpoint])
+                    all_by_score.append([score_at_checkpoint, ideal_filter, path])
 
 
 
@@ -220,13 +231,13 @@ def align_by_checkpoint_probe(reaction):
                     best_score_at_location = None
                     best_candidate_at_location = None
 
-                    for candidate, reaction_end, score in candidates:
-                        if get_score_for_location(score) > best_at_location:
+                    for candidate, reaction_end, score, truncated_path in candidates:
+                        if get_score_for_location(score) >= best_at_location:
                             best_at_location = get_score_for_location(score)
                             best_candidate_at_location = candidate
                             best_score_at_location = score
 
-                    for candidate, reaction_end, score in candidates:
+                    for candidate, reaction_end, score, truncated_path in candidates:
                         relative_current_end = candidate[0][-1][3]
                         passes_time = idx < len(checkpoints) - 1 and checkpoints[idx + 1] and relative_current_end and relative_current_end > checkpoints[idx + 1]
                         passes_location = get_score_for_location(score) / best_at_location >= checkpoint_threshold_location
@@ -239,6 +250,12 @@ def align_by_checkpoint_probe(reaction):
                                 prunes['location_diff'] += 1
                         else: 
                             prunes['location'] += 1
+
+                    if plot_candidate_paths: 
+                        candidates_to_plot.append(  (best_candidate_at_location[0], best_score_at_location)   )
+
+            if plot_candidate_paths:
+                candidates_to_plot.append( (best_path_past_checkpoint, best_score_past_checkpoint)  )
 
 
             if len(past_the_checkpoint) > 0:
@@ -273,9 +290,16 @@ def align_by_checkpoint_probe(reaction):
 
 
 
-            if plotting:
+            if plot_relationships:
                 if len(past_the_checkpoint) > 1:
                     plot_candidates(reaction, all_by_score)
+
+
+            if plot_candidate_paths and len(candidates_to_plot) > 0:
+                visualize_candidate_paths(reaction, idx, checkpoint_ts, candidates_to_plot, best_score_past_checkpoint, scoring_function=get_score_for_overall_comparison, done=idx==len(checkpoints) - 2, show_each_iteration=False)
+
+
+
 
             starting_points = best_past_the_checkpoint
 
@@ -371,35 +395,175 @@ def get_score_for_location(score):
 def plot_candidates(reaction, data):
     
     # Separate the data into different lists for easier plotting
-    scores = [item[0][2] for item in data]
-    # depths = [item[2][0][0] / sr for item in data]   # plotting scores of paths that start from a particular reaction_start 
-    depths = [item[3][2] / sr for item in data]   # plotting summed score 
+    # y = [item[0][2] for item in data] # plotting overall score
+
+    x = [item[0][4] for item in data] # plotting overall mse similarity
+    y = [item[0][5] for item in data] # plotting overall cosine similarity
+
+
+    # x = [item[2][0][0] / sr for item in data]   # plotting scores of paths that start from a particular reaction_start 
+    # x2 = [item[3] for item in data]   # plotting summed score (MSE)
+    # y2 = [item[0][4] for item in data] # plotting overall mse similarity
 
     selected = [item[1] for item in data]
 
-    # Create the plot
+    #############
+    # Create plot 1
+    # plt.figure(figsize=(14, 10))
     plt.figure()
+    plt.subplot(1, 2, 1)
+
+    max_x = max(x)
+    max_y = max(y)
+
+    for i in range(len(y)):
+        plt.scatter( i / len(y) * max_x, i / len(y) * max_y, color='blue'   )
+
 
     # Loop through the data to plot points color-coded by 'selected'
-    for i in range(len(scores)):
+    for i in range(len(y)):
+
         if selected[i]:
-            plt.scatter(depths[i], scores[i], color='green')
+            plt.scatter(x[i], y[i], color='yellow')
         else:
-            plt.scatter(depths[i], scores[i], color='red')
+            plt.scatter(x[i], y[i], color='red')
 
     plt.xlim(left=0)
     plt.ylim(bottom=0)
 
     # Add labels and title
-    plt.xlabel('FILL')
-    plt.ylabel('MFCC')
+    plt.xlabel('segment cosine')
+    plt.ylabel('full cosine')
     plt.title(f"{reaction.get('channel')} / {conf.get('song_key')}")
+
+
+    # # ###########
+    # # # create plot 2
+    # plt.subplot(1, 2, 2)
+    # y = y2
+    # x = x2
+
+    # max_x = max(x)
+    # max_y = max(y)
+
+    # for i in range(len(y)):
+    #     plt.scatter( i / len(y) * max_x, i / len(y) * max_y, color='blue'   )
+
+
+    # # Loop through the data to plot points color-coded by 'selected'
+    # for i in range(len(y)):
+
+    #     if selected[i]:
+    #         plt.scatter(x[i], y[i], color='green')
+    #     else:
+    #         plt.scatter(x[i], y[i], color='red')
+
+    # plt.xlim(left=0)
+    # plt.ylim(bottom=0)
+
+    # # Add labels and title
+    # plt.xlabel('segment mse')
+    # plt.ylabel('full mse')
+    # plt.title(f"{reaction.get('channel')} / {conf.get('song_key')}")
+
+
 
     # Show the plot
     plt.show()
 
 
+def visualize_candidate_paths(reaction, idx, checkpoint_ts, paths, best_score, scoring_function, done=False, show_each_iteration=False):
+    plt.figure(figsize=(10, 10))
 
+    y = conf.get('base_audio_data')
+    x = reaction.get('reaction_audio_data')
+
+
+
+    plt.axhline(y=checkpoint_ts / sr, color='black', linestyle='--')
+
+    if reaction.get('ground_truth'):
+        visualize_candidate_path(reaction.get('ground_truth_path'), color='green', linewidth=2)
+
+    for path, score in paths:
+        alpha = min(1, .2 + .8 * scoring_function(score) / scoring_function(best_score))
+        visualize_candidate_path(path, alpha=alpha)
+
+    # Calculate the time in seconds for each audio
+
+    plt.xlabel("Time in React Audio [s]")
+    plt.ylabel("Time in Base Audio [s]")
+    # plt.legend()
+
+    plt.title(f"{checkpoint_ts / sr} seconds of {reaction.get('channel')} / {conf.get('song_key')}")
+
+    plt.xticks(np.arange(0, len(x) / sr, 30))
+    plt.yticks(np.arange(0, len(y) / sr, 30))
+
+    plt.grid(True)
+
+    plt.tight_layout()
+
+    # Save the plot instead of displaying it
+    dirs = os.path.join(conf.get('temp_directory'), reaction.get('channel'))
+    if not os.path.exists(dirs):
+        os.makedirs(dirs)
+
+    if show_each_iteration:
+        plt.show()
+
+    filename = os.path.join(dirs, f"candidate_paths_frame_{idx:04d}.png")
+    plt.savefig(filename)
+    plt.close()
+
+    if done or True: 
+        video_filename = os.path.join(dirs, "video.mp4")
+        compile_images_to_video(dirs, video_filename)
+
+
+
+
+
+def visualize_candidate_path(path, color=None, linewidth=1, alpha=1):
+    for i, segment in enumerate(path):
+
+        reaction_start, reaction_end, current_start, current_end, filler = segment
+
+        if color is None:
+            color = 'red'
+            if filler:
+                color = 'purple'
+
+        if i > 0:
+            last_reaction_start, last_reaction_end, last_current_start, last_current_end, last_filler = previous_segment
+            plt.plot( [last_reaction_end/sr, reaction_start/sr], [last_current_end/sr, current_start/sr], color=color, linestyle='dashed', linewidth=linewidth, alpha=alpha)
+
+        plt.plot( [reaction_start/sr, reaction_end/sr], [current_start/sr, current_end/sr]    , color=color, linestyle='solid', linewidth=linewidth, alpha=alpha)
+
+        previous_segment = segment
+    
+
+
+def compile_images_to_video(img_dir, video_filename, FPS=5):
+    import cv2
+
+    images = sorted([os.path.join(img_dir, img) for img in os.listdir(img_dir) if img.endswith(".png")])
+    if not images:
+        raise ValueError("No images found in the specified directory!")
+
+    # Find out the frame width and height from the first image
+    frame = cv2.imread(images[0])
+    h, w, layers = frame.shape
+    size = (w, h)
+
+    # Define the codec and create VideoWriter object
+    out = cv2.VideoWriter(video_filename, cv2.VideoWriter_fourcc(*'mp4v'), FPS, size)  # 1 FPS
+
+    for i in range(len(images)):
+        img = cv2.imread(images[i])
+        out.write(img)
+
+    out.release()
 
 
 
