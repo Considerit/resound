@@ -1,6 +1,7 @@
 import random, copy
 
 from cross_expander.bounds import in_bounds, get_bound
+from cross_expander.scoring_and_similarity import get_segment_cosine_similarity_score
 
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf, on_press_key
@@ -11,12 +12,12 @@ paths_visited = {}
 def initialize_path_pruning():
     global prune_types
     prunes = [  
-                "bounds",
                 "poor_path_branching", 
-                "scope_cached",
+                "bounds",
                 "continuity",
                 'duplicate_path_prune',
                 'mfcc_correlate_overlap',
+                "scope_cached",
                 'exact_search_start_cache',
                 'full_search_start_cache'
               ]
@@ -39,7 +40,7 @@ def should_prune_path(reaction, current_path, current_start, reaction_start):
     base_audio_length = len(conf.get('base_audio_data'))
 
 
-    if current_start < .95 * base_audio_length and is_path_quality_poor(current_path):
+    if current_start < .95 * base_audio_length and is_path_quality_poor(reaction, current_path):
         prune_types["poor_path_branching"] += 1
         return True
 
@@ -51,7 +52,7 @@ def should_prune_path(reaction, current_path, current_start, reaction_start):
             return True
         paths_visited[path_key] = 1
 
-    alignment_bounds = conf.get('alignment_bounds')
+    alignment_bounds = reaction['alignment_bounds']
     if alignment_bounds is not None:
         upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
         if not in_bounds(upper_bound, current_start, reaction_start):
@@ -67,7 +68,7 @@ def should_prune_path(reaction, current_path, current_start, reaction_start):
 
 
 
-def is_path_quality_poor(path):
+def is_path_quality_poor(reaction, path):
     global prune_types
 
     spacing_min_length = 2.5 * sr
@@ -93,7 +94,8 @@ def is_path_quality_poor(path):
     short_segments = 0
     short_separation = 0
 
-    for i, (reaction_start, reaction_end, current_start, current_end, filler) in enumerate(path): 
+    for i, segment in enumerate(path): 
+        (reaction_start, reaction_end, current_start, current_end, filler) = segment
         if filler:
             continue
 
@@ -127,6 +129,12 @@ def is_path_quality_poor(path):
                 short_segments += 1
                 if short_segments >= 3:
                     return True
+
+
+
+        cosine_sim = get_segment_cosine_similarity_score(reaction, segment)
+        if not filler and cosine_sim < .250:
+            return True
 
 
     return False
