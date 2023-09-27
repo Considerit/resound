@@ -66,7 +66,6 @@ def path_score(path, reaction, end=None, start=0):
 
     base_audio = conf.get('base_audio_data')
     base_audio_mfcc = conf.get('base_audio_mfcc')
-    # base_audio_vol_diff = conf.get('song_percentile_loudness')
     hop_length = conf.get('hop_length')
     reaction_audio = reaction['reaction_audio_data']
     reaction_audio_mfcc = reaction['reaction_audio_mfcc']    
@@ -392,43 +391,6 @@ def cosine_mfcc_similarity(audio_chunk1=None, audio_chunk2=None, mfcc1=None, mfc
 
     return weighted_similarity[0]
 
-def relative_volume_similarity(audio_chunk1=None, audio_chunk2=None, vol_diff1=None, vol_diff2=None, hop_length=1):
-
-    # Compute MFCCs for each audio chunk
-    if vol_diff1 is None: 
-        vol_diff1 = audio_percentile_loudness(audio_chunk1, loudness_window_size=100, percentile_window_size=100, std_dev_percentile=None, hop_length=hop_length)
-
-    if vol_diff2 is None: 
-        vol_diff2 = audio_percentile_loudness(audio_chunk2, loudness_window_size=100, percentile_window_size=100, std_dev_percentile=None, hop_length=hop_length)
-
-    # Make sure of same shape
-    len1 = vol_diff1.shape[0]
-    len2 = vol_diff2.shape[0]
-
-    if len1 != len2:
-        # if abs(len1 - len2) > 1:
-        #     print("VOL DIFF SHAPES NOT EQUAL", len1, len2)
-        #     # assert(abs(len1 - len2) == 1)
-
-        if len2 > len1:
-            vol_diff2 = vol_diff2[:len1]
-        else:
-            vol_diff1 = vol_diff1[:len2]
-
-
-
-    # Calculate the absolute difference between the two volume differences
-    absolute_difference = np.abs(vol_diff1 - vol_diff2)
-
-    # Calculate the sum of absolute_difference
-    difference_magnitude = np.sum(absolute_difference)
-
-
-    # Max difference is for volume inversion, where abs(vol_diff1 - vol_diff2) is always 100 (%)
-    max_difference = 100 * len(vol_diff1)
-    return max_difference / difference_magnitude
-
-
 
 
 ################
@@ -496,7 +458,7 @@ def print_path(path, reaction, ignore_score=False):
     x = PrettyTable()
     x.border = False
     x.align = "r"
-    x.field_names = ["\t\t", "", "Base", "Reaction", "mse", "cosine", "rel_vol", "ground truth"]
+    x.field_names = ["\t\t", "", "Base", "Reaction", "mse", "cosine", "ground truth"]
 
     for sequence in path:
         reaction_start, reaction_end, current_start, current_end, is_filler = sequence
@@ -505,10 +467,9 @@ def print_path(path, reaction, ignore_score=False):
         if not is_filler: 
             if not ignore_score:
                 mfcc_score = 1000 * get_segment_mfcc_mse_score(reaction, sequence)
-                rel_volume_alignment = get_segment_rel_vol_score(reaction, sequence)
                 cosine_score = get_segment_cosine_similarity_score(reaction, sequence)
             else:
-                mfcc_score = rel_volume_alignment = cosine_score = 0
+                mfcc_score = cosine_score = 0
         
             if gt: 
                 total_overlap = 0
@@ -517,9 +478,9 @@ def print_path(path, reaction, ignore_score=False):
 
                 gt_pr = f"{100 * total_overlap / (sequence[1] - sequence[0]):.1f}%"
         else: 
-            mfcc_score = rel_volume_alignment = cosine_score = 0
+            mfcc_score = cosine_score = 0
 
-        x.add_row(["\t\t",'x' if is_filler else '', f"{float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}", f"{float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f}", f"{round(mfcc_score)}", f"{round(1000*cosine_score)}", f"{round(rel_volume_alignment)}", gt_pr ])
+        x.add_row(["\t\t",'x' if is_filler else '', f"{float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}", f"{float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f}", f"{round(mfcc_score)}", f"{round(1000*cosine_score)}", gt_pr ])
 
     
     print(x)
@@ -545,13 +506,11 @@ def initialize_path_score():
 ##### Segments
 
 segment_cosine_scores = {}
-segment_rel_vol_scores = {}
 segment_mfcc_mses = {}
 
 def initialize_segment_tracking():
-  global segment_mfcc_mses, segment_rel_vol_scores, segment_cosine_scores
+  global segment_mfcc_mses, segment_cosine_scores
   segment_mfcc_mses.clear()
-  segment_rel_vol_scores.clear()
   segment_cosine_scores.clear()
 
 
@@ -616,37 +575,6 @@ def get_segment_cosine_similarity_score(reaction, segment):
       segment_cosine_scores[key] = mfcc_score
 
     return segment_cosine_scores[key]
-
-
-def get_segment_rel_vol_score(reaction, segment):
-    reaction_start, reaction_end, current_start, current_end, is_filler = segment
-
-    if is_filler:
-      return 0
-
-    global segment_rel_vol_scores
-
-    key = get_segment_id(segment)
-    if key not in segment_rel_vol_scores:
-      
-      base_audio_vol_diff = conf.get('song_percentile_loudness')
-      reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
-      hop_length = conf.get('hop_length')
-
-      voldiff_react_chunk = reaction_audio_vol_diff[round(reaction_start / hop_length):round(reaction_end / hop_length)]
-      voldiff_song_chunk =      base_audio_vol_diff[round(current_start / hop_length):round(current_end / hop_length)]
-      rel_volume_alignment = relative_volume_similarity(vol_diff1=voldiff_song_chunk, vol_diff2=voldiff_react_chunk)
-
-      segment_rel_vol_scores[key] = 10 * rel_volume_alignment
-
-    return segment_rel_vol_scores[key]
-
-
-
-
-
-
-
 
 
 

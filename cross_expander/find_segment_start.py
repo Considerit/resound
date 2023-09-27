@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from scipy.signal import correlate, find_peaks
-from cross_expander.scoring_and_similarity import mse_mfcc_similarity, relative_volume_similarity, cosine_mfcc_similarity
+from cross_expander.scoring_and_similarity import mse_mfcc_similarity, cosine_mfcc_similarity
 
 
 from utilities import conf, on_press_key
@@ -45,7 +45,7 @@ def initialize_segment_start_cache():
 # to figure out if the system at least generates the ground truth path.
 # Even if it doesn't select it.
 
-def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_diff, closed_chunk, closed_chunk_mfcc, closed_chunk_vol_diff, current_chunk_size, peak_tolerance, open_start, closed_start, distance, full_search=True, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
+def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, closed_chunk_mfcc, current_chunk_size, peak_tolerance, open_start, closed_start, distance, full_search=True, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
     global full_search_start_cache
     global full_search_cache    
 
@@ -195,7 +195,6 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_di
         scores = []
         max_mfcc_score = 0
         max_correlation_score = 0
-        max_relative_volume_score = 0
         max_mfcc_correlation_score = 0
         max_mfcc_cosine_score = 0
 
@@ -214,25 +213,18 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_di
                 # print(f"Skipping because we couldn't make a chunk of size {current_chunk_size} [{current_chunk_size / sr}] starting at {candidate_index} [{candidate_index / sr}] from chunk of length {len(open_chunk) / sr}")
                 continue 
 
-            open_chunk_here_vol_diff = open_chunk_vol_diff[round(candidate_index / hop_length): round((candidate_index + current_chunk_size) / hop_length)       ]
-
             open_chunk_here_mfcc = open_chunk_mfcc[:,      round(candidate_index / hop_length): round((candidate_index + current_chunk_size) / hop_length)       ]
             mfcc_score = mse_mfcc_similarity(mfcc1=open_chunk_here_mfcc, mfcc2=closed_chunk_mfcc)  
 
-            relative_volume_score = relative_volume_similarity(vol_diff1=open_chunk_here_vol_diff, vol_diff2=closed_chunk_vol_diff)
-
             mfcc_cosine_score = cosine_mfcc_similarity(mfcc1=open_chunk_here_mfcc, mfcc2=closed_chunk_mfcc)  
 
-            scores.append( (candidate_index, mfcc_score, relative_volume_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score) ) 
+            scores.append( (candidate_index, mfcc_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score) ) 
             
             if correlation_score > max_correlation_score:
                 max_correlation_score = correlation_score
 
             if mfcc_score > max_mfcc_score:
                 max_mfcc_score = mfcc_score
-
-            if relative_volume_score > max_relative_volume_score:
-                max_relative_volume_score = relative_volume_score
 
             if mfcc_correlation_score > max_mfcc_correlation_score:
                 max_mfcc_correlation_score = mfcc_correlation_score
@@ -257,21 +249,19 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_di
             continuity = None
 
             for candidate in scores:
-                (candidate_index, mfcc_score, rel_vol_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score) = candidate
+                (candidate_index, mfcc_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score) = candidate
 
-                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .75) # and (mfcc_score > max_mfcc_score * peak_tolerance * .75 or rel_vol_score > max_relative_volume_score * peak_tolerance)
+                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .75) # and (mfcc_score > max_mfcc_score * peak_tolerance * .75)
                 good_by_mfcc_correlation = full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25) # and (mfcc_score > max_mfcc_score * peak_tolerance or mfcc_cosine_score > max_mfcc_cosine_score * peak_tolerance)
 
                 good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + (1 - peak_tolerance) * .25)
-                good_by_rel_vol = False # rel_vol_score >= max_relative_volume_score * (peak_tolerance + (1 - peak_tolerance) * .8) #and correlation_score >= max_correlation_score * peak_tolerance * .75
 
                 good_by_cosine = mfcc_cosine_score >= max_mfcc_cosine_score * (peak_tolerance + (1 - peak_tolerance) * .75)
 
 
-                if good_by_mfcc or good_by_rel_vol or good_by_correlation or good_by_mfcc_correlation: 
+                if good_by_mfcc or good_by_correlation or good_by_mfcc_correlation: 
                     candidates.append(candidate)
 
-                #score = correlation_score / max_correlation_score + mfcc_score / max_mfcc_score + rel_vol_score / max_relative_volume_score
                 score = correlation_score / max_correlation_score
                 if score > max_score:
                     max_score = score
@@ -361,9 +351,6 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_di
                 plt.subplot(2, 2, 3)
                 plt.title(f"selected for current_start {closed_start / sr}")
 
-                # plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [.5 * x[1] / max_mfcc_score + .125 * x[2] / max_relative_volume_score + .125 * x[3] / max_correlation_score for x in candidates], color='red')
-                # plt.scatter([int(c[0] / sr + open_start / sr) for c in scores if c not in candidates], [.5 * x[1] / max_mfcc_score + .125 * x[2] / max_relative_volume_score + .125 * x[3] / max_correlation_score for x in scores if x not in candidates], color='blue')
-
                 plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[1] / max_mfcc_score for x in scores], color='purple')
                 plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[1] / max_mfcc_score for x in candidates], color='green')
 
@@ -377,9 +364,6 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, open_chunk_vol_di
 
                 plt.subplot(2, 2, 4)
                 plt.title(f"cosine similarity")
-
-                # plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [.5 * x[1] / max_mfcc_score + .125 * x[2] / max_relative_volume_score + .125 * x[3] / max_correlation_score for x in candidates], color='red')
-                # plt.scatter([int(c[0] / sr + open_start / sr) for c in scores if c not in candidates], [.5 * x[1] / max_mfcc_score + .125 * x[2] / max_relative_volume_score + .125 * x[3] / max_correlation_score for x in scores if x not in candidates], color='blue')
 
                 plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[5] / max_mfcc_cosine_score for x in scores], color='purple')
                 plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[5] / max_mfcc_cosine_score for x in candidates], color='green')

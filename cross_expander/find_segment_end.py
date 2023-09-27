@@ -196,9 +196,7 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
 
     reaction_audio = reaction.get('reaction_audio_data')
     base_audio_mfcc = conf.get('base_audio_mfcc')
-    base_audio_vol_diff = conf.get('song_percentile_loudness')
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
-    reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
     hop_length = conf.get('hop_length')
 
 
@@ -219,10 +217,8 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
                         reaction = reaction, 
                         open_chunk=open_base_chunk, 
                         open_chunk_mfcc=base_audio_mfcc[:, round(current_start / hop_length):round(open_end / hop_length)], 
-                        open_chunk_vol_diff=base_audio_vol_diff[round(current_start / hop_length):round(open_end / hop_length)], 
                         closed_chunk=candidate_reaction_chunk, 
                         closed_chunk_mfcc=reaction_audio_mfcc[:,      round(candidate_reaction_chunk_start / hop_length):round(candidate_reaction_chunk_end / hop_length) ], 
-                        closed_chunk_vol_diff=reaction_audio_vol_diff[round(candidate_reaction_chunk_start / hop_length):round(candidate_reaction_chunk_end / hop_length) ],                         
                         current_chunk_size=reverse_chunk_size, 
                         peak_tolerance=peak_tolerance, 
                         open_start=current_start, 

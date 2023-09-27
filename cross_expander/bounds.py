@@ -35,9 +35,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     reaction_audio = reaction.get('reaction_audio_data')
     hop_length = conf.get('hop_length')
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
-    reaction_audio_vol_diff = reaction.get('reaction_percentile_loudness')
     base_audio_mfcc = conf.get('base_audio_mfcc')
-    base_audio_vol_diff = conf.get('song_percentile_loudness')
 
     clip_length = int(2 * sr)
     base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
@@ -67,7 +65,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
           (ts, min(len(base_audio), ts + clip_length))
         ]
 
-        segments = [  (s, e, base_audio[s:e], base_audio_mfcc[:, round(s / hop_length): round(e / hop_length)], base_audio_vol_diff[round(s / hop_length): round(e / hop_length) ]) for s,e in segment_times  ]
+        segments = [  (s, e, base_audio[s:e], base_audio_mfcc[:, round(s / hop_length): round(e / hop_length)]) for s,e in segment_times  ]
 
 
         # for j, segment in enumerate(segments):
@@ -79,17 +77,15 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         
         print(f"ts: {ts / sr}")
         # For each segment
-        for start, end, chunk, chunk_mfcc, chunk_vol_diff in segments:
+        for start, end, chunk, chunk_mfcc in segments:
             # Find the candidate indices for the start of the matching segment in the reaction audio
 
             candidates = find_segment_starts(
                                     reaction=reaction, 
                                     open_chunk=reaction_audio[start:], 
                                     open_chunk_mfcc=reaction_audio_mfcc[:, round(start / hop_length):],
-                                    open_chunk_vol_diff=reaction_audio_vol_diff[round(start / hop_length):],
                                     closed_chunk=chunk, 
                                     closed_chunk_mfcc= chunk_mfcc,
-                                    closed_chunk_vol_diff=chunk_vol_diff,
                                     current_chunk_size=clip_length, 
                                     peak_tolerance=peak_tolerance, 
                                     full_search=True,
