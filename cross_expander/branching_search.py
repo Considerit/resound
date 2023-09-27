@@ -86,7 +86,7 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
         ###############
 
 
-        alignment_bounds = conf.get('alignment_bounds')
+        alignment_bounds = reaction['alignment_bounds']
         if alignment_bounds is not None:
             upper_bound = get_bound(alignment_bounds, current_start, len(reaction_audio))
 
@@ -104,6 +104,7 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
                                 closed_start=current_start, 
                                 distance= sr, # first_n_samples, 
                                 prune_for_continuity=True,
+                                full_search=True,
                                 prune_types=prune_types,
                                 upper_bound=upper_bound, 
                                 filter_for_similarity=True, #depth > 0, 

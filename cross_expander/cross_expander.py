@@ -49,6 +49,8 @@ from cross_expander.find_segment_end import initialize_segment_end_cache
 
 from cross_expander.find_paths import align_by_checkpoint_probe
 
+from cross_expander.bounds import create_reaction_alignment_bounds, print_alignment_bounds
+
 
 def find_alignments(reaction):
     # global best_finished_path
@@ -66,10 +68,11 @@ def find_alignments(reaction):
 
     saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-bounds.pckl'
     if not os.path.exists(saved_bounds):
-        conf['alignment_bounds'] = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
-        save_object_to_file(saved_bounds, conf['alignment_bounds'])
+        reaction['alignment_bounds'] = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
+        save_object_to_file(saved_bounds, reaction['alignment_bounds'])
     else: 
-        conf['alignment_bounds'] = read_object_from_file(saved_bounds)
+        reaction['alignment_bounds'] = read_object_from_file(saved_bounds)
+        print_alignment_bounds(reaction)
 
 
     paths = align_by_checkpoint_probe(reaction)
@@ -158,9 +161,10 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
         reaction['best_path_score'] = read_object_from_file(score_metadata_file)
 
         if not os.path.exists(output_file) and conf["output_alignment_video"]:
+            conf['load_reaction'](reaction['channel'])
+
             react_video = reaction.get('video_path')
             base_video = conf.get('base_video_path')
-            conf['load_reaction'](reaction['channel'])
 
             reaction_sample_rate = Decimal(sr)
             best_path_converted = [ ( Decimal(s[0]) / reaction_sample_rate, Decimal(s[1]) / reaction_sample_rate, Decimal(s[2]) / reaction_sample_rate, Decimal(s[3]) / reaction_sample_rate, s[4]) for s in reaction['best_path'] ]

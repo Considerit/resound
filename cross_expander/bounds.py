@@ -92,6 +92,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
                                     closed_chunk_vol_diff=chunk_vol_diff,
                                     current_chunk_size=clip_length, 
                                     peak_tolerance=peak_tolerance, 
+                                    full_search=True,
                                     open_start=start,
                                     closed_start=start, 
                                     distance=first_n_samples, 
@@ -101,7 +102,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
             if candidates is None: 
                 candidates = []
             else:
-                print(f"\tCandidates: {candidates}  {max(candidates)}")
+                print(f"\tCandidates: {[ int((1000 * (c+start))/sr)/1000 for c in candidates]}  {(max(candidates) + start) / sr:.1f}")
 
             for c in candidates:
                 max_indices.append(ts + c + clip_length * 2)
@@ -112,11 +113,13 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     
     # Now, ensure the integrity of the bounds
     smoothed_bounds = [max(b) for b in bounds]
+    print("smoothed_bounds", [ b/sr for b in smoothed_bounds  ])
+    print("timestamps_samples", [ t for t in timestamps])
     for i in range(len(bounds) - 1, -1, -1):  # Start from the last element and go backward
         
 
         if i < len(bounds) - 1:
-            previous_bound = smoothed_bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i])
+            previous_bound = smoothed_bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i]) + clip_length * 2 
 
             # # If the current bound doesn't satisfy the integrity condition
             # if bounds[i] >= previous_bound:
@@ -130,9 +133,10 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         # find the latest match that happens before the next bound 
         candidates = [ b for b in bounds[i] if b <= previous_bound ]
         if len(candidates) == 0:
-            new_bound = previous_bound
             print ("**********")
-            print("Could not find bound with integrity!!!! Trying again with higher tolerance and shifted checkpoints.", timestamps_samples[i] / sr)
+            print(f"Could not find bound with integrity!!!! Trying again with higher tolerance and shifted checkpoints. Happened at {len(bounds) - i}", timestamps_samples[i] / sr)
+            
+            print("adjusted smoothed_bounds", [ b/sr for b in smoothed_bounds  ])
             return create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=seconds_per_checkpoint+10, peak_tolerance=peak_tolerance * .9)
         else:
             # print(f"New bound for {timestamps[i]} is {max(candidates)}", candidates, bounds[i])
@@ -141,6 +145,19 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         smoothed_bounds[i] = new_bound
 
     alignment_bounds = list(zip(timestamps_samples, smoothed_bounds))
+
+
+
+
+    # profiler.disable()
+    # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+    # stats.print_stats()
+    reaction['alignment_bounds'] = alignment_bounds
+    print_alignment_bounds(reaction)
+    return alignment_bounds
+
+def print_alignment_bounds(reaction):
+    alignment_bounds = reaction['alignment_bounds']
     print(f"The alignment bounds:")
     for base_ts, last_reaction_match in alignment_bounds:
         print(f"\t{base_ts / sr}  <=  {last_reaction_match / sr}")
@@ -153,17 +170,12 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         for reaction_start, reaction_end in gt:
             bound = get_bound(alignment_bounds, current_start, reaction_end)
             if( not in_bounds(bound, current_start, reaction_start)):
-                print(f"\tOh oh! {reaction_start} is not in bounds of {current_start}")
+                print(f"\tOh oh! {reaction_start / sr:.1f} is not in bounds of {current_start/sr:.1f}")
             else: 
-                print(f"\tIn bounds: {reaction_start} for {current_start}")
+                print(f"\tIn bounds: {reaction_start/sr:.1f} for {current_start/sr:.1f}")
             current_start += reaction_end - reaction_start
 
 
-    # profiler.disable()
-    # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
-    # stats.print_stats()
-
-    return alignment_bounds
 
 
 def in_bounds(bound, base_start, reaction_start):
