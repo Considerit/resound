@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from scipy.signal import correlate, find_peaks
-from cross_expander.scoring_and_similarity import mse_mfcc_similarity, cosine_mfcc_similarity
+from cross_expander.scoring_and_similarity import mse_mfcc_similarity, mfcc_cosine_similarity, raw_cosine_similarity
 
 
 from utilities import conf, on_press_key
@@ -168,7 +168,7 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
             for candidate, candidate_adjusted, candidate_adjusted_adjusted, index in filtered_adjusted_peaks:
                 sufficiently_unique = True
                 for pi in peak_indices:
-                    ind, score, mfcc_score = pi
+                    ind, score, mfcc_mse_score = pi
                     if abs(ind - index) < distance:
                         pi[2] = normalized_aggregate_mfcc_correlation[candidate]
                         
@@ -193,10 +193,12 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
 
 
         scores = []
-        max_mfcc_score = 0
+        max_mfcc_mse_score = 0
         max_correlation_score = 0
         max_mfcc_correlation_score = 0
         max_mfcc_cosine_score = 0
+        max_raw_cosine_score = 0 
+        max_composite_score = 0 
 
         candidates_seen = {}
         for candidate_index, correlation_score, mfcc_correlation_score in peak_indices:
@@ -214,23 +216,33 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                 continue 
 
             open_chunk_here_mfcc = open_chunk_mfcc[:,      round(candidate_index / hop_length): round((candidate_index + current_chunk_size) / hop_length)       ]
-            mfcc_score = mse_mfcc_similarity(mfcc1=open_chunk_here_mfcc, mfcc2=closed_chunk_mfcc)  
+            mfcc_mse_score = mse_mfcc_similarity(open_chunk_here_mfcc, closed_chunk_mfcc)  
 
-            mfcc_cosine_score = cosine_mfcc_similarity(mfcc1=open_chunk_here_mfcc, mfcc2=closed_chunk_mfcc)  
+            mfcc_cosine_score = mfcc_cosine_similarity(open_chunk_here_mfcc, closed_chunk_mfcc)  
 
-            scores.append( (candidate_index, mfcc_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score) ) 
+            raw_cosine_score = raw_cosine_similarity(open_chunk[candidate_index:candidate_index + current_chunk_size], closed_chunk)
+
+            composite_score = raw_cosine_score * mfcc_cosine_score * mfcc_mse_score
+
+            scores.append( (candidate_index, mfcc_mse_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score, raw_cosine_score, composite_score) ) 
             
             if correlation_score > max_correlation_score:
                 max_correlation_score = correlation_score
 
-            if mfcc_score > max_mfcc_score:
-                max_mfcc_score = mfcc_score
+            if mfcc_mse_score > max_mfcc_mse_score:
+                max_mfcc_mse_score = mfcc_mse_score
 
             if mfcc_correlation_score > max_mfcc_correlation_score:
                 max_mfcc_correlation_score = mfcc_correlation_score
 
             if mfcc_cosine_score > max_mfcc_cosine_score:
                 max_mfcc_cosine_score = mfcc_cosine_score
+
+            if raw_cosine_score > max_raw_cosine_score:
+                max_raw_cosine_score = raw_cosine_score
+
+            if composite_score > max_composite_score:
+                max_composite_score = composite_score
 
 
 
@@ -249,17 +261,18 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
             continuity = None
 
             for candidate in scores:
-                (candidate_index, mfcc_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score) = candidate
+                (candidate_index, mfcc_mse_score, correlation_score, mfcc_correlation_score, mfcc_cosine_score, raw_cosine_score, composite_score) = candidate
 
-                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .75) # and (mfcc_score > max_mfcc_score * peak_tolerance * .75)
-                good_by_mfcc_correlation = full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25) # and (mfcc_score > max_mfcc_score * peak_tolerance or mfcc_cosine_score > max_mfcc_cosine_score * peak_tolerance)
+                good_by_correlation = correlation_score >= max_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .75) # and (mfcc_mse_score > max_mfcc_mse_score * peak_tolerance * .75)
+                good_by_mfcc_correlation = False #full_search and mfcc_correlation_score >= max_mfcc_correlation_score * (peak_tolerance + (1 - peak_tolerance) * .25) # and (mfcc_mse_score > max_mfcc_mse_score * peak_tolerance or mfcc_cosine_score > max_mfcc_cosine_score * peak_tolerance)
 
-                good_by_mfcc = mfcc_score >= max_mfcc_score * (peak_tolerance + (1 - peak_tolerance) * .25)
+                good_by_mfcc_mse = mfcc_mse_score >= max_mfcc_mse_score * (peak_tolerance + (1 - peak_tolerance) * .25)
+                good_by_mfcc_cosine = mfcc_cosine_score >= max_mfcc_cosine_score * (peak_tolerance + (1 - peak_tolerance) * .25)
+                # good_by_raw_cosine = raw_cosine_score >= max_raw_cosine_score * (peak_tolerance + (1 - peak_tolerance) * .25)
+                good_by_composite_score = composite_score >= max_composite_score * (peak_tolerance + (1 - peak_tolerance) * .25)
 
-                good_by_cosine = mfcc_cosine_score >= max_mfcc_cosine_score * (peak_tolerance + (1 - peak_tolerance) * .75)
 
-
-                if good_by_mfcc or good_by_correlation or good_by_mfcc_correlation: 
+                if good_by_mfcc_mse or good_by_correlation or good_by_mfcc_correlation or good_by_mfcc_cosine or good_by_composite_score: #or good_by_raw_cosine: 
                     candidates.append(candidate)
 
                 score = correlation_score / max_correlation_score
@@ -283,7 +296,7 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                 return candidates
 
         # candidates_by_time = [c[0] for c in candidates]
-        # candidates.sort(key=lambda x: .5 * x[1] / max_mfcc_score + .5 * x[3] / max_correlation_score, reverse=True)
+        # candidates.sort(key=lambda x: .5 * x[1] / max_mfcc_mse_score + .5 * x[3] / max_correlation_score, reverse=True)
 
         # Helps us examine how the system is perceiving candidate starting locations
         if filter_for_similarity:
@@ -312,14 +325,14 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                 # (abs(closed_start - 1.2 * sr) < .15 * sr and open_start < 53 * sr), # dan wheeler crutch; should generate continuity 52.4
 
             ]
-            has_point_of_interest = False
+            has_point_of_interest = False #full_search
             for pi in points_of_interest:
                 has_point_of_interest = has_point_of_interest or pi
 
             if has_point_of_interest:
                 plt.figure(figsize=(14, 10))
                 
-                plt.subplot(2, 2, 1)
+                plt.subplot(2, 3, 1)
                 plt.title("Standard Correlation")
                 new_x_values = [ (x + open_start) / sr for x in range(len(correlation))]  #np.arange(len(correlation)) / sr + open_start / sr
                 plt.plot(new_x_values, correlation)
@@ -334,7 +347,7 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                 plt.xlim(left=open_start / sr, right=new_x_values[-1])
 
                 if full_search:
-                    plt.subplot(2, 2, 2)
+                    plt.subplot(2, 3, 2)
                     plt.title("Aggregate MFCC Correlation")
                     new_x_values = np.arange(len(normalized_aggregate_mfcc_correlation)) * hop_length / sr + open_start / sr
                     plt.plot(new_x_values, normalized_aggregate_mfcc_correlation)
@@ -348,11 +361,27 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                     plt.ylim(bottom=0)
                     plt.xlim(left=open_start / sr, right=new_x_values[-1])
 
-                plt.subplot(2, 2, 3)
-                plt.title(f"selected for current_start {closed_start / sr}")
 
-                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[1] / max_mfcc_score for x in scores], color='purple')
-                plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[1] / max_mfcc_score for x in candidates], color='green')
+
+                plt.subplot(2, 3, 3)
+                plt.title(f"mfcc mse similarity for current_start {closed_start / sr}")
+
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[1] / max_mfcc_mse_score for x in scores], color='purple')
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[1] / max_mfcc_mse_score for x in candidates], color='green')
+
+                plt.xlim(left=open_start / sr, right=new_x_values[-1])
+                plt.ylim(bottom=0)
+
+                plt.xlabel("Time (s)")
+                plt.grid(True)  # Adds grid lines
+
+
+
+                plt.subplot(2, 3, 4)
+                plt.title(f"mfcc cosine similarity")
+
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[4] / max_mfcc_cosine_score for x in scores], color='purple')
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[4] / max_mfcc_cosine_score for x in candidates], color='green')
 
                 plt.xlim(left=open_start / sr, right=new_x_values[-1])
                 plt.ylim(bottom=0)
@@ -361,19 +390,17 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                 plt.grid(True)  # Adds grid lines
 
 
+                plt.subplot(2, 3, 5)
+                plt.title(f"raw cosine similarity")
 
-                plt.subplot(2, 2, 4)
-                plt.title(f"cosine similarity")
-
-                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[5] / max_mfcc_cosine_score for x in scores], color='purple')
-                plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[5] / max_mfcc_cosine_score for x in candidates], color='green')
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [x[5] / max_raw_cosine_score for x in scores], color='purple')
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[5] / max_raw_cosine_score for x in candidates], color='green')
 
                 plt.xlim(left=open_start / sr, right=new_x_values[-1])
                 plt.ylim(bottom=0)
 
                 plt.xlabel("Time (s)")
                 plt.grid(True)  # Adds grid lines
-
 
 
                 

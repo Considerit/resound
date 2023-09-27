@@ -1,7 +1,7 @@
 import random, copy
 
 from cross_expander.bounds import in_bounds, get_bound
-from cross_expander.scoring_and_similarity import get_segment_cosine_similarity_score
+from cross_expander.scoring_and_similarity import get_segment_mfcc_cosine_similarity_score
 
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf, on_press_key
@@ -132,7 +132,7 @@ def is_path_quality_poor(reaction, path):
 
 
 
-        cosine_sim = get_segment_cosine_similarity_score(reaction, segment)
+        cosine_sim = get_segment_mfcc_cosine_similarity_score(reaction, segment)
         if not filler and cosine_sim < .250:
             return True
 
