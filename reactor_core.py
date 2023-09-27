@@ -69,7 +69,7 @@ def handle_reaction_video(reaction, extend_by=15):
 from moviepy.editor import VideoFileClip
 
 
-def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', include_base_video = True, options = {}):
+def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'aligned', include_base_video = True, options = {}):
 
 
 
@@ -136,7 +136,8 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
                 print(e)
                 failed_reactions.append((reaction.get('channel'), e))
 
-            print_progress()
+            log_progress(progress)
+            print_progress(progress)
 
             unload_reaction(name)
 
@@ -167,29 +168,66 @@ def create_reaction_compilations(song_def:dict, output_dir: str = 'aligned', inc
     return failed_reactions
 
 
-def print_progress():
-    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
-        if reaction.get('best_path'):
-            print(f"************* best path for {name} ****************")
-            print_path(reaction.get('best_path'), reaction, ignore_score='reaction_audio_data' not in reaction)
+def log_progress(progress):
 
-    x = PrettyTable()
-    x.field_names = ["Name", "Ground Truth", "Score", "Target Score"]
-    x.align = "r"
+    key = conf.get('song_key')
 
-    print("****************")
-    print(f"Score Summary for reactions to {conf.get('song_key')}")
+    if key not in progress: 
+        progress[key] = {}
 
-    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+    for i, (channel, reaction) in enumerate(conf.get('reactions').items()):
 
         if reaction.get('best_path'):
+
             if reaction.get('ground_truth'):
                 overlap = f"{ground_truth_overlap(reaction.get('best_path'), reaction.get('ground_truth')):.1f}%"
             else: 
                 overlap = '-'
-            x.add_row([reaction.get('channel'),overlap, reaction.get('best_path_score')[0], reaction.get('target_score', None) or '-', ])
-        else:
-            x.add_row([reaction.get('channel'), '-', '-', reaction.get('target_score', None) or '-'])
+
+
+            target_score = reaction.get('target_score', None)
+            best_observed_ground_truth = '-'
+            if target_score:
+                if isinstance(target_score, float):
+                    target_score = target_score
+                else: 
+                    target_score, best_observed_ground_truth = target_score
+
+
+
+            progress[key][channel] = {
+                'best_path': reaction.get('best_path'),
+                'best_path_output': reaction.get('best_path_output'),
+                'best_path_score': reaction.get('best_path_score'),                
+                'alignment_duration': reaction.get('alignment_duration'),
+                'target_score': target_score,
+                'best_observed_ground_truth': best_observed_ground_truth,
+                'ground_truth': reaction.get('ground_truth', None),
+                'ground_truth_overlap': overlap,
+
+            }
+
+def print_progress(progress):
+
+    for song_key, alignments in progress.items():
+        for channel, reaction in alignments.items():
+            if reaction.get('best_path'):
+                print(f"************* best path for {channel} / {song_key} ****************")
+                print(reaction.get('best_path_output'))
+
+    x = PrettyTable()
+    x.field_names = ["Song", "Channel", "Duration", "Score", "Target Score", "Ground Truth", "Best Seen Ground Truth"]
+    x.align = "r"
+
+    print("****************")
+    print(f"Score Summary")
+
+    for song_key, alignments in progress.items():
+        for channel, reaction in alignments.items():
+            if reaction.get('best_path'):
+                x.add_row([song_key, channel, reaction.get('alignment_duration'), reaction.get('best_path_score')[0], reaction.get('target_score', None) or '-', reaction.get('ground_truth_overlap'), f"{reaction.get('best_observed_ground_truth')}%" ])
+            else:
+                x.add_row([song_key, channel,'-', '-', '-', reaction.get('target_score', None) or '-'])
     print(x)
 
 
@@ -198,10 +236,11 @@ import traceback
 from library import get_library
 if __name__ == '__main__':
 
+    progress = {}
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = "magnum"
+    output_dir = "raw"
 
     for song in finished:
         clean_up(song)
@@ -212,14 +251,14 @@ if __name__ == '__main__':
 
     failures = []
     for song in manifest_only: 
-        failed = create_reaction_compilations(song, output_dir = output_dir, options=manifest_options)
+        failed = create_reaction_compilation(song, progress, output_dir = output_dir, options=manifest_options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
     options = {
         "create_alignment": True,
         "save_alignment_metadata": True,
-        "output_alignment_video": True,
+        "output_alignment_video": False,
         "isolate_commentary": False,
         "create_reactor_view": False,
         "create_compilation": False,
@@ -230,14 +269,14 @@ if __name__ == '__main__':
     }
     failures = []
     for song in drafts: 
-        failed = create_reaction_compilations(song, output_dir = output_dir, options=options)
+        failed = create_reaction_compilation(song, progress, output_dir = output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
     options['draft'] = False
     failures = []
     for song in songs: 
-        failed = create_reaction_compilations(song, output_dir = output_dir, options=options)
+        failed = create_reaction_compilation(song, progress, output_dir = output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
 

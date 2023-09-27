@@ -33,6 +33,7 @@
 
 
 import os
+import time
 
 from decimal import Decimal, getcontext
 
@@ -43,7 +44,7 @@ from utilities import conf, save_object_to_file, read_object_from_file
 from utilities import conversion_audio_sample_rate as sr
 
 from cross_expander.pruning_search import initialize_path_pruning, initialize_checkpoints
-from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, initialize_segment_tracking
+from cross_expander.scoring_and_similarity import path_score, find_best_path, initialize_path_score, initialize_segment_tracking, print_path
 from cross_expander.find_segment_start import initialize_segment_start_cache
 from cross_expander.find_segment_end import initialize_segment_end_cache
 
@@ -124,7 +125,6 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
 
     if conf['create_alignment'] or conf['alignment_test']:
         alignment_metadata_file = os.path.splitext(output_file)[0] + '.pckl'
-        score_metadata_file = os.path.splitext(output_file)[0] + '-score.pckl'
 
         if not os.path.exists(alignment_metadata_file):
             conf['load_reaction'](reaction['channel'])
@@ -136,29 +136,25 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
             precision_str = str(precision)
             getcontext().prec = len(precision_str.split('.')[-1])
 
+            start = time.perf_counter()
             best_path = cross_expander_aligner(reaction)
-            
+            alignment_duration = (time.perf_counter() - start) / 60 # in minutes
+            best_path_score = path_score(best_path, reaction)
 
-            # print("\nsequences:")
-
-            # for segment in best_path:
-            #     print(f"\t{'*' if segment[4] else ''}base: {float(segment[2])}-{float(segment[3])}  reaction: {float(segment[0])}-{float(segment[1])}")
+            best_path_output = print_path(best_path, reaction).get_string()
 
             if conf['save_alignment_metadata']:
-                save_object_to_file(alignment_metadata_file, best_path)
-                save_object_to_file(score_metadata_file, path_score(best_path, reaction))
+                metadata = {
+                    'best_path_score': best_path_score,
+                    'best_path': best_path,
+                    'best_path_output': best_path_output,
+                    'alignment_duration': alignment_duration
+                }                
+                save_object_to_file(alignment_metadata_file, metadata)
         else: 
-            best_path = read_object_from_file(alignment_metadata_file)
+            metadata = read_object_from_file(alignment_metadata_file)
 
-
-        reaction['best_path'] = best_path
-
-        if not os.path.exists(score_metadata_file):
-            print("SAVING SCORE", score_metadata_file)
-            conf['load_reaction'](reaction['channel'])
-            save_object_to_file(score_metadata_file, path_score(best_path, reaction))
-        
-        reaction['best_path_score'] = read_object_from_file(score_metadata_file)
+        reaction.update(metadata)
 
         if not os.path.exists(output_file) and conf["output_alignment_video"]:
             conf['load_reaction'](reaction['channel'])
