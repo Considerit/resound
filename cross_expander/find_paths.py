@@ -34,7 +34,7 @@ def align_by_checkpoint_probe(reaction):
                                  current_path=[], 
                                  current_path_checkpoint_scores={}, 
                                  current_start=0, 
-                                 reaction_start=0, 
+                                 reaction_start=10 * sr, # reactions don't start at the beginning, but sometimes they have a song preview we want to skip
                                  continuations=starting_points, 
                                  recursive=False, 
                                  peak_tolerance=conf.get('peak_tolerance')*.25)
