@@ -62,10 +62,12 @@ def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
     width, height = output_size
 
     base_video, cell_size = create_layout_for_composition(base_video, width, height)
-
+    print("\tLayout created")
     clips, audio_clips, clip_length, base_video = create_clips(base_video, cell_size, draft)
+    print("\tClips created")
 
     final_clip = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
+    print("\tClips composed")
 
     # Save the result
     if draft:
@@ -123,8 +125,11 @@ def create_clips(base_video, cell_size, draft):
     clip_length = 0
 
     for name, reaction in conf.get('reactions').items():
+      print(f"\t\tCreating clip for {name}")
       reactors = reaction.get('reactors')
-      for reactor in reactors: 
+      for idx, reactor in enumerate(reactors): 
+        print(f"\t\t\tReactor {idx}")
+
         reactor_color = reactor_colors.pop()
         x,y = reactor['grid_assignment']
 

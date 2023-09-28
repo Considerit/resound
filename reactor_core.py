@@ -36,7 +36,7 @@ def clean_up(song_def: dict):
             print(f"Error occurred while deleting file {wav_file}: {e}")
 
 
-def handle_reaction_video(reaction, extend_by=15):
+def handle_reaction_video(reaction, compilation_exists, extend_by=15):
 
     output_file = reaction.get('aligned_path')
 
@@ -48,7 +48,7 @@ def handle_reaction_video(reaction, extend_by=15):
 
     create_aligned_reaction_video(reaction, extend_by=extend_by)
 
-    if not conf["isolate_commentary"]:
+    if not conf["isolate_commentary"] or compilation_exists:
         return []
 
     conf['load_reaction'](reaction['channel'])
@@ -92,9 +92,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         compilation_path = conf.get('compilation_path')
 
-        if os.path.exists(compilation_path):
-          print("Compilation already exists", compilation_path)
-          return []
+        compilation_exists = os.path.exists(compilation_path)
 
 
         lock_file = os.path.join(temp_directory, 'locked')
@@ -105,7 +103,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         print("Processing directory", song_directory, "Outputting to", output_dir)
 
-        if conf.get('download_and_parse'):
+        if not compilation_exists and conf.get('download_and_parse'):
             download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'])
 
         if conf.get('only_manifest', False):
@@ -125,7 +123,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
                 # profiler = cProfile.Profile()
                 # profiler.enable()
 
-                handle_reaction_video(reaction, extend_by=extend_by)
+                handle_reaction_video(reaction, compilation_exists=compilation_exists, extend_by=extend_by)
 
                 # profiler.disable()
                 # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
@@ -142,7 +140,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             unload_reaction(name)
 
 
-        if conf['create_compilation']:
+        if not compilation_exists and conf['create_compilation']:
             compose_reactor_compilation(extend_by=extend_by)
     
 
@@ -216,7 +214,7 @@ def print_progress(progress):
                 print(reaction.get('best_path_output'))
 
     x = PrettyTable()
-    x.field_names = ["Song", "Channel", "Duration", "Score", "Target Score", "Ground Truth", "Best Seen Ground Truth"]
+    x.field_names = ["Song", "Channel", "Duration", "Score", "Best Seen Score", "Ground Truth", "Best Seen Ground Truth"]
     x.align = "r"
 
     print("****************")
@@ -225,7 +223,7 @@ def print_progress(progress):
     for song_key, alignments in progress.items():
         for channel, reaction in alignments.items():
             if reaction.get('best_path'):
-                x.add_row([song_key, channel, reaction.get('alignment_duration'), reaction.get('best_path_score')[0], reaction.get('target_score', None) or '-', reaction.get('ground_truth_overlap'), f"{reaction.get('best_observed_ground_truth')}%" ])
+                x.add_row([song_key, channel, f"{reaction.get('alignment_duration'):.1f}", f"{reaction.get('best_path_score')[0]:.3f}", reaction.get('target_score', None) or '-', reaction.get('ground_truth_overlap'), f"{reaction.get('best_observed_ground_truth')}%" ])
             else:
                 x.add_row([song_key, channel,'-', '-', '-', reaction.get('target_score', None) or '-'])
     print(x)
@@ -240,7 +238,7 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = "raw"
+    output_dir = "more_sensitive_ends" #"tighter_overall_prune"
 
     for song in finished:
         clean_up(song)
@@ -262,7 +260,7 @@ if __name__ == '__main__':
         "isolate_commentary": False,
         "create_reactor_view": False,
         "create_compilation": False,
-        "download_and_parse": True,
+        "download_and_parse": False,
         "alignment_test": True,
         "force_ground_truth_paths": False,
         "draft": False

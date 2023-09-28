@@ -100,7 +100,7 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
     
     cell_size = math.floor(2 * a)
 
-    print(f"len(hex_grid) = {len(coords)}  target_cells={min_cells} cell_size={cell_size}")
+    print(f"\tLayout: len(hex_grid) = {len(coords)}  target_cells={min_cells} cell_size={cell_size}")
 
     return coords, cell_size  # return 2 * a (diameter) to match with the circle representation
 
@@ -193,7 +193,7 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video)
       else:
         other_videos.extend(reactors)
         
-    print(f"feat={len(featured_videos)}  connected={len(connected_videos)*2}   other={len(other_videos)}")
+    print(f"\tLayout: featured={len(featured_videos)}  grouped={len(connected_videos)*2}   singular={len(other_videos)}")
 
     # ...Assign the featured reactors
     featured_videos.sort(key=lambda x: 0 if x['orientation'] == 'center' else 1, reverse=True)
