@@ -132,7 +132,9 @@ def path_score(path, reaction, end=None, start=0):
 
     mfcc_alignment = path_score_by_mfcc_mse_similarity(path, reaction)
     cosine_mfcc_alignment = path_score_by_mfcc_cosine_similarity(path, reaction)
-    alignment = 100 * mfcc_alignment * cosine_mfcc_alignment
+    # cosine_raw_alignment = path_score_by_raw_cosine_similarity(path, reaction)
+
+    alignment = 100 * mfcc_alignment * cosine_mfcc_alignment # * cosine_raw_alignment
 
 
 
@@ -165,6 +167,27 @@ def path_score_by_mfcc_cosine_similarity(path, reaction):
 
     return mfcc_sequence_sum_score
 
+
+def path_score_by_raw_cosine_similarity(path, reaction):
+    sequence_sum_score = 0
+
+    total_duration = 0 
+    for sequence in path:
+        reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+        total_duration += reaction_end - reaction_start
+
+    for sequence in path:
+        reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+
+        if not is_filler: 
+            score = get_segment_raw_cosine_similarity_score(reaction, sequence)
+            duration_factor = (current_end - current_start) / total_duration
+            sequence_sum_score    += score * duration_factor
+
+    return sequence_sum_score
+
+
+
 def path_score_by_mfcc_mse_similarity(path, reaction):
     total_duration = 0 
     for sequence in path:
@@ -193,8 +216,9 @@ def get_chunk_score(reaction, reaction_start, reaction_end, current_start, curre
     segment = (reaction_start, reaction_end, current_start, current_end, False)
     mse_score = get_segment_mfcc_mse_score(reaction, segment)
     cosine_score = get_segment_mfcc_cosine_similarity_score(reaction, segment)
+    # raw_cosine_score = get_segment_raw_cosine_similarity_score(reaction, segment)
 
-    alignment = cosine_score * mse_score
+    alignment = cosine_score * mse_score # * raw_cosine_score
     return alignment
 
 
