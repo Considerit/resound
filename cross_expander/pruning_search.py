@@ -13,6 +13,8 @@ def initialize_path_pruning():
     global prune_types
     prunes = [  
                 "poor_path_branching", 
+                "poor_path_fill",
+                "poor_path_cosine",
                 "bounds",
                 "continuity",
                 'duplicate_path_prune',
@@ -94,9 +96,14 @@ def is_path_quality_poor(reaction, path):
     short_segments = 0
     short_separation = 0
 
+    filler_duration = 0
+    duration = 0
+
     for i, segment in enumerate(path): 
         (reaction_start, reaction_end, current_start, current_end, filler) = segment
+        duration += current_end - current_start
         if filler:
+            filler_duration += current_end - current_start
             continue
 
         if i > 0: 
@@ -134,7 +141,12 @@ def is_path_quality_poor(reaction, path):
 
         cosine_sim = get_segment_mfcc_cosine_similarity_score(reaction, segment)
         if not filler and cosine_sim < .250:
+            prune_types['poor_path_cosine'] += 1
             return True
+
+    if filler_duration * sr  > (10 * len(conf.get('base_audio_data')) / 3): # no more than 10 seconds of filler per three minutes of base audio
+        prune_types['poor_path_fill']
+        return True 
 
 
     return False
