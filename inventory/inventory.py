@@ -26,7 +26,7 @@ def process_reaction(song, artist, search, item, reactors, reactions):
     channel_id = item['snippet']['channelId']
     
 
-    if isinstance(song, str):
+    if isinstance(search, str):
         song_present = search.lower() in item['snippet']['title'].lower()
     else:
         song_present = any(s.lower() in item['snippet']['title'].lower() for s in search)
@@ -45,6 +45,8 @@ def process_reaction(song, artist, search, item, reactors, reactions):
         print(f"{reactor_name} doesn't have a videoid")
         return
 
+
+    print(item)
     reactions[item['snippet']['title']] = {
         'song': song,
         'reactor': reactor_name,
