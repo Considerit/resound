@@ -5,6 +5,7 @@ import glob
 from prettytable import PrettyTable
 
 from utilities import prepare_reactions, extract_audio, conf, make_conf, unload_reaction
+from utilities import conversion_audio_sample_rate as sr
 from inventory import download_and_parse_reactions, get_manifest_path
 from cross_expander import create_aligned_reaction_video
 from face_finder import create_reactor_view
@@ -12,6 +13,7 @@ from backchannel_isolator import process_reactor_audio
 from compositor import compose_reactor_compilation
 from cross_expander.scoring_and_similarity import print_path, ground_truth_overlap
 
+from cross_expander.path_painter import paint_paths
 
 import cProfile
 import pstats
@@ -46,7 +48,12 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     print("processing ", reaction['channel'])
     # Create the output video file name
 
+    
+
+
     create_aligned_reaction_video(reaction, extend_by=extend_by)
+
+
 
     if not conf["isolate_commentary"] or compilation_exists:
         return []
@@ -80,6 +87,26 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
 
         locked = make_conf(song_def, options, output_dir)
+
+
+
+        conf.setdefault("step_size", 1)
+        conf.setdefault("min_segment_length_in_seconds", 3)
+        conf.setdefault("reverse_search_bound", conf['min_segment_length_in_seconds'])
+        conf.setdefault("peak_tolerance", .5)
+        conf.setdefault("expansion_tolerance", .7)
+        step_size = conf.get('step_size')
+        min_segment_length_in_seconds = conf.get('min_segment_length_in_seconds')
+
+        # Convert seconds to samples
+        n_samples = int(step_size * sr)
+        first_n_samples = int(min_segment_length_in_seconds * sr)
+
+        conf['n_samples'] = n_samples
+        conf['first_n_samples'] = first_n_samples
+
+
+
 
         if locked:
             print(f"...Skipping {song_def['song']} because another process is already working on this video")
@@ -116,8 +143,11 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
         extend_by = 15
         for i, (name, reaction) in enumerate(conf.get('reactions').items()):
 
-            # if 'Cliff' not in reaction.get('channel'):
+
+            # if reaction.get('channel') != "The Dan Wheeler Show":
             #     continue
+
+
 
             try:
                 # profiler = cProfile.Profile()
@@ -140,7 +170,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             unload_reaction(name)
 
 
-        if not compilation_exists and conf['create_compilation']:
+        if not conf.get('paint_paths') and not compilation_exists and conf['create_compilation']:
             compose_reactor_compilation(extend_by=extend_by)
     
 
@@ -185,11 +215,15 @@ def log_progress(progress):
 
             target_score = reaction.get('target_score', None)
             best_observed_ground_truth = '-'
+            best_local_ground_truth = '-'
             if target_score:
                 if isinstance(target_score, float):
                     target_score = target_score
                 else: 
-                    target_score, best_observed_ground_truth = target_score
+                    if len(target_score) == 2:
+                        target_score, best_observed_ground_truth = target_score
+                    else: 
+                        target_score, best_observed_ground_truth, best_local_ground_truth  = target_score
 
 
 
@@ -200,6 +234,7 @@ def log_progress(progress):
                 'alignment_duration': reaction.get('alignment_duration'),
                 'target_score': target_score,
                 'best_observed_ground_truth': best_observed_ground_truth,
+                'best_local_ground_truth': best_local_ground_truth,                
                 'ground_truth': reaction.get('ground_truth', None),
                 'ground_truth_overlap': overlap,
 
@@ -214,7 +249,7 @@ def print_progress(progress):
                 print(reaction.get('best_path_output'))
 
     x = PrettyTable()
-    x.field_names = ["Song", "Channel", "Duration", "Score", "Best Seen Score", "Ground Truth", "Best Seen Ground Truth"]
+    x.field_names = ["Song", "Channel", "Duration", "Score", "Best Seen Score", "Ground Truth", "Local Best Ground Truth", "Best Seen Ground Truth"]
     x.align = "r"
 
     print("****************")
@@ -223,7 +258,7 @@ def print_progress(progress):
     for song_key, alignments in progress.items():
         for channel, reaction in alignments.items():
             if reaction.get('best_path'):
-                x.add_row([song_key, channel, f"{reaction.get('alignment_duration'):.1f}", f"{reaction.get('best_path_score')[0]:.3f}", reaction.get('target_score', None) or '-', reaction.get('ground_truth_overlap'), f"{reaction.get('best_observed_ground_truth')}%" ])
+                x.add_row([song_key, channel, f"{reaction.get('alignment_duration'):.1f}", f"{reaction.get('best_path_score')[0]:.3f}", reaction.get('target_score', None) or '-', reaction.get('ground_truth_overlap'), f"{reaction.get('best_local_ground_truth')}%" , f"{reaction.get('best_observed_ground_truth')}%"])
             else:
                 x.add_row([song_key, channel,'-', '-', '-', reaction.get('target_score', None) or '-'])
     print(x)
@@ -238,7 +273,7 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = "more_sensitive_ends" #"tighter_overall_prune"
+    output_dir = "painter-high-tolerance" #"more_sensitive_ends" #"tighter_overall_prune"
 
     for song in finished:
         clean_up(song)
@@ -260,10 +295,11 @@ if __name__ == '__main__':
         "isolate_commentary": False,
         "create_reactor_view": False,
         "create_compilation": False,
-        "download_and_parse": False,
-        "alignment_test": True,
+        "download_and_parse": True,
+        "alignment_test": False,
         "force_ground_truth_paths": False,
-        "draft": False
+        "draft": False,
+        "paint_paths": True
     }
     failures = []
     for song in drafts: 

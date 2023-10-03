@@ -57,7 +57,10 @@ def make_conf(song_def, options, temp_directory):
   def load_reactions():
     from inventory import get_manifest_path
 
-    manifest = open(get_manifest_path(conf['artist'], conf['song_name']), "r")
+    try: 
+      manifest = open(get_manifest_path(conf['artist'], conf['song_name']), "r")
+    except:
+      print(f"Manifest doesn't yet exist for {conf['song_name']}")
     reaction_videos = prepare_reactions()
 
     temp_directory = conf.get('temp_directory')
