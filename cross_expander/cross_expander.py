@@ -66,14 +66,9 @@ def find_alignments(reaction):
 
     # best_finished_path.clear()
 
+    reaction['alignment_bounds'] = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
 
-    saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-bounds.pckl'
-    if not os.path.exists(saved_bounds):
-        reaction['alignment_bounds'] = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
-        save_object_to_file(saved_bounds, reaction['alignment_bounds'])
-    else: 
-        reaction['alignment_bounds'] = read_object_from_file(saved_bounds)
-        print_alignment_bounds(reaction)
+    
 
 
     paths = align_by_checkpoint_probe(reaction)
@@ -85,17 +80,7 @@ def find_alignments(reaction):
 def cross_expander_aligner(reaction):
     global conf
 
-    step_size = conf.get('step_size')
-    min_segment_length_in_seconds = conf.get('min_segment_length_in_seconds')
-
-    # Convert seconds to samples
-    n_samples = int(step_size * sr)
-    first_n_samples = int(min_segment_length_in_seconds * sr)
-
-
     conf['checkpoints'] = initialize_checkpoints()
-    conf['n_samples'] = n_samples
-    conf['first_n_samples'] = first_n_samples
 
     paths = find_alignments(reaction)
 
@@ -117,11 +102,6 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
     output_file = reaction.get('aligned_path')
 
 
-    conf.setdefault("step_size", 1)
-    conf.setdefault("min_segment_length_in_seconds", 3)
-    conf.setdefault("reverse_search_bound", conf['min_segment_length_in_seconds'])
-    conf.setdefault("peak_tolerance", .5)
-    conf.setdefault("expansion_tolerance", .85)
 
     if conf['create_alignment'] or conf['alignment_test']:
         alignment_metadata_file = os.path.splitext(output_file)[0] + '.pckl'
@@ -137,19 +117,30 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
             getcontext().prec = len(precision_str.split('.')[-1])
 
             start = time.perf_counter()
-            best_path = cross_expander_aligner(reaction)
+
+
+
+            if conf.get('paint_paths'):
+                from cross_expander.path_painter import paint_paths
+                best_path = paint_paths(reaction)
+            else:
+                best_path = cross_expander_aligner(reaction)
+
+
+
             alignment_duration = (time.perf_counter() - start) / 60 # in minutes
             best_path_score = path_score(best_path, reaction)
 
             best_path_output = print_path(best_path, reaction).get_string()
 
+            metadata = {
+                'best_path_score': best_path_score,
+                'best_path': best_path,
+                'best_path_output': best_path_output,
+                'alignment_duration': alignment_duration
+            }                
+
             if conf['save_alignment_metadata']:
-                metadata = {
-                    'best_path_score': best_path_score,
-                    'best_path': best_path,
-                    'best_path_output': best_path_output,
-                    'alignment_duration': alignment_duration
-                }                
                 save_object_to_file(alignment_metadata_file, metadata)
         else: 
             metadata = read_object_from_file(alignment_metadata_file)
