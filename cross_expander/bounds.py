@@ -1,6 +1,6 @@
-
+import os
 from utilities import conversion_audio_sample_rate as sr
-from utilities import conf
+from utilities import conf, save_object_to_file, read_object_from_file
 
 # I have two audio files: a base audio file that contains something like a song and a reaction audio file that contains 
 # someone reacting to that base audio file. It includes the base audio, and more. 
@@ -27,6 +27,17 @@ from utilities import conf
 
 def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
     from cross_expander.find_segment_start import find_segment_starts
+
+
+    saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-bounds.pckl'
+    if os.path.exists(saved_bounds):
+        reaction['alignment_bounds'] = read_object_from_file(saved_bounds)
+        print_alignment_bounds(reaction)        
+        return reaction['alignment_bounds']
+
+
+
+
 
     # profiler = cProfile.Profile()
     # profiler.enable()
@@ -150,6 +161,9 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     # stats.print_stats()
     reaction['alignment_bounds'] = alignment_bounds
     print_alignment_bounds(reaction)
+
+    save_object_to_file(saved_bounds, reaction['alignment_bounds'])
+
     return alignment_bounds
 
 def print_alignment_bounds(reaction):
