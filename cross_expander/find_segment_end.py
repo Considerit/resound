@@ -2,9 +2,14 @@ from decimal import Decimal
 
 from cross_expander.scoring_and_similarity import get_chunk_score
 from cross_expander.find_segment_start import find_segment_starts
+from cross_expander.pruning_search import prune_types
+
 
 from utilities import conf, samples_per_frame, universal_frame_rate, is_close
 from utilities import conversion_audio_sample_rate as sr
+
+
+
 
 def find_correlation_end(reaction, current_start, reaction_start, step, reaction_end=None, end_at=None, max_score=0, cache={}):
     expansion_tolerance = conf.get('expansion_tolerance')
@@ -249,7 +254,7 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
 
 
 
-def find_segment_end(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size, prune_types):
+def find_segment_end(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size):
 
     scope_key = f'({current_start}, {reaction_start + candidate_segment_start}, {current_chunk_size})'
     

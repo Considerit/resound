@@ -176,7 +176,7 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
             next_reaction_start = reaction_start
 
             while find_end:
-                segment, next_start, next_reaction_start = find_segment_end(reaction, next_start, next_reaction_start, candidate_segment_start, current_chunk_size, prune_types)
+                segment, next_start, next_reaction_start = find_segment_end(reaction, next_start, next_reaction_start, candidate_segment_start, current_chunk_size)
                 if segment:
                     backfill_was_needed = segment[-1]
                     append_or_extend_segment(my_path, segment)
