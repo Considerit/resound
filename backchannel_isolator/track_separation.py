@@ -1,11 +1,11 @@
 import noisereduce as nr
 import soundfile as sf
 import os
-import librosa
+import soundfile as sf
 
 
-from utilities.audio_processing import highpass_filter
-from utilities import conversion_audio_sample_rate as sr
+from utilities.audio_processing import highpass_filter, convert_to_mono
+from utilities import conf, conversion_audio_sample_rate as sr
 
 
 ####################################
@@ -20,7 +20,7 @@ def get_spleeter():
         spleeter_separator = Separator('spleeter:2stems')
     return spleeter_separator
 
-def separate_vocals(output_dir, song_path, reaction_path, post_process=False):
+def separate_vocals(reaction, output_dir, song_path, reaction_path, post_process=False):
     # Create a separator with 2 stems (vocals and accompaniment)
 
     song_sep = output_dir
@@ -48,15 +48,27 @@ def separate_vocals(output_dir, song_path, reaction_path, post_process=False):
         # sr_reaction = sr_song = None
 
         if not os.path.exists(song_vocals_high_passed_path):
-            song_vocals, sr_song = librosa.load( song_vocals_path, sr=sr, mono=True )
+            #song_vocals, sr_song = librosa.load( song_vocals_path, sr=sr, mono=True )
+            # song_vocals = post_process_audio(song_vocals)
+            # sf.write(song_vocals_high_passed_path, song_vocals.T, sr)
+
+            audio_data, __ = sf.read(song_vocals_path)
+            song_vocals = convert_to_mono(audio_data)
             song_vocals = post_process_audio(song_vocals)
-            sf.write(song_vocals_high_passed_path, song_vocals.T, sr)
+            sf.write(song_vocals_high_passed_path, song_vocals, sr)
         song_vocals_path = song_vocals_high_passed_path
 
         if not os.path.exists(reaction_vocals_high_passed_path):
-            reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=sr, mono=True )
+            # reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=sr, mono=True )
+            # reaction_vocals = post_process_audio(reaction_vocals)
+            # sf.write(reaction_vocals_high_passed_path, reaction_vocals.T, sr)
+
+            audio_data, __ = sf.read(reaction_vocals_path)
+            reaction_vocals = convert_to_mono(audio_data)
             reaction_vocals = post_process_audio(reaction_vocals)
-            sf.write(reaction_vocals_high_passed_path, reaction_vocals.T, sr)
+            sf.write(reaction_vocals_high_passed_path, reaction_vocals, sr)
+
+
         reaction_vocals_path = reaction_vocals_high_passed_path
 
         # if sr_reaction and sr_song:

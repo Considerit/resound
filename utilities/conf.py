@@ -115,11 +115,27 @@ def make_conf(song_def, options, temp_directory):
       reaction_conf['reaction_audio_mfcc'] = librosa.feature.mfcc(y=reaction_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
       reaction_conf['reaction_percentile_loudness'] = audio_percentile_loudness(reaction_audio_data, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=conf.get('hop_length'))
 
+  def load_aligned_reaction_data(channel):
+    reaction_conf = conf.get('reactions')[channel]
+
+    if not conf.get('base_video_path'):
+      load_base_video()
+
+    if not 'reaction_audio_path' in reaction_conf: 
+      load_reaction(channel)
+
+    if not 'aligned_reaction_data' in reaction_conf:
+      path = reaction_conf.get('aligned_audio_path')
+
+      aligned_reaction_data, __, __ = extract_audio(path)
+      reaction_conf['aligned_reaction_data'] = aligned_reaction_data
+
 
 
   conf.update({
     'load_base_video': load_base_video,
-    'load_reaction': load_reaction
+    'load_reaction': load_reaction,
+    'load_aligned_reaction_data': load_aligned_reaction_data,
   })
 
   load_reactions()
@@ -133,10 +149,11 @@ def unload_reaction(channel):
 
   reaction_conf = conf.get('reactions')[channel]
 
-  if 'reaction_audio_data' in reaction_conf: 
-    del reaction_conf["reaction_audio_data"]
-    del reaction_conf['reaction_audio_mfcc']
-    del reaction_conf['reaction_percentile_loudness']
+  to_delete = ['reaction_audio_data', 'reaction_audio_mfcc', 'reaction_percentile_loudness', "aligned_reaction_data"]
+
+  for field in to_delete:
+    if field in reaction_conf:
+      del reaction_conf[field]
 
   gc.collect()
 

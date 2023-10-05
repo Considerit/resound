@@ -3,6 +3,18 @@ import numpy as np
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
+
+def convert_to_mono(soundfile_audio):
+    # Check the number of dimensions
+    if len(soundfile_audio.shape) == 1:
+        return soundfile_audio  # It's already mono
+    elif soundfile_audio.shape[1] > 1:
+        return np.mean(soundfile_audio, axis=1)  # Convert stereo to mono
+    else:
+        return soundfile_audio  # It's mono with a shape like (n, 1), just return it as-is
+
+
+
 def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=None):
     if hop_length is None:
         hop_length = conf.get('hop_length')

@@ -11,7 +11,7 @@ from scipy import signal
 
 from backchannel_isolator.track_separation import separate_vocals
 
-from utilities.audio_processing import audio_percentile_loudness
+from utilities.audio_processing import audio_percentile_loudness, convert_to_mono
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
@@ -252,7 +252,7 @@ def apply_segments(audio, segments):
 
 
 
-def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
+def mute_by_deviation(reaction, song_path, reaction_path, output_path, original_reaction):
 
     if profile_isolator:
         global profiler
@@ -265,8 +265,18 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     percent_volume_diff_thresh = 8
 
     # Load the song and reaction audio
-    song, __ = librosa.load(song_path, sr=sr, mono=True)
-    reaction, __ = librosa.load(reaction_path, sr=sr, mono=True)
+
+    audio_data, __ = sf.read(song_path)
+    song = convert_to_mono(audio_data)
+
+
+    # song, __ = librosa.load(song_path, sr=sr, mono=True)
+
+
+    audio_data, __ = sf.read(reaction_path)
+    reaction_data = convert_to_mono(audio_data)
+
+    # reaction_data, __ = librosa.load(reaction_path, sr=sr, mono=True)
 
 
 
@@ -277,48 +287,51 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     # if mono:
     #     # Convert them to pseudo multi-channel (still mono but with an extra dimension to look like multi-channel)
     #     song = np.expand_dims(song, axis=0)
-    #     reaction = np.expand_dims(reaction, axis=0)
+    #     reaction_data = np.expand_dims(reaction_data, axis=0)
 
     # Check the standard deviation of the audio data
-    # assert song.shape == reaction.shape, f"Song and reaction must have the same number of channels (song = {song.shape}, reaction = {reaction.shape})"
+    # assert song.shape == reaction_data.shape, f"Song and reaction must have the same number of channels (song = {song.shape}, reaction = {reaction_data.shape})"
 
     delay = 0
     extra_reaction = None # often a result of extend by
-    if len(song) > len(reaction):
-        song = song[:len(reaction)]
+    if len(song) > len(reaction_data):
+        song = song[:len(reaction_data)]
     else:
-        original_reaction, __ = librosa.load(original_reaction, sr=sr, mono=True)
+        conf.get('load_aligned_reaction_data')(reaction.get('channel'))
+
+        original_reaction = reaction.get('aligned_reaction_data')
+
         extra_reaction = original_reaction[len(song):] # extract this from the original reaction audio, not the source separated content
-        reaction = reaction[:len(song)]
+        reaction_data = reaction_data[:len(song)]
 
 
 
-        # pad_width = len(reaction) - len(song) - delay
+        # pad_width = len(reaction_data) - len(song) - delay
         # song = np.pad(song, (delay, pad_width))
 
 
     # print("calculating short volume diff")
-    # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh)
+    # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh)
 
     # print("calculating short volume diff")
-    # mask12, diff12 = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, std_dev=1000/4)
+    # mask12, diff12 = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, std_dev=1000/4)
 
     print("calculating long volume diff")
-    percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, window=1 * sr, plot=False)
+    percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, window=1 * sr, plot=False)
     long_mask1, long_diff1, song_percentile_pitch, reaction_percentile_pitch = percep_mask
     
     # print("calculating long volume diff2")
-    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, window=sr / 2)
+    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, window=sr / 2)
     # long_mask12, long_diff12, song_percentile_pitch, reaction_percentile_pitch = percep_mask
 
     # print("calculating long volume diff")
-    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction, percent_volume_diff_thresh, window=4 * sr, plot=False)
+    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, window=4 * sr, plot=False)
     # long_mask2, long_diff2, song_percentile_pitch, reaction_percentile_pitch = percep_mask
 
 
 
     # print('calculating pitch diff')
-    # mask2, diff2, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_pitch_difference(song, reaction, threshold=50, plot=False)
+    # mask2, diff2, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_pitch_difference(song, reaction_data, threshold=50, plot=False)
 
 
     # print('calculating diffs and masks')
@@ -517,10 +530,10 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
 
     segments = process_mask(mask, min_segment_length / 1000)
 
-    padded_segments = pad_segments(segments, len(reaction), pad_beginning=0.5, pad_ending=0.1)
+    padded_segments = pad_segments(segments, len(reaction_data), pad_beginning=0.5, pad_ending=0.1)
     merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
 
-    suppressed_reaction = apply_segments(reaction, merged_segments)
+    suppressed_reaction = apply_segments(reaction_data, merged_segments)
 
 
     if extra_reaction is not None:
@@ -532,12 +545,12 @@ def mute_by_deviation(song_path, reaction_path, output_path, original_reaction):
     #     suppressed_reaction = np.squeeze(suppressed_reaction)
 
     
-    sf.write(output_path, suppressed_reaction.T, sr)
+    sf.write(output_path, suppressed_reaction, sr)
 
     # suppressed_reaction = post_process_audio(suppressed_reaction, original_sr_reaction)
     # # Now you can save suppressed_reaction into a file
     # output_path = os.path.splitext(reaction_path)[0] + "_commentary.wav"
-    # sf.write(output_path, suppressed_reaction.T, original_sr_reaction)  # Transpose the output because soundfile expects shape (n_samples, n_channels)
+    # sf.write(output_path, suppressed_reaction, original_sr_reaction)  # Transpose the output because soundfile expects shape (n_samples, n_channels)
 
     if profile_isolator:
         profiler.disable()
@@ -555,28 +568,41 @@ def process_reactor_audio(reaction, extended_by=0):
     reaction_audio = reaction.get('aligned_audio_path')
     base_audio = conf.get('base_audio_path')
 
-    reaction_vocals_path, song_vocals_path = separate_vocals(output_dir, base_audio, reaction_audio, post_process=True)
+
+    reaction_vocals_path, song_vocals_path = separate_vocals(reaction, output_dir, base_audio, reaction_audio, post_process=True)
     output_path = os.path.splitext(reaction_vocals_path)[0] + "_isolated_commentary.wav"
 
     if not os.path.exists(output_path):
 
         if extended_by > 0:
+            conf.get('load_aligned_reaction_data')(reaction.get('channel'))
+
             reaction_audio_name, ext = os.path.splitext(reaction_audio)
             new_reaction_audio = f"{reaction_audio_name}-truncated{ext}"
-            full_reaction_audio, _ = librosa.load(reaction_audio, sr=sr)
+            full_reaction_audio = reaction.get('aligned_reaction_data') #, _ = librosa.load(reaction_audio, sr=sr)
             extended_audio = full_reaction_audio[-sr * extended_by:]  # Last extended_by seconds of audio
             truncated_reaction_audio = full_reaction_audio[:-sr * extended_by]  # Except for last extended_by seconds
-            sf.write(new_reaction_audio, truncated_reaction_audio.T, sr)  # Write truncated_reaction_audio to a new file
+            sf.write(new_reaction_audio, truncated_reaction_audio, sr)  # Write truncated_reaction_audio to a new file
             reaction_audio = new_reaction_audio
 
         print(f"Separating commentary from {reaction_audio} to {output_path}")
-        mute_by_deviation(song_vocals_path, reaction_vocals_path, output_path, reaction_audio)
+        mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, output_path, reaction_audio)
 
         if extended_by > 0:
-            output_audio, _ = librosa.load(output_path, sr=sr)
+            # output_audio, _ = librosa.load(output_path, sr=sr)
+
+            audio_data, __ = sf.read(output_path)
+            output_audio = convert_to_mono(audio_data)
+
+
             new_output_audio = np.concatenate((output_audio, extended_audio))  # Append truncated_reaction_audio to the end
-            sf.write(output_path, new_output_audio.T, sr)  # Write new_output_audio to a new file
+            sf.write(output_path, new_output_audio, sr)  # Write new_output_audio to a new file
 
     return output_path
+
+
+
+
+
 
 

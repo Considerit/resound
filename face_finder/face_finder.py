@@ -118,7 +118,9 @@ def create_reactor_view(reaction, show_facial_recognition=False):
           reactor_captures = reactor[1]
           centroids = reactor[2]
           output_file = f"{base_reaction_path}-cropped-{i}-{orientation}{base_video_ext}"
+          print("Going to crop the video now...")
           crop_video(react_path, output_file, replacement_audio, len(reactors), int(w), int(h), centroids)
+          print("\t...Done cropping")
           output_files.append(output_file)
 
   cropped_reactors = []
@@ -207,6 +209,7 @@ def crop_video2(video_file, output_file, replacement_audio, x, y, w, h, centroid
 
 def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, centroids):
     # Load the video clip
+    print(f"\tloading the video {video_file}")
     video = VideoFileClip(video_file)
 
     if w != h:
@@ -247,10 +250,14 @@ def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, c
 
         return cropped_frame
 
+    print("\tmaking video clip")
     cropped_video = VideoClip(make_frame, duration=video.duration)
 
     if replacement_audio:
+        print("\treplacing audio")
         cropped_video = replace_audio(cropped_video, replacement_audio, num_reactors)
+
+    print("\twriting video")
 
     # Write the cropped video to a file
     cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=30,
@@ -484,6 +491,7 @@ def detect_faces(react_path, base_reaction_path, frames_to_read=None, frames_per
 
       reactor.append(centroids)
 
+    print(f"done detecting faces, found {len(reactors)}")
 
     video.release()
     cv2.destroyAllWindows()
@@ -752,6 +760,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
     else: 
       centroids.append( (sampled_frame, centroids[-1][1]))
 
+  print(f"Done finding centroids {len(centroids)}")
   return centroids
 
 
@@ -802,6 +811,8 @@ def compare_faces(hist1, hist2):
 
 
 def smooth_and_interpolate_centroids(sampled_centroids):
+
+    print("Smoothing and interpolating centroids...")
     # Unpack the frames and the centroids from the input
     frames, centroids = zip(*sampled_centroids)
     frames = np.array(frames)
@@ -872,6 +883,8 @@ def smooth_and_interpolate_centroids(sampled_centroids):
 
       plt.tight_layout()
       plt.show()
+
+    print("\t...done")
 
     return interpolated_centroids
 
