@@ -5,10 +5,47 @@ import os
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf, print_profiling
 
-from cross_expander.find_segment_start import find_segment_starts
-from cross_expander.pruning_search import should_prune_path, prune_types
-from cross_expander.find_segment_end import find_segment_end, check_for_start_adjustment
-from cross_expander.bounds import get_bound
+from aligner.find_segment_start import find_segment_starts
+from aligner.pruning_search import should_prune_path, prune_types
+from aligner.find_segment_end import find_segment_end, check_for_start_adjustment
+from aligner.bounds import get_bound
+
+
+
+
+####################################
+# Cross Expander Alignment algorithm
+####################################
+
+# A new cross-correlation algorithm for finding the sequences in a reaction video that match with a base video. 
+
+# Get the first n seconds of the base audio. We'll call this the first chunk of the current segment. Use 
+# cross-correlation to find the first match of this chunk in the reaction video that is within 
+# peak_tolerance of the max match. Save the score of the max match as the current_sequence_match_score. 
+
+# We're now going to see what portion of the next chunk of the base audio belongs in the current sequence. 
+# So, set the next chunk of the base audio to the next n seconds. Correlate this next chunk with just the 
+# next n seconds of the reaction video. Is the correlation strong enough to include with the previous chunk 
+# as part of the current sequence? We can check by making sure the correlation is within peak_tolerance of 
+# the current_sequence_match_score. If it is, we include this chunk into the current sequence. The crux 
+# of the algorithm is in how we handle a poor match. 
+
+# If it is a poor match, then we're going to try to identify exactly where in this chunk the sequence ends. 
+# It is most likely that the first part of the chunk matches, and the latter part doesn't. We need to 
+# find the transition. To do this, we can use binary search to progressively hone in on the transition point. 
+# After we discover the poor match, we cut the chunk size in half to n / 2 seconds. Then we'll again use 
+# cross-correlation to see if we can match this shorter chunk of the base audio to the corresponding part 
+# of the reaction video. If so, then the transition point is probably between n / 2 seconds and n seconds, 
+# and we can do the same thing for a chunk size of .75n. If not, then it is probably between 0 seconds and 
+# n / 2 seconds, and we can instead do the same thing for a chunk size of .25n. We keep trying to hone in 
+# on the transition point until we're within epsilon error tolerance. 
+
+# Once we're satisfied with the transition point, we treat that transition point as the end of the current 
+# segment. And then we take the next n seconds of the base video that has yet to be matched and repeat the 
+# algorithm, making sure to perform the correlation only in area of the reaction video that hasn't yet 
+# been matched. 
+
+
 
 ####################
 # Recursively crawl through base and reaction audio, finding (and taking) multiple paths at each juncture.

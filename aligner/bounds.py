@@ -26,7 +26,7 @@ from utilities import conf, save_object_to_file, read_object_from_file
 
 
 def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
-    from cross_expander.find_segment_start import find_segment_starts
+    from aligner.find_segment_start import find_segment_starts
 
 
     saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-bounds.pckl'
