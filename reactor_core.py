@@ -7,13 +7,13 @@ from prettytable import PrettyTable
 from utilities import prepare_reactions, extract_audio, conf, make_conf, unload_reaction
 from utilities import conversion_audio_sample_rate as sr
 from inventory import download_and_parse_reactions, get_manifest_path
-from cross_expander import create_aligned_reaction_video
+from aligner import create_aligned_reaction_video
 from face_finder import create_reactor_view
 from backchannel_isolator import process_reactor_audio
 from compositor import compose_reactor_compilation
-from cross_expander.scoring_and_similarity import print_path, ground_truth_overlap
+from aligner.scoring_and_similarity import print_path, ground_truth_overlap
 
-from cross_expander.path_painter import paint_paths
+from aligner.path_painter import paint_paths
 
 import cProfile
 import pstats
@@ -58,9 +58,9 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     if not conf["isolate_commentary"] or compilation_exists:
         return []
 
-    conf['load_reaction'](reaction['channel'])
 
     _,_,aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
+
     reaction["aligned_audio_path"] = aligned_reaction_audio_path
 
     reaction["backchannel_audio"] = process_reactor_audio(reaction, extended_by=extend_by)
@@ -162,7 +162,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             except Exception as e: 
                 traceback.print_exc()
                 print(e)
-                failed_reactions.append((reaction.get('channel'), e))
+                traceback_str = traceback.format_exc()
+                failed_reactions.append((reaction.get('channel'), e, traceback_str))
 
             log_progress(progress)
             print_progress(progress)
@@ -170,7 +171,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             unload_reaction(name)
 
 
-        if not conf.get('paint_paths') and not compilation_exists and conf['create_compilation']:
+        if not compilation_exists and conf['create_compilation']:
             compose_reactor_compilation(extend_by=extend_by)
     
 
@@ -273,7 +274,7 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = "painter-high-tolerance" #"more_sensitive_ends" #"tighter_overall_prune"
+    output_dir = 'earliness-alignment' #'painter-high-tolerance' #'earliness-alignment' # 'painter-high-tolerance' # "twosecpaints" # # #"more_sensitive_ends" #"tighter_overall_prune"
 
     for song in finished:
         clean_up(song)
@@ -291,11 +292,11 @@ if __name__ == '__main__':
     options = {
         "create_alignment": True,
         "save_alignment_metadata": True,
-        "output_alignment_video": False,
-        "isolate_commentary": False,
-        "create_reactor_view": False,
-        "create_compilation": False,
-        "download_and_parse": True,
+        "output_alignment_video": True,
+        "isolate_commentary": True,
+        "create_reactor_view": True,
+        "create_compilation": True,
+        "download_and_parse": False,
         "alignment_test": False,
         "force_ground_truth_paths": False,
         "draft": False,
@@ -321,9 +322,12 @@ if __name__ == '__main__':
 
     for song, failed in failures:
         print(f"\n\n {len(failed)} Failures for song {song}")
-        for react_video, e in failed:
+        for react_video, e, trace in failed:
             print(f"\n***{react_video} failed with:")
+            print(trace)
             print(e)
+            print('*****')
+
 
 
 
