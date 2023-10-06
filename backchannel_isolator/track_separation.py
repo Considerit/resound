@@ -20,61 +20,33 @@ def get_spleeter():
         spleeter_separator = Separator('spleeter:2stems')
     return spleeter_separator
 
-def separate_vocals(reaction, output_dir, song_path, reaction_path, post_process=False):
+
+def separate_vocals(output_dir, audio_path, output_filename):
     # Create a separator with 2 stems (vocals and accompaniment)
 
-    song_sep = output_dir
-    song_separation_path = os.path.join(song_sep, os.path.splitext(song_path)[0].split('/')[-1] )
+    vocals_high_passed_path = os.path.join(output_dir, output_filename)
 
-    reaction_sep = song_sep 
-    react_separation_path = os.path.join(reaction_sep, os.path.splitext(reaction_path)[0].split('/')[-1] )
-
-    song_vocals_high_passed_path = os.path.join(song_separation_path, 'vocals-post-high-passed.wav')
-    reaction_vocals_high_passed_path = os.path.join(react_separation_path, 'vocals-post-high-passed.wav')
-
-    # Perform source separation on song and reaction audio
-    if not os.path.exists(song_vocals_high_passed_path):
-        song_sources = get_spleeter().separate_to_file(song_path, song_sep)
-    if not os.path.exists(reaction_vocals_high_passed_path):
-        reaction_sources = get_spleeter().separate_to_file(reaction_path, reaction_sep)
+    # Perform source separation
+    if not os.path.exists(vocals_high_passed_path):
+        song_sources = get_spleeter().separate_to_file(audio_path, output_dir)
 
     # Load the separated tracks
-    song_vocals_path = os.path.join(song_separation_path, 'vocals.wav')
-    reaction_vocals_path = os.path.join(react_separation_path, 'vocals.wav')
+    vocals_path = os.path.join(output_dir, 'vocals.wav')
+
+    # Post process
+    if not os.path.exists(vocals_high_passed_path):
+        #vocals, sr_song = librosa.load( vocals_path, sr=sr, mono=True )
+        # vocals = post_process_audio(vocals)
+        # sf.write(song_vocals_high_passed_path, vocals.T, sr)
+
+        audio_data, __ = sf.read(vocals_path)
+        vocals = convert_to_mono(audio_data)
+        vocals = post_process_audio(vocals)
+        sf.write(vocals_high_passed_path, vocals, sr)
 
 
-    if post_process: 
+    return vocals_high_passed_path
 
-        # sr_reaction = sr_song = None
-
-        if not os.path.exists(song_vocals_high_passed_path):
-            #song_vocals, sr_song = librosa.load( song_vocals_path, sr=sr, mono=True )
-            # song_vocals = post_process_audio(song_vocals)
-            # sf.write(song_vocals_high_passed_path, song_vocals.T, sr)
-
-            audio_data, __ = sf.read(song_vocals_path)
-            song_vocals = convert_to_mono(audio_data)
-            song_vocals = post_process_audio(song_vocals)
-            sf.write(song_vocals_high_passed_path, song_vocals, sr)
-        song_vocals_path = song_vocals_high_passed_path
-
-        if not os.path.exists(reaction_vocals_high_passed_path):
-            # reaction_vocals, sr_reaction = librosa.load( reaction_vocals_path, sr=sr, mono=True )
-            # reaction_vocals = post_process_audio(reaction_vocals)
-            # sf.write(reaction_vocals_high_passed_path, reaction_vocals.T, sr)
-
-            audio_data, __ = sf.read(reaction_vocals_path)
-            reaction_vocals = convert_to_mono(audio_data)
-            reaction_vocals = post_process_audio(reaction_vocals)
-            sf.write(reaction_vocals_high_passed_path, reaction_vocals, sr)
-
-
-        reaction_vocals_path = reaction_vocals_high_passed_path
-
-        # if sr_reaction and sr_song:
-        #     assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
-
-    return (reaction_vocals_path, song_vocals_path)
 
 
 

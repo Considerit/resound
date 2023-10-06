@@ -101,6 +101,7 @@ def make_conf(song_def, options, temp_directory):
     conf['reactions'] = reactions
 
   def load_reaction(channel):
+    print(f"Loading reaction {channel}")
     reaction_conf = conf.get('reactions')[channel]
 
     if not conf.get('base_video_path'):
@@ -146,6 +147,8 @@ def make_conf(song_def, options, temp_directory):
 def unload_reaction(channel):
   import gc
   global conf
+
+  print(f"Unloading reaction {channel}")
 
   reaction_conf = conf.get('reactions')[channel]
 

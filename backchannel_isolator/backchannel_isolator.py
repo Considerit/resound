@@ -569,10 +569,24 @@ def process_reactor_audio(reaction, extended_by=0):
     base_audio = conf.get('base_audio_path')
 
 
-    reaction_vocals_path, song_vocals_path = separate_vocals(reaction, output_dir, base_audio, reaction_audio, post_process=True)
-    output_path = os.path.splitext(reaction_vocals_path)[0] + "_isolated_commentary.wav"
+    vocal_path_filename = 'vocals-post-high-passed.wav'
+    song_separation_path  = os.path.join(output_dir, os.path.splitext(base_audio)[0].split('/')[-1] )
+    react_separation_path = os.path.join(output_dir, os.path.splitext(reaction_path)[0].split('/')[-1] )
 
-    if not os.path.exists(output_path):
+    reaction_vocals_path = os.path.join(react_separation_path, vocal_path_filename)
+    song_vocals_path =     os.path.join(song_separation_path, vocal_path_filename)
+
+    if not os.path.exists( reaction_vocals_path ):
+        separate_vocals(react_separation_path, reaction_audio, vocal_path_filename)
+
+    if not os.path.exists( song_vocals_path ):
+        separate_vocals(song_separation_path, base_audio, vocal_path_filename)
+
+
+    backchannel_filename = f"{vocal_path_filename}_isolated_commentary.wav"
+    backchannel_path = os.path.join(react_separation_path, backchannel_filename)
+
+    if not os.path.exists(backchannel_path):
 
         if extended_by > 0:
             conf.get('load_aligned_reaction_data')(reaction.get('channel'))
@@ -585,20 +599,20 @@ def process_reactor_audio(reaction, extended_by=0):
             sf.write(new_reaction_audio, truncated_reaction_audio, sr)  # Write truncated_reaction_audio to a new file
             reaction_audio = new_reaction_audio
 
-        print(f"Separating commentary from {reaction_audio} to {output_path}")
-        mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, output_path, reaction_audio)
+        print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
+        mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path, reaction_audio)
 
         if extended_by > 0:
-            # output_audio, _ = librosa.load(output_path, sr=sr)
+            # output_audio, _ = librosa.load(backchannel_path, sr=sr)
 
-            audio_data, __ = sf.read(output_path)
+            audio_data, __ = sf.read(backchannel_path)
             output_audio = convert_to_mono(audio_data)
 
 
             new_output_audio = np.concatenate((output_audio, extended_audio))  # Append truncated_reaction_audio to the end
-            sf.write(output_path, new_output_audio, sr)  # Write new_output_audio to a new file
+            sf.write(backchannel_path, new_output_audio, sr)  # Write new_output_audio to a new file
 
-    return output_path
+    return backchannel_path
 
 
 

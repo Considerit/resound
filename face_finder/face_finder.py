@@ -83,8 +83,7 @@ from utilities import conf
 def create_reactor_view(reaction, show_facial_recognition=False): 
 
   react_path = reaction.get('aligned_path')
-  base_path = conf.get('base_video_path')
-  replacement_audio = reaction["backchannel_audio"]
+  replacement_audio = reaction.get("backchannel_audio")
 
   base_reaction_path, base_video_ext = os.path.splitext(react_path)
 
