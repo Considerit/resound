@@ -25,27 +25,36 @@ def separate_vocals(output_dir, audio_path, output_filename):
     # Create a separator with 2 stems (vocals and accompaniment)
 
     vocals_high_passed_path = os.path.join(output_dir, output_filename)
-
-    # Perform source separation
-    if not os.path.exists(vocals_high_passed_path):
-        song_sources = get_spleeter().separate_to_file(audio_path, output_dir)
-
-    # Load the separated tracks
-    vocals_path = os.path.join(output_dir, 'vocals.wav')
-
     # Post process
     if not os.path.exists(vocals_high_passed_path):
+        print('vocals highpassed path', vocals_high_passed_path)
+
+        # Load the separated tracks
+        vocals_path = os.path.join(output_dir, 'vocals.wav')
+
+        # Perform source separation
+        if not os.path.exists(vocals_path):
+            get_spleeter().separate_to_file(audio_path, output_dir)
+            audio_file_prefix = os.path.splitext(audio_path)[0].split('/')[-1]
+            weird_spleeter_outputpath = os.path.join(output_dir, audio_file_prefix)
+
+            parent_dir = os.path.dirname(weird_spleeter_outputpath)
+            for filename in os.listdir(weird_spleeter_outputpath):
+                current_path = os.path.join(weird_spleeter_outputpath, filename)
+                new_path = os.path.join(parent_dir, filename)
+                os.rename(current_path, new_path)
+
+
         #vocals, sr_song = librosa.load( vocals_path, sr=sr, mono=True )
         # vocals = post_process_audio(vocals)
         # sf.write(song_vocals_high_passed_path, vocals.T, sr)
 
+        print('READING', vocals_path)
         audio_data, __ = sf.read(vocals_path)
         vocals = convert_to_mono(audio_data)
         vocals = post_process_audio(vocals)
         sf.write(vocals_high_passed_path, vocals, sr)
 
-
-    return vocals_high_passed_path
 
 
 

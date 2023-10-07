@@ -568,23 +568,23 @@ def process_reactor_audio(reaction, extended_by=0):
     reaction_audio = reaction.get('aligned_audio_path')
     base_audio = conf.get('base_audio_path')
 
-
     vocal_path_filename = 'vocals-post-high-passed.wav'
-    song_separation_path  = os.path.join(output_dir, os.path.splitext(base_audio)[0].split('/')[-1] )
-    react_separation_path = os.path.join(output_dir, os.path.splitext(reaction_path)[0].split('/')[-1] )
+    base_dir = os.path.splitext(base_audio)[0].split('/')[-1]
+
+    song_separation_path  = os.path.join(output_dir, base_dir)
+    react_separation_path = os.path.join(output_dir, os.path.splitext(reaction_audio)[0].split('/')[-1] )
 
     reaction_vocals_path = os.path.join(react_separation_path, vocal_path_filename)
     song_vocals_path =     os.path.join(song_separation_path, vocal_path_filename)
+
+    backchannel_filename = f"{vocal_path_filename.split('.')[0]}_isolated_commentary.wav"
+    backchannel_path = os.path.join(react_separation_path, backchannel_filename)
 
     if not os.path.exists( reaction_vocals_path ):
         separate_vocals(react_separation_path, reaction_audio, vocal_path_filename)
 
     if not os.path.exists( song_vocals_path ):
         separate_vocals(song_separation_path, base_audio, vocal_path_filename)
-
-
-    backchannel_filename = f"{vocal_path_filename}_isolated_commentary.wav"
-    backchannel_path = os.path.join(react_separation_path, backchannel_filename)
 
     if not os.path.exists(backchannel_path):
 
