@@ -36,13 +36,15 @@ def make_conf(song_def, options, temp_directory):
       return True
 
 
-  conf.update({
-    "artist": song_def['artist'],
-    "song_name": song_def['song']
-  })
+  base_audio_path = os.path.join( song_directory, f"{os.path.basename(song_directory)}.wav")
+
+
 
   conf.update({
+    "artist": song_def['artist'],
+    "song_name": song_def['song'],
     "song_key": song, 
+    "base_audio_path": base_audio_path,
     "include_base_video": song_def.get('include_base_video', True),
     "song_directory": song_directory,
     "reaction_directory": reaction_directory,
@@ -66,6 +68,9 @@ def make_conf(song_def, options, temp_directory):
     temp_directory = conf.get('temp_directory')
 
     reactions = {}
+
+
+    multiple_reactors = song_def.get('multiple_reactors', None) 
 
 
     for reaction_video_path in reaction_videos:
@@ -97,6 +102,10 @@ def make_conf(song_def, options, temp_directory):
           'ground_truth_path': ground_truth_path,
           'target_score': target_score
         }
+
+        if multiple_reactors is not None:
+          reactions[channel]['num_reactors'] = multiple_reactors.get(channel, 1)
+
 
     conf['reactions'] = reactions
 
@@ -204,7 +213,6 @@ def load_base_video():
     base_data = {
       'base_video_path': base_video_path,
       'base_audio_data': base_audio_data,
-      'base_audio_path': base_audio_path,
       'song_percentile_loudness': song_percentile_loudness,
       'base_audio_mfcc': base_audio_mfcc
     }

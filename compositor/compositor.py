@@ -45,6 +45,7 @@ from compositor.layout import create_layout_for_composition
 
 
 def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
+    conf.get('load_base_video')()
 
     output_path = conf.get('compilation_path')
     base_video_path = conf.get('base_video_path')
@@ -63,8 +64,14 @@ def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
 
     base_video, cell_size = create_layout_for_composition(base_video, width, height)
     print("\tLayout created")
-    clips, audio_clips, clip_length, base_video = create_clips(base_video, cell_size, draft)
+    all_clips, clip_length = create_clips(base_video, cell_size, draft)
     print("\tClips created")
+
+    clips = [c for c in all_clips if 'video' in c]
+    clips.sort(key=lambda x: x['priority'])
+    clips = [c['video'] for c in clips]
+    
+    audio_clips = [c['audio'] for c in all_clips ]
 
     final_clip = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
     print("\tClips composed")
@@ -109,11 +116,6 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
 
 
 def create_clips(base_video, cell_size, draft):
-    audio_clips = []
-    audio_clips.append(base_video.audio)
-
-    featured_clips = []
-    other_clips = []
 
     total_reactors = 0 
     for name, reaction in conf.get('reactions').items():
@@ -124,6 +126,7 @@ def create_clips(base_video, cell_size, draft):
     reactor_colors = generate_hsv_colors(total_reactors, 1, .6)
     clip_length = 0
 
+    all_clips = []
     for name, reaction in conf.get('reactions').items():
       print(f"\t\tCreating clip for {name}")
       reactors = reaction.get('reactors')
@@ -139,8 +142,6 @@ def create_clips(base_video, cell_size, draft):
         volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
         volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
 
-        audio_clips.append(volume_adjusted_clip)
-
         size = cell_size
         if featured: 
           size *= 1.15
@@ -150,44 +151,46 @@ def create_clips(base_video, cell_size, draft):
         if not draft:
           clip = create_masked_video(clip, border_color=reactor_color, border_thickness=10, width=size, height=size, as_circle=featured)
 
-        clip = clip.set_position((x - size / 2, y - size / 2))
+        position = (x - size / 2, y - size / 2)
+        clip = clip.set_position(position)
 
         if clip_length < clip.duration:
           clip_length = clip.duration
 
-        clip = incorporate_asides(reaction, clip)
-
         if featured:
-          featured_clips.append(clip)
+          priority = 10
         else: 
-          other_clips.append(clip)
+          priority = 1
+
+        clip_info = {
+          'channel': name,
+          'reaction': reaction,
+          'priority': priority,
+          'video': clip,
+          'audio': volume_adjusted_clip,
+          'position': position,
+        }
+
+        if 'asides' in reaction and reaction.get('asides') is not None: 
+          clip_info['asides'] = reaction.get('asides')
+
+        all_clips.append(clip_info)
 
 
+    base_clip = {
+      'audio': base_video.audio,
+      'base': True,
+      'priority': 0,
+    }
 
-    include_base_video = conf['include_base_video']    
-    clips = other_clips + featured_clips
-    if include_base_video and not draft:
-        base_video = incorporate_asides(None, base_video)
-        clips = [base_video] + clips
+    all_clips.append(base_clip)
 
-    return (clips, audio_clips, clip_length, base_video)
+    if conf['include_base_video'] and not draft:
+        base_clip['video'] = base_video
 
+    return all_clips, clip_length
 
 
-def incorporate_asides(current_reaction, clip):
-  # other_asides = []
-  # # for name, reaction in conf.get('reactions').items():
-  # #   reactors = reaction.get('reactors')
-  # #   for reactor in reactors: 
-
-  # if current_reaction:
-  #   asides = current_reaction.get('asides', None)
-  #   if asides is None:
-  #     return clip
-
-  # # TODO!
-  
-  return clip
 
 
 

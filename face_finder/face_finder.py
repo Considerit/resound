@@ -111,7 +111,7 @@ def create_reactor_view(reaction, show_facial_recognition=False):
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0:
-      reactors = detect_faces(react_path, base_reaction_path, show_facial_recognition=show_facial_recognition)
+      reactors = detect_faces(reaction, react_path, base_reaction_path, show_facial_recognition=show_facial_recognition)
       for i, reactor in enumerate(reactors): 
           (x,y,w,h,orientation) = reactor[0]
           reactor_captures = reactor[1]
@@ -330,6 +330,7 @@ def detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to
 
     # compute histogram of grays for later fine-grained matching
     filtered_faces_this_frame = []
+    ignored_faces_this_frame = []
     for face in faces_this_frame:
         react_frame_converted = cv2.cvtColor(react_frame, cv2.COLOR_BGR2RGB)
 
@@ -357,10 +358,10 @@ def detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to
           if show_facial_recognition:
               x, y, w, h, nose = face
               cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 40, 190), 2)
-
+          ignored_faces_this_frame.append(face)
           print("IGNORING FACE!!!")
 
-    return filtered_faces_this_frame
+    return filtered_faces_this_frame, ignored_faces_this_frame
 
 
 def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False, images_to_ignore=[]):
@@ -388,8 +389,8 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False,
           break
 
 
-        frame_faces = detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to_ignore)
-        face_matches.append( (current_react, frame_faces) )
+        frame_faces, ignored_faces = detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to_ignore)
+        face_matches.append( (current_react, frame_faces, ignored_faces) )
         # print("matches:", face_matches)
 
         if show_facial_recognition and len(face_matches[-1][1]) > 0:
@@ -428,7 +429,7 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False,
     return face_matches
 
 
-def detect_faces(react_path, base_reaction_path, frames_to_read=None, frames_per_capture=45, show_facial_recognition=False):
+def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, frames_per_capture=45, show_facial_recognition=False):
 
     # Open the video file
     video = cv2.VideoCapture(react_path)
@@ -475,7 +476,14 @@ def detect_faces(react_path, base_reaction_path, frames_to_read=None, frames_per
       reactors.append( [reactor, reactor_captures] )
 
     # Fine-grained facial tracking
-    for reactor in reactors:
+    num_reactors = reaction.get('num_reactors', 99999)
+    print(f"LOOKING FOR {num_reactors}")
+    for i, reactor in enumerate(reactors):
+      
+      if i >= num_reactors:
+        print(f"Skipping reactor because {reaction.get('channel')} is configured for only {num_reactors} reactors")
+        break
+
       (coarse_reactor, (group, total_area, kernel, center, avg_size) ) = reactor
 
       #   - group is a list of the face matches in bounds (x,y,w,h)
@@ -546,7 +554,42 @@ def expand_face(group, width, height, expansion=.8, sidedness=.7):
   print("Expanded face from ", group[2], " to ", (x,y,w,h))
   return (x,y,w,h,orientation)
 
-def find_top_candidates(matches, wwidth, hheight):
+
+
+
+def overlap_percentage(rect1, rect2):
+    # Extract the x, y, width, and height for each rectangle
+    x1, y1, w1, h1 = rect1
+    x2, y2, w2, h2 = rect2
+
+    # Find the x and y coordinates for the overlapping rectangle
+    x_overlap = max(0, min(x1 + w1, x2 + w2) - max(x1, x2))
+    y_overlap = max(0, min(y1 + h1, y2 + h2) - max(y1, y2))
+
+    # Calculate the area of the overlapping rectangle
+    overlap_area = x_overlap * y_overlap
+
+    # Calculate the areas of the input rectangles
+    area1 = w1 * h1
+    area2 = w2 * h2
+
+    # Calculate the area of the union of the two rectangles
+    total_area = area1 + area2 - overlap_area
+
+    # Guard against division by zero
+    if total_area == 0:
+        return 0
+
+    # Return the percentage overlap
+    return (overlap_area / total_area) * 100
+
+
+
+def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_area = None):
+
+
+
+
     # Create a list to store the groups of overlapping faces
     face_groups = []
 
@@ -557,9 +600,18 @@ def find_top_candidates(matches, wwidth, hheight):
       heat_map = np.zeros((int(hheight) + 1, int(wwidth) + 1), dtype=int)
 
       # Iterate over the matches and update the heat map
-      for frame, faces in matches:
+      for faces in faces_over_time:
         for face in faces:
           x, y, width, height, nose, hist = face
+
+
+          # Don't add to the heat map any entries that overlap with best_ignored_area
+          if best_ignored_area is not None:
+            if overlap_percentage( best_ignored_area, (x, y, width, height) ) > 20:
+              print('NOT ADDING FACE BECAUSE IN IGNORED AREA')
+              continue
+
+
           heat_map[y:y+height, x:x+width] += 1
 
       # Normalize the heat map to the range [0, 255]
@@ -595,7 +647,7 @@ def find_top_candidates(matches, wwidth, hheight):
 
         # Identify faces within the contour
         group = []
-        for frame, faces in matches:
+        for faces in faces_over_time:
           for face in faces:
             if x <= face[0] + face[2] / 2 <= x+w and y <= face[1] + face[3] / 2 <= y+h:
               group.append(face)
@@ -605,7 +657,24 @@ def find_top_candidates(matches, wwidth, hheight):
     except Exception as e:
       import traceback
       traceback.print_exc()
-      print("didn'twork!", e)
+      print("didn't work!", e)
+
+
+    return face_groups, heat_map_color
+
+
+
+def find_top_candidates(matches, wwidth, hheight):
+
+    ignored_face_groups, __ = create_heat_map_from_faces( [f[2] for f in matches], hheight, wwidth )
+
+    if len(ignored_face_groups) > 0:
+      ignored_face_groups.sort(key=lambda x: x[2], reverse=True)
+      best_ignored_area = ignored_face_groups[0][0]
+    else:
+      best_ignored_area = None
+
+    face_groups, heat_map_color = create_heat_map_from_faces( [f[1] for f in matches], hheight, wwidth, best_ignored_area )
 
 
     # Calculate the score for each group based on the total area covered
@@ -699,8 +768,8 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
 
 
   moving_avg_centroid = None
-  for i, (sampled_frame, faces) in enumerate(face_matches):
-    print(f"\tmatch for frame {sampled_frame} {len(faces)} {center} {avg_size}")
+  for i, (sampled_frame, faces, ignored_faces) in enumerate(face_matches):
+    # print(f"\tmatch for frame {sampled_frame} {len(faces)} {center} {avg_size}")
 
     best_score = 0
     best_centroid = None 
@@ -739,7 +808,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
           hist_similarity /= len(rep_histos)
 
           score = hist_similarity / (1 + size_diff + 0.5 * dist + 0.5 * dist_from_previous)
-          print(f"\t\t{score} ({best_score}) dist={dist} size={size_diff} sim={hist_similarity} {(x,y,w,h)}")
+          # print(f"\t\t{score} ({best_score}) dist={dist} size={size_diff} sim={hist_similarity} {(x,y,w,h)}")
           if score > best_score:
             best_score = score
             best_centroid = (x + w/2, y + h/2)
