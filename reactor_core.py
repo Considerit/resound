@@ -71,6 +71,27 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
     reaction["reactors"] = create_reactor_view(reaction, show_facial_recognition=False)
 
+    if reaction['asides']:
+        from moviepy.editor import VideoFileClip
+        reaction["aside_clips"] = {}
+        for i, aside in enumerate(reaction['asides']):
+            start, end, insertion_point = aside
+
+            # first, isolate the correct part of the reaction video
+            aside_video_clip = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-aside-{i}.mp4")
+            
+            if not os.path.exists(aside_video_clip):            
+                react_video = VideoFileClip(reaction.get('video_path'))
+                aside_clip = react_video.subclip(float(start), float(end))
+                aside_clip.set_fps(30)
+                aside_clip.write_videofile(aside_video_clip, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
+                react_video.close()
+
+            # second, do face detection on it
+            reaction["aside_clips"][insertion_point] = create_reactor_view(reaction, show_facial_recognition=False, aside_video = aside_video_clip)
+
+
+
 
 
 from moviepy.editor import VideoFileClip
@@ -299,7 +320,7 @@ if __name__ == '__main__':
         "download_and_parse": False,
         "alignment_test": False,
         "force_ground_truth_paths": False,
-        "draft": False,
+        "draft": True,
         "paint_paths": True
     }
     failures = []

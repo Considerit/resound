@@ -50,6 +50,7 @@ def make_conf(song_def, options, temp_directory):
     "reaction_directory": reaction_directory,
     "compilation_path": compilation_path,
     "temp_directory": full_output_dir,
+    "has_asides": song_def.get('asides'),
 
     'hop_length': 256,
     'n_mfcc': 20

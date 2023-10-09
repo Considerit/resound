@@ -80,21 +80,22 @@ from utilities import conf
 
 
 
-def create_reactor_view(reaction, show_facial_recognition=False): 
+def create_reactor_view(reaction, show_facial_recognition=False, aside_video=None): 
 
-  react_path = reaction.get('aligned_path')
-  replacement_audio = reaction.get("backchannel_audio")
+  if aside_video is not None:
+    react_path = aside_video
+    replacement_audio = None
+    frames_per_capture = 20
+  else:
+    react_path = reaction.get('aligned_path')
+    replacement_audio = reaction.get("backchannel_audio")
+    frames_per_capture = 45
 
   base_reaction_path, base_video_ext = os.path.splitext(react_path)
 
   output_files = []
   i = 0
   
-  # # Check if files exist with naming convention
-  # while os.path.exists(f"{base_reaction_path}-cropped-{i}{base_video_ext}"):
-  #     output_files.append(f"{base_reaction_path}-cropped-{i}{base_video_ext}")
-  #     i += 1
-
   orientations = ["", "-center", "-left", "-right"]
 
   # Check if files exist with naming convention
@@ -111,7 +112,7 @@ def create_reactor_view(reaction, show_facial_recognition=False):
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0:
-      reactors = detect_faces(reaction, react_path, base_reaction_path, show_facial_recognition=show_facial_recognition)
+      reactors = detect_faces(reaction, react_path, base_reaction_path, show_facial_recognition=show_facial_recognition, frames_per_capture=frames_per_capture)
       for i, reactor in enumerate(reactors): 
           (x,y,w,h,orientation) = reactor[0]
           reactor_captures = reactor[1]
@@ -126,7 +127,7 @@ def create_reactor_view(reaction, show_facial_recognition=False):
   for file in output_files:
     cropped_reactors.append({
       'key': file,
-      'reaction': reaction, # circular reference      
+      # 'reaction': reaction, # circular reference      
       'clip': VideoFileClip(file),
       'orientation': get_orientation(file),
     })
@@ -255,6 +256,8 @@ def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, c
     if replacement_audio:
         print("\treplacing audio")
         cropped_video = replace_audio(cropped_video, replacement_audio, num_reactors)
+    else: 
+      cropped_video.audio = video.audio
 
     print("\twriting video")
 

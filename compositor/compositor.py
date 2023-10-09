@@ -7,8 +7,8 @@ from PIL import Image, ImageDraw, ImageChops
 import colorsys
 
 
-from moviepy.editor import ImageClip, CompositeVideoClip, CompositeAudioClip, concatenate_audioclips
-from moviepy.audio.AudioClip import AudioArrayClip
+from moviepy.editor import ImageClip, CompositeVideoClip, CompositeAudioClip, concatenate_audioclips, concatenate_videoclips
+from moviepy.audio.AudioClip import AudioArrayClip, AudioClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
 from moviepy.editor import VideoFileClip
 from moviepy.video.fx.all import crop
@@ -121,74 +121,157 @@ def create_clips(base_video, cell_size, draft):
     for name, reaction in conf.get('reactions').items():
       total_reactors += len(reaction.get('reactors'))
 
-
-    base_audio_as_array = base_video.audio.to_soundarray()
     reactor_colors = generate_hsv_colors(total_reactors, 1, .6)
     clip_length = 0
 
     all_clips = []
+
+      
+
+    base_video = incorporate_asides(base_video)
+
+    base_video.audio.fps = conversion_audio_sample_rate
+    base_audio_as_array = base_video.audio.to_soundarray()
+
+
     for name, reaction in conf.get('reactions').items():
-      print(f"\t\tCreating clip for {name}")
-      reactors = reaction.get('reactors')
-      for idx, reactor in enumerate(reactors): 
-        print(f"\t\t\tReactor {idx}")
+        print(f"\t\tCreating clip for {name}")
+        reactors = reaction.get('reactors')
 
-        reactor_color = reactor_colors.pop()
-        x,y = reactor['grid_assignment']
 
-        featured = reaction['featured']
+        positions = []
+        for idx, reactor in enumerate(reactors): 
+            print(f"\t\t\tReactor {idx}")
 
-        clip = reactor['clip']
-        volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
-        volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
+            reactor_color = reactor_colors.pop()
+            x,y = reactor['grid_assignment']
 
-        size = cell_size
-        if featured: 
-          size *= 1.15
-          size = int(size)
+            featured = reaction['featured']
 
-        clip = clip.resize((size, size))
-        if not draft:
-          clip = create_masked_video(clip, border_color=reactor_color, border_thickness=10, width=size, height=size, as_circle=featured)
+            clip = reactor['clip']
 
-        position = (x - size / 2, y - size / 2)
-        clip = clip.set_position(position)
+            clip.audio.fps = conversion_audio_sample_rate  
+            volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
+            volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
 
-        if clip_length < clip.duration:
-          clip_length = clip.duration
+            size = cell_size
+            if featured: 
+              size *= 1.15
+              size = int(size)
 
-        if featured:
-          priority = 10
-        else: 
-          priority = 1
+            clip = clip.resize((size, size))
+            if not draft:
+              clip = create_masked_video(clip, border_color=reactor_color, border_thickness=10, width=size, height=size, as_circle=featured)
 
-        clip_info = {
-          'channel': name,
-          'reaction': reaction,
-          'priority': priority,
-          'video': clip,
-          'audio': volume_adjusted_clip,
-          'position': position,
-        }
+            position = (x - size / 2, y - size / 2)
+            clip = clip.set_position(position)
 
-        if 'asides' in reaction and reaction.get('asides') is not None: 
-          clip_info['asides'] = reaction.get('asides')
+            if clip_length < clip.duration:
+              clip_length = clip.duration
 
-        all_clips.append(clip_info)
+            if featured:
+              priority = 10
+            else: 
+              priority = 1
+
+            clip_info = {
+              'channel': name,
+              'reaction': reaction,
+              'priority': priority,
+              'video': clip,
+              'audio': volume_adjusted_clip,
+              'position': position,
+              'reactor_idx': idx
+            }
+
+            all_clips.append(clip_info)
+            positions.append(position)
+
+
 
 
     base_clip = {
       'audio': base_video.audio,
       'base': True,
       'priority': 0,
+      'video': base_video
     }
+
 
     all_clips.append(base_clip)
 
-    if conf['include_base_video'] and not draft:
-        base_clip['video'] = base_video
+
+    if draft or not conf['include_base_video']:
+        del base_clip['video']
 
     return all_clips, clip_length
+
+
+# Any of the reaction clips can have any number of "asides". An aside is a bonus 
+# video clip spliced into a specific point in the respective reaction video clip. 
+# When an aside is active, only the respective video clip is playing, and all the 
+# other clips are paused. When a clip is paused because an aside is playing, the 
+# previous frame is replicated until the aside is finished, and no audio is played. 
+
+
+
+def incorporate_asides(base_video):
+
+    all_asides = []
+    for name, reaction in conf.get('reactions').items():
+        reactors = reaction.get('reactors')
+
+        if reaction.get('aside_clips', None):
+            for insertion_point, aside_clips in reaction.get('aside_clips').items():
+                all_asides.append([insertion_point, aside_clips, reaction.get('channel') ])
+
+    if len(all_asides) == 0:
+        return
+
+    print('INCORPORATING ASIDES')
+    all_asides.sort(key=lambda x: x[0], reverse=True)
+
+
+    def extend_for_aside(clip, insertion_point, duration, aside=None):
+        if clip.duration < insertion_point:
+            return clip
+
+        if aside is None: 
+            # print('insertion_point', insertion_point)
+            frame = clip.get_frame(insertion_point)  
+            extended_clip = ImageClip(frame, duration=duration).set_audio(AudioClip(lambda t: 0, duration=duration))
+        else:
+            extended_clip = aside
+
+        # Splice the aside into the current reaction clip
+        before = clip.subclip(0, insertion_point)
+        after = clip.subclip(insertion_point)  # errors out giving the old duration
+
+        new_clip = concatenate_videoclips([before, extended_clip, after])
+        return new_clip
+
+
+
+    for insertion_point, aside_clips, channel in all_asides:
+        duration = aside_clips[0]['clip'].duration
+        print(f"\tAside at {insertion_point} of {duration} seconds for {channel}")
+
+        base_video = extend_for_aside(base_video, insertion_point, duration)
+
+        for name, reaction in conf.get('reactions').items():
+            print(f"\t\tCreating clip for {name}")
+            reactors = reaction.get('reactors')
+
+            for idx, reactor in enumerate(reactors): 
+                # print(reactor, reactor['clip'])
+
+                if channel == reaction.get('channel'):
+                    extended_clip = aside_clips[idx].get('clip')
+                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration, aside=extended_clip)
+                else:                     
+                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration)
+
+    return base_video
 
 
 
