@@ -397,7 +397,7 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False,
         # print("matches:", face_matches)
 
         if show_facial_recognition and len(face_matches[-1][1]) > 0:
-          top, heat_map_color = find_top_candidates(face_matches, width, height)
+          top, heat_map_color = find_top_candidates(face_matches, width, height, None)
           for tc in top:
 
             try: 
@@ -472,18 +472,20 @@ def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, 
     # Now we're going to do some coarse matching to identify the most prominent
     # face locations. This will set the number of reactors we're dealing with, 
     # as well as their orientation and size. 
-    coarse_reactors, _ = find_top_candidates(face_matches, width, height)
+
+    num_reactors = reaction.get('num_reactors', None)
+    print(f"LOOKING FOR {num_reactors}")
+
+    coarse_reactors, _ = find_top_candidates(face_matches, width, height, num_reactors)
     reactors = []
     for reactor_captures in coarse_reactors:
       reactor = expand_face(reactor_captures, width, height) # (x,y,w,h,orientation)
       reactors.append( [reactor, reactor_captures] )
 
     # Fine-grained facial tracking
-    num_reactors = reaction.get('num_reactors', 99999)
-    print(f"LOOKING FOR {num_reactors}")
     for i, reactor in enumerate(reactors):
       
-      if i >= num_reactors:
+      if num_reactors is not None and i >= num_reactors:
         print(f"Skipping reactor because {reaction.get('channel')} is configured for only {num_reactors} reactors")
         break
 
@@ -667,7 +669,7 @@ def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_ar
 
 
 
-def find_top_candidates(matches, wwidth, hheight):
+def find_top_candidates(matches, wwidth, hheight, num_reactors):
 
     ignored_face_groups, __ = create_heat_map_from_faces( [f[2] for f in matches], hheight, wwidth )
 
@@ -690,9 +692,12 @@ def find_top_candidates(matches, wwidth, hheight):
     # Sort the groups by their score in descending order
     sorted_groups = sorted(group_scores, key=lambda x: x[1], reverse=True)
 
-    max_score = sorted_groups[0][1]
-    accepted_groups = [grp for grp in sorted_groups if grp[1] >= .5 * max_score]
-
+    if num_reactors is None:
+      max_score = sorted_groups[0][1]
+      accepted_groups = [grp for grp in sorted_groups if grp[1] >= .5 * max_score]
+    else: 
+      accepted_groups = sorted_groups[0:num_reactors]
+      
     # print(sorted_groups)
     # Return the sorted groups
     return (accepted_groups, heat_map_color)
