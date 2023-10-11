@@ -1,6 +1,13 @@
 import os, subprocess
+
+import json
+import tempfile
+
+
 from typing import List, Tuple
 from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, CompositeVideoClip
+from moviepy.editor import ImageClip, CompositeVideoClip
+from moviepy.video.VideoClip import VideoClip, ColorClip
 
 from utilities import conversion_frame_rate, conversion_audio_sample_rate
 
@@ -120,7 +127,16 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
 import json
 
-def extract_video_info(video_file):
+def extract_video_info(video):
+    if isinstance(video, (VideoClip, VideoFileClip, CompositeVideoClip)):
+        with tempfile.NamedTemporaryFile(delete=True, suffix='.mp4') as tempf:
+            video.write_videofile(tempf.name, codec='libx264', audio_codec='aac')
+            return _extract_video_info_from_file(tempf.name)
+    else:  # Assuming it's a file path
+        return _extract_video_info_from_file(video)
+
+
+def _extract_video_info_from_file(video_file):
     command = [
         'ffprobe', '-i', video_file, 
         '-hide_banner', 
@@ -147,6 +163,7 @@ def check_compatibility(video1, video2):
     video2_info = extract_video_info(video2)
 
     if not video1_info or not video2_info:
+        print("no video info to check compatibility for", video1_info, video2_info)
         return
 
     video1_video_stream = next(s for s in video1_info['streams'] if s['codec_type'] == 'video')
@@ -184,3 +201,5 @@ def check_compatibility(video1, video2):
         print(f"{video1} does not contain an audio stream.")
     elif not video2_audio_stream:
         print(f"{video2} does not contain an audio stream.")
+
+    print("done checking compatibility")

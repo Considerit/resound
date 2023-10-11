@@ -5,6 +5,7 @@ from utilities.utilities import conversion_audio_sample_rate as sr
 from utilities.utilities import extract_audio
 from utilities.audio_processing import audio_percentile_loudness
 
+
 conf = {} # global conf
 
 
@@ -39,6 +40,14 @@ def make_conf(song_def, options, temp_directory):
   base_audio_path = os.path.join( song_directory, f"{os.path.basename(song_directory)}.wav")
 
 
+  intro_path = os.path.join(song_directory, 'intro.mp4')
+  if not os.path.exists(intro_path):
+    intro_path = False
+
+  outro_path = os.path.join(song_directory, 'outro.mp4')
+  if not os.path.exists(outro_path):
+    outro_path = False
+
 
   conf.update({
     "artist": song_def['artist'],
@@ -53,7 +62,11 @@ def make_conf(song_def, options, temp_directory):
     "has_asides": song_def.get('asides'),
 
     'hop_length': 256,
-    'n_mfcc': 20
+    'n_mfcc': 20,
+
+    'channel_branding': 'production/resound_channel_reencoded.mp4',
+    'introduction': intro_path,
+    'outro': outro_path,
   })
 
 

@@ -13,10 +13,15 @@ from moviepy.video.VideoClip import VideoClip, ColorClip
 from moviepy.editor import VideoFileClip
 from moviepy.video.fx.all import crop
 from moviepy.audio.fx import all as audio_fx
+from moviepy.video.fx import fadeout
 
-from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate
+
+from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate as sr
 
 from compositor.layout import create_layout_for_composition
+
+from aligner.create_trimmed_video import check_compatibility
+
 
 # I have a base video, and then any number of videos of people reacting to that base video. I would 
 # like to use MoviePy to compose a video that has all of these videos together. 
@@ -44,7 +49,7 @@ from compositor.layout import create_layout_for_composition
 # be any size up to the resolution of a modern macbook pro. These constraints are soft. 
 
 
-def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
+def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
     conf.get('load_base_video')()
 
     output_path = conf.get('compilation_path')
@@ -75,6 +80,35 @@ def compose_reactor_compilation(extend_by=0, output_size=(1792, 1120)):
 
     final_clip = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
     print("\tClips composed")
+
+    outerclips = [final_clip]
+
+    if conf.get('introduction', False):
+        outerclips.insert(0, VideoFileClip(conf.get('introduction')))
+
+    if conf.get('channel_branding', False):
+        outerclips.insert(0, VideoFileClip(conf.get('channel_branding')))
+
+    if conf.get('outro', False):
+        outerclips.append(VideoFileClip(conf.get('outro')))
+
+    clip_to_duration = 5
+    if clip_to_duration is not None:
+        outerclips = [o.set_duration(min(clip_to_duration, o.duration)) for o in outerclips] # for testing
+
+    if len(outerclips) > 1:
+        for vid in outerclips:
+            vid.set_fps(final_clip.fps)
+            vid.resize(newsize=final_clip.size)
+            vid.audio.fps = sr
+            vid = fadeout.fadeout(vid, 0.1)
+
+            # if vid != final_clip:
+            #     check_compatibility(vid, final_clip)
+
+        final_clip = concatenate_videoclips(outerclips)
+
+
 
     # Save the result
     if draft:
@@ -130,7 +164,7 @@ def create_clips(base_video, cell_size, draft):
 
     base_video = incorporate_asides(base_video)
 
-    base_video.audio.fps = conversion_audio_sample_rate
+    base_video.audio.fps = sr
     base_audio_as_array = base_video.audio.to_soundarray()
 
 
@@ -150,7 +184,7 @@ def create_clips(base_video, cell_size, draft):
 
             clip = reactor['clip']
 
-            clip.audio.fps = conversion_audio_sample_rate  
+            clip.audio.fps = sr  
             volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
             volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
 
@@ -204,6 +238,8 @@ def create_clips(base_video, cell_size, draft):
     if draft or not conf['include_base_video']:
         del base_clip['video']
 
+
+
     return all_clips, clip_length
 
 
@@ -226,7 +262,7 @@ def incorporate_asides(base_video):
                 all_asides.append([insertion_point, aside_clips, reaction.get('channel') ])
 
     if len(all_asides) == 0:
-        return
+        return base_video
 
     print('INCORPORATING ASIDES')
     all_asides.sort(key=lambda x: x[0], reverse=True)
@@ -367,7 +403,7 @@ def colorize_when_backchannel_active(hsv_color, clip):
 
     def color_func(t):
         # Get the volume at current time
-        volume = audio_volume[int(t * conversion_audio_sample_rate)]
+        volume = audio_volume[int(t * sr)]
 
         # If volume is zero, return white
         if volume == 0:
@@ -385,7 +421,7 @@ def colorize_when_backchannel_active(hsv_color, clip):
 
 def get_audio_volume(clip, fps=None):
     if fps is None:
-      fps = conversion_audio_sample_rate
+      fps = sr
       
     """Calculate the volume of the audio clip"""
     audio = clip.audio.to_soundarray(fps=fps)
