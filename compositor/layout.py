@@ -228,8 +228,14 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video)
     # Save the grid assigments to the reactors
     for name, reaction in conf.get('reactions').items():
       reactors = reaction.get('reactors')
-      for reactor in reactors: 
-        reactor['grid_assignment'] = assignments[reactor['key']]
+
+      reactor_assignments = [assignments[reactor['key']] for reactor in reactors]
+
+      if reaction.get('swap_grid_positions', False):
+        reactor_assignments.reverse()
+
+      for i, reactor in enumerate(reactors): 
+        reactor['grid_assignment'] = reactor_assignments[i]
 
 
 

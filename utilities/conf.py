@@ -93,7 +93,7 @@ def make_conf(song_def, options, temp_directory):
 
     multiple_reactors = song_def.get('multiple_reactors', None) 
     priority = song_def.get('priority', None) 
-
+    swap_grid_positions = song_def.get('swap_grid_positions', None)
 
     for reaction_video_path in reaction_videos:
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
@@ -129,6 +129,8 @@ def make_conf(song_def, options, temp_directory):
           reactions[channel]['num_reactors'] = multiple_reactors.get(channel, 1)
         if priority is not None and priority.get(channel, None):
           reactions[channel]['priority'] = priority.get(channel)
+        if swap_grid_positions is not None and swap_grid_positions.get(channel, None):
+          reactions[channel]['swap_grid_positions'] = swap_grid_positions.get(channel)
 
 
     conf['reactions'] = reactions
