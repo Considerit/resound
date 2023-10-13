@@ -48,6 +48,10 @@ def make_conf(song_def, options, temp_directory):
   if not os.path.exists(outro_path):
     outro_path = False
 
+  background_path = os.path.join(song_directory, 'background.mp4')
+  if not os.path.exists(background_path):
+    background_path = None
+
 
   conf.update({
     "artist": song_def['artist'],
@@ -67,6 +71,9 @@ def make_conf(song_def, options, temp_directory):
     'channel_branding': 'production/resound_channel_reencoded.mp4',
     'introduction': intro_path,
     'outro': outro_path,
+
+    'search_tester': song_def.get('search_tester', None),
+    'background': background_path
   })
 
 
@@ -85,6 +92,7 @@ def make_conf(song_def, options, temp_directory):
 
 
     multiple_reactors = song_def.get('multiple_reactors', None) 
+    priority = song_def.get('priority', None) 
 
 
     for reaction_video_path in reaction_videos:
@@ -105,7 +113,7 @@ def make_conf(song_def, options, temp_directory):
 
       target_score = song_def.get('target_scores', {}).get(channel, None)
 
-      if not conf['alignment_test'] or target_score is not None:
+      if not conf.get('alignment_test', False) or target_score is not None:
         reactions[channel] = {
           'channel': channel,
           'video_path': reaction_video_path, 
@@ -119,6 +127,8 @@ def make_conf(song_def, options, temp_directory):
 
         if multiple_reactors is not None:
           reactions[channel]['num_reactors'] = multiple_reactors.get(channel, 1)
+        if priority is not None and priority.get(channel, None):
+          reactions[channel]['priority'] = priority.get(channel)
 
 
     conf['reactions'] = reactions
