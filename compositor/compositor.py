@@ -81,6 +81,23 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
     final_clip = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
     print("\tClips composed")
 
+
+
+    if conf.get('background'):
+        video_background_path = conf.get('background')
+        video_background = VideoFileClip(video_background_path)
+
+        # Loop the background video if it's shorter than the final_clip's duration
+        if video_background.duration < final_clip.duration:
+            loops_required = int(np.ceil(final_clip.duration / video_background.duration))
+            video_background = concatenate_videoclips([video_background] * loops_required)
+
+        # Set the final_clip as a layer on top of the background
+        final_clip = CompositeVideoClip([
+            video_background.subclip(0, final_clip.duration).resize(output_size),  # Ensure the background video is the same duration as final_clip
+            final_clip
+        ])
+
     outerclips = [final_clip]
 
     if conf.get('introduction', False):
@@ -92,7 +109,8 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
     if conf.get('outro', False):
         outerclips.append(VideoFileClip(conf.get('outro')))
 
-    clip_to_duration = 5
+
+    clip_to_duration = None
     if clip_to_duration is not None:
         outerclips = [o.set_duration(min(clip_to_duration, o.duration)) for o in outerclips] # for testing
 
@@ -195,7 +213,7 @@ def create_clips(base_video, cell_size, draft):
 
             clip = clip.resize((size, size))
             if not draft:
-              clip = create_masked_video(clip, border_color=reactor_color, border_thickness=10, width=size, height=size, as_circle=featured)
+              clip = create_masked_video(clip, border_color=reactor_color, border_thickness=min(30, max(5, size / 15)), width=size, height=size, as_circle=featured)
 
             position = (x - size / 2, y - size / 2)
             clip = clip.set_position(position)
@@ -204,9 +222,9 @@ def create_clips(base_video, cell_size, draft):
               clip_length = clip.duration
 
             if featured:
-              priority = 10
+              priority = 100
             else: 
-              priority = 1
+              priority = reaction.get('priority', 50)
 
             clip_info = {
               'channel': name,
@@ -330,21 +348,31 @@ def create_masked_video(clip, width, height, border_color, border_thickness=10, 
         draw_large.ellipse([(0, 0), (width, height)], fill=1)
         draw_small.ellipse([(border_thickness, border_thickness), ((width - border_thickness), (height - border_thickness))], fill=1)
     else:
-        # Define hexagon vertices for larger hexagon
-        vertices_large = [(0, height*0.25), (width*0.5, 0), (width, height*0.25),
-                          (width, height*0.75), (width*0.5, height), (0, height*0.75)]
+        assert(height == width)
 
-        # Calculate adjustments for smaller hexagon vertices
-        x_adjust = border_thickness * np.sqrt(3) / 2  # trigonometric calculation
-        y_adjust = border_thickness / 2
+        def calc_hexagon_vertices(cx, cy, size):
+            relative_to = 0
+            l = size / 2 #size / math.sqrt(3) # side length
 
-        # Define hexagon vertices for smaller hexagon
-        vertices_small = [(x_adjust, height*0.25 + y_adjust), 
-                          (width*0.5, y_adjust), 
-                          (width - x_adjust, height*0.25 + y_adjust),
-                          (width - x_adjust, height*0.75 - y_adjust), 
-                          (width*0.5, height - y_adjust), 
-                          (x_adjust, height*0.75 - y_adjust)]
+
+
+            vertices = [  
+              [cx,            cy - size / 2],  # center top
+              [cx + size / 2, cy - l / 2],     # right top
+              [cx + size / 2, cy + l / 2],     # right bottom
+              [cx,            cy + size / 2],  # center bottom                                                    
+              [cx - size / 2, cy + l / 2],     # left bottom
+              [cx - size / 2, cy - l / 2]]     # left top
+
+
+            vertices = [ (v[0] + relative_to, v[1] + relative_to) for v in vertices]
+
+
+            return vertices
+
+        vertices_large = calc_hexagon_vertices(width / 2, height / 2, width)
+        vertices_small = calc_hexagon_vertices(width / 2, height / 2, width - border_thickness)
+
 
         # Draw the larger and smaller hexagons on the mask images
         draw_large.polygon(vertices_large, fill=1)
@@ -355,22 +383,63 @@ def create_masked_video(clip, width, height, border_color, border_thickness=10, 
     border_mask_np = np.array(border_mask)
     mask_img_small_np = np.array(mask_img_small)
 
+
+    audio_volume = get_audio_volume(clip)
+
+    # I’d like to make the border dynamic. Specifically:
+    #   - Each reaction video should have its own bright saturated HSV color assigned to it
+    #   - The HSV color for the respective reaction video should be mixed with white, 
+    #     inversely proportional to the volume of the track at that timestamp. That is, 
+    #     when there is no volume, the border should be white, and when it is at its 
+    #     loudest, it should be the HSV color.
+    def colorize_when_backchannel_active(hsv_color, clip):
+        h, s, v = hsv_color
+        
+
+        def color_func(t):
+            # Get the volume at current time
+            volume = audio_volume[int(t * sr)]
+
+            # If volume is zero, return white
+            if volume == 0:
+                return 0, 0, 0  # White in RGB
+
+            # Calculate the interpolated V value based on audio volume
+            v_modulated = 1 - volume * (1 - v)
+
+            # Convert modulated HSV color back to RGB
+            r, g, b = colorsys.hsv_to_rgb(h, s, v_modulated)
+            return r, g, b
+
+        return color_func
+
     border_func = colorize_when_backchannel_active(border_color, clip)
 
+
     def make_frame(t):
-        img = np.ones((height, width, 3))
+        img = np.zeros((height, width, 3))
 
         # Convert the color from HSV to RGB, then scale from 0-1 to 0-255
         color_rgb = np.array(border_func(t)) * 255
-
         img[border_mask_np > 0] = color_rgb  # apply color to border
 
         return img
 
     # Define make_mask function to create mask for the border
+    # def make_mask(t):
+    #     mask = np.zeros((height, width))
+    #     mask[border_mask_np > 0] = 1
+    #     return mask
+
     def make_mask(t):
         mask = np.zeros((height, width))
-        mask[border_mask_np > 0] = 1
+
+        # Get the volume at current time
+        volume = audio_volume[int(t * sr)]
+
+        if volume > 0:
+            mask[border_mask_np > 0] = 1  # Border visible
+
         return mask
 
     border_clip = VideoClip(make_frame, duration=clip.duration)
@@ -391,32 +460,6 @@ def create_masked_video(clip, width, height, border_color, border_thickness=10, 
 
 
 
-# I’d like to make the border dynamic. Specifically:
-#   - Each reaction video should have its own bright saturated HSV color assigned to it
-#   - The HSV color for the respective reaction video should be mixed with white, 
-#     inversely proportional to the volume of the track at that timestamp. That is, 
-#     when there is no volume, the border should be white, and when it is at its 
-#     loudest, it should be the HSV color.
-def colorize_when_backchannel_active(hsv_color, clip):
-    h, s, v = hsv_color
-    audio_volume = get_audio_volume(clip)
-
-    def color_func(t):
-        # Get the volume at current time
-        volume = audio_volume[int(t * sr)]
-
-        # If volume is zero, return white
-        if volume == 0:
-            return 1, 1, 1  # White in RGB
-
-        # Calculate the interpolated V value based on audio volume
-        v_modulated = 1 - volume * (1 - v)
-
-        # Convert modulated HSV color back to RGB
-        r, g, b = colorsys.hsv_to_rgb(h, s, v_modulated)
-        return r, g, b
-
-    return color_func
 
 
 def get_audio_volume(clip, fps=None):

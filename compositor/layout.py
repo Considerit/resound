@@ -69,21 +69,23 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
       coords.clear()
       
       # Calculate the horizontal and vertical spacing for the hexagons
+      # Adjust the vertical spacing: every second row is moved up by .25 of the hexagon's height      
       dx = 2 * a
-      dy = np.sqrt(3) * a
+      dy = math.ceil(.75 * 2 * a) - 1 #np.sqrt(3) * a
 
-      # Adjust the vertical spacing: every second row is moved up by half of the hexagon's height
-      dy_adj = dy * 7/8
+
+      
+
 
       # Calculate the number of hexagons that can fit in the width and height
       nx = int(np.ceil(width / dx))
-      ny = int(np.ceil(height / dy_adj))
+      ny = int(np.ceil(height / dy))
 
       # Generate a dense grid of hexagons around the center
       for j in range(-ny, ny + 1):
         for i in range(-nx, nx + 1):
           x = center[0] + dx * (i + 0.5 * (j % 2))
-          y = center[1] + dy_adj * j
+          y = center[1] + dy * j
           
           # Add the hexagon to the list if it's fully inside the width x height area
           if x - a >= 0 and y - a >= 0 and x + a <= width and y + a <= height and distance_from_region((x,y), outside_bounds) > 0:
@@ -91,14 +93,17 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
 
       # Reduce the size of the hexagons and try again if we don't have enough
       if len(coords) < min_cells:
-        a *= 0.99
+        prev_a = a
+        a = math.ceil(a * 0.99)
+        if prev_a == a: 
+          a -= 1
 
     # Sort hexagons by distance from the center
     coords.sort(key=lambda p: (p[0] - center[0])**2 + (p[1] - center[1])**2)
 
     assert len(coords) >= min_cells, f"Only {len(coords)} cells could be placed"
     
-    cell_size = math.floor(2 * a)
+    cell_size = math.ceil(2 * a)
 
     print(f"\tLayout: len(hex_grid) = {len(coords)}  target_cells={min_cells} cell_size={cell_size}")
 
@@ -182,7 +187,9 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video)
     other_videos = []
 
     featured_by_key = {}
-    for name, reaction in conf.get('reactions').items():
+    all_reactions = list(conf.get('reactions').items())
+    all_reactions.sort(key=lambda x: x[1].get('priority', 50), reverse=True)
+    for name, reaction in all_reactions:
       reactors = reaction.get('reactors')
       if reaction.get('featured'):
         featured_videos.extend(reactors)
@@ -191,6 +198,7 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video)
       elif len(reactors) > 1:
         connected_videos.append(reactors)
       else:
+        print(name, reaction.get('priority', 50))
         other_videos.extend(reactors)
         
     print(f"\tLayout: featured={len(featured_videos)}  grouped={len(connected_videos)*2}   singular={len(other_videos)}")
