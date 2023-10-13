@@ -81,7 +81,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
             aside_video_clip = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-aside-{i}.mp4")
             
             if not os.path.exists(aside_video_clip):            
-                react_video = VideoFileClip(reaction.get('video_path'))
+                react_video = VideoFileClip(reaction.get('video_path'), has_mask=True)
                 aside_clip = react_video.subclip(float(start), float(end))
                 aside_clip.set_fps(30)
                 aside_clip.write_videofile(aside_video_clip, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
@@ -151,8 +151,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         print("Processing directory", song_directory, "Outputting to", output_dir)
 
-        if not compilation_exists and conf.get('download_and_parse'):
-            download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'])
+        if not compilation_exists and (conf.get('download_and_parse', False) or conf.get('refresh_manifest', False)):
+            download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'], force=conf.get('refresh_manifest', False))
 
         if conf.get('only_manifest', False):
             if os.path.exists(lock_file):
@@ -161,7 +161,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             return []
 
 
-        extend_by = 15
+        extend_by = 8
         for i, (name, reaction) in enumerate(conf.get('reactions').items()):
 
 
@@ -295,13 +295,15 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = 'earliness-alignment' #'painter-high-tolerance' #'earliness-alignment' # 'painter-high-tolerance' # "twosecpaints" # # #"more_sensitive_ends" #"tighter_overall_prune"
+    output_dir = 'completion' #'painter-high-tolerance' #'earliness-alignment' # 'painter-high-tolerance' # "twosecpaints" # # #"more_sensitive_ends" #"tighter_overall_prune"
 
     for song in finished:
         clean_up(song)
 
     manifest_options = {
         "only_manifest": True,
+        "refresh_manifest": True,
+        "download_and_parse": True
     }
 
     failures = []
@@ -317,7 +319,7 @@ if __name__ == '__main__':
         "isolate_commentary": True,
         "create_reactor_view": True,
         "create_compilation": True,
-        "download_and_parse": False,
+        "download_and_parse": True,
         "alignment_test": False,
         "force_ground_truth_paths": False,
         "draft": True,

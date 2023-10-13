@@ -7,6 +7,7 @@ import time
 import json 
 import os
 import subprocess
+import copy
 from pyyoutube import Client, PyYouTubeException
 
 from utilities import conf
@@ -20,20 +21,12 @@ def handle_rate_limiting():
     time.sleep(RATE_LIMIT_PAUSE)
 
 
-def process_reaction(song, artist, search, item, reactors, reactions):
+def process_reaction(song, artist, search, item, reactors, reactions, test):
 
     reactor_name = item['snippet']['channelTitle']
     channel_id = item['snippet']['channelId']
     
-
-    if isinstance(search, str):
-        song_present = search.lower() in item['snippet']['title'].lower()
-    else:
-        song_present = any(s.lower() in item['snippet']['title'].lower() for s in search)
-
-    artist_present = artist.lower() in item['snippet']['title'].lower()
-    
-    if not song_present or not artist_present:
+    if (not test or not test(item['snippet']['title'])):
         print(f"Bad result: {item['snippet']['title']}", item['snippet']['title'].lower())
         return
     
@@ -46,7 +39,7 @@ def process_reaction(song, artist, search, item, reactors, reactions):
         return
 
 
-    print(item)
+    # print(item)
     reactions[item['snippet']['title']] = {
         'song': song,
         'reactor': reactor_name,
@@ -58,6 +51,7 @@ def process_reaction(song, artist, search, item, reactors, reactions):
         'download': False
     }
 
+    print(f"*** ADDED: {reactor_name}  -- {item['snippet']['title']}")
     if reactor_name in reactors:
         print(f"duplicate reactor for {reactor_name}")
     else:
@@ -68,13 +62,14 @@ def process_reaction(song, artist, search, item, reactors, reactions):
         }
         reactors[reactor_name] = reactor
 
-def search_reactions(artist, song, search, reactors, reactions, page_token=None):
+def search_reactions(artist, song, search, reactors, reactions, test, page_token=None):
     try:
         if isinstance(search, str):
             song_string = f'"{search}"'
         else:
             song_string = '({})'.format(' OR '.join(['"{}"'.format(s) for s in search]))
         
+        print(song_string)
         params = {
             'q': f'allintitle: {artist} {song_string}',
             'key': api_key,
@@ -85,19 +80,19 @@ def search_reactions(artist, song, search, reactors, reactions, page_token=None)
             params['pageToken'] = page_token
 
         search_results = client.search.list(**params, return_json=True)
-        print("results:", search_results)
+        # print("results:", search_results)
         for item in search_results['items']:
-            process_reaction(song, artist, search, item, reactors, reactions)
+            process_reaction(song, artist, search, item, reactors, reactions, test)
 
         # Check for next page and fetch it
         next_page_token = search_results.get('nextPageToken')
         if next_page_token:
             time.sleep(5)  # Pause to avoid hitting rate limits
-            search_reactions(artist, song, search, reactors, reactions, next_page_token)
+            search_reactions(artist, song, search, reactors, reactions, test, next_page_token)
     except PyYouTubeException as e:
         if e.status_code == 429:  # Rate Limit Exceeded
             handle_rate_limiting()
-            search_reactions(artist, song, search, reactors, reactions, page_token)  # Retry after pausing
+            search_reactions(artist, song, search, reactors, reactions, test, page_token)  # Retry after pausing
         else:
             print(f"Error fetching video data: {e}")
 
@@ -145,19 +140,52 @@ def search_for_song(artist, song, search):
 
 
 
-
-def create_manifest(artist, song_title, manifest_file, search):
+reactors_to_include=["Chris Liepe", "TrevReacts", 'Neurogal MD', 'DuaneTV', 'SheaWhatNow', 'Kso Big Dipper', 'Lee Reacts', 'redheadedneighbor', 'Black Pegasus', 'Knox Hill', 'Jamel_AKA_Jamal', 'ThatSingerReactions', "That\u2019s Not Acting Either", 'Dicodec', 'BrittReacts', "UNCLE MOMO", "RAP CATALOG by Anthony Ray", "Anthony Ray Reacts", "Kyker2Funny", "Ian Taylor Reacts", "Joe E Sparks", "Cliff Beats", "Rosalie Elliott", 'Ellierose Reacts', 'MrLboyd Reacts']
+def create_manifest(artist, song_title, manifest_file, search, test = None):
+    global reactors_to_include
     reactors = {}
     reactions = {}
 
-    song_data = search_for_song(artist, song_title, search)
-    search_reactions(artist, song_title, search, reactors, reactions)
 
-    manifest = {
-        "main_song": song_data,
-        "reactions": reactions, 
-        "reactors": reactors
-    }
+
+    if os.path.exists(manifest_file):
+        jsonfile = open(manifest_file)
+        manifest = json.load(jsonfile)
+        jsonfile.close()
+    else:
+        manifest = {
+            "main_song": None,
+            "reactions": {},
+            "reactors": {}
+        }
+
+    if isinstance(search, str):
+        search = [search]
+
+    for search_term in search: 
+        if manifest['main_song'] is None:
+            manifest['main_song'] = search_for_song(artist, song_title, search_term)
+
+
+    if test is None: 
+        def test(title):
+            if isinstance(search, str):
+                song_present = search.lower() in title.lower()
+            else:
+                song_present = any(s.lower() in title.lower() for s in search)
+
+            artist_present = artist.lower() in title.lower()
+            return artist_present and song_present
+
+    reactor_search_terms = copy.copy(search)
+    for s in search:
+        for r in reactors_to_include:
+            if r not in manifest['reactors']:
+                reactor_search_terms.append(f"{s} {r}")
+
+
+    search_reactions(artist, song_title, reactor_search_terms, manifest["reactors"], manifest["reactions"], test)
+
 
     manifest_json = json.dumps(manifest, indent = 4) 
     jsonfile = open(manifest_file, "w")
@@ -177,7 +205,7 @@ def get_manifest_path(artist, song):
     return manifest_file
 
 
-def download_and_parse_reactions(artist, song, search):
+def download_and_parse_reactions(artist, song, search, force=False):
     song_directory = os.path.join('Media', f"{artist} - {song}")
     
     if not os.path.exists(song_directory):
@@ -185,8 +213,8 @@ def download_and_parse_reactions(artist, song, search):
        os.makedirs(song_directory)
 
     manifest_file = get_manifest_path(artist, song)
-    if not os.path.exists(manifest_file):
-        create_manifest(artist, song, manifest_file, search)
+    if not os.path.exists(manifest_file) or force:
+        create_manifest(artist, song, manifest_file, search, conf.get('search_tester', None))
 
     song_data = json.load(open(manifest_file))
 
@@ -196,7 +224,7 @@ def download_and_parse_reactions(artist, song, search):
         v_id = song_data["main_song"]["id"]
 
         cmd = f"yt-dlp -o \"{song_file + '.webm'}\" https://www.youtube.com/watch\?v\={v_id}\;"
-        print(cmd)
+        # print(cmd)
         subprocess.run(cmd, shell=True, check=True)
     else: 
         print(f"{song_file} exists")
@@ -222,7 +250,7 @@ def download_and_parse_reactions(artist, song, search):
 
         if not os.path.exists(output) and not os.path.exists(extracted_output) and not os.path.exists(os.path.join(full_reactions_path, 'tofix', reaction['reactor'] + '.mp4')):
             cmd = f"yt-dlp -o \"{output}\" https://www.youtube.com/watch\?v\={v_id}\;"
-            print(cmd)
+            # print(cmd)
 
             try:
                 subprocess.run(cmd, shell=True, check=True)
