@@ -224,7 +224,7 @@ def create_clips(base_video, cell_size, draft):
             if featured:
               priority = 100
             else: 
-              priority = reaction.get('priority', 50)
+              priority = reaction.get('priority')
 
             clip_info = {
               'channel': name,

@@ -92,7 +92,7 @@ def make_conf(song_def, options, temp_directory):
 
 
     multiple_reactors = song_def.get('multiple_reactors', None) 
-    priority = song_def.get('priority', None) 
+    priority = song_def.get('priority', {}) 
     swap_grid_positions = song_def.get('swap_grid_positions', None)
 
     for reaction_video_path in reaction_videos:
@@ -114,11 +114,13 @@ def make_conf(song_def, options, temp_directory):
       target_score = song_def.get('target_scores', {}).get(channel, None)
 
       if not conf.get('alignment_test', False) or target_score is not None:
+        featured = channel in song_def.get('featured', [])
+
         reactions[channel] = {
           'channel': channel,
           'video_path': reaction_video_path, 
           'aligned_path': os.path.join(temp_directory, os.path.basename(channel) + f"-CROSS-EXPANDER.mp4"),
-          'featured': channel in song_def.get('featured', []),
+          'featured': featured,
           'asides': song_def.get('asides', {}).get(channel, None),
           'ground_truth': ground_truth,
           'ground_truth_path': ground_truth_path,
@@ -127,8 +129,16 @@ def make_conf(song_def, options, temp_directory):
 
         if multiple_reactors is not None:
           reactions[channel]['num_reactors'] = multiple_reactors.get(channel, 1)
-        if priority is not None and priority.get(channel, None):
-          reactions[channel]['priority'] = priority.get(channel)
+        
+
+        if featured: 
+          default_priority = 75
+        else:
+          default_priority = 50
+          
+        reactions[channel]['priority'] = priority.get(channel, default_priority)
+
+
         if swap_grid_positions is not None and swap_grid_positions.get(channel, None):
           reactions[channel]['swap_grid_positions'] = swap_grid_positions.get(channel)
 

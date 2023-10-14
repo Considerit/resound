@@ -29,14 +29,22 @@ def create_layout_for_composition(base_video, width, height):
       # upper left point of rectangle, lower right point of rectangle
       bounds = (x - base_width / 2, y - base_height / 2, x + base_width / 2, y + base_height / 2)
       center = None
+      value_relative_to = [x,y]
     else: 
       bounds = [0,0,width,0]
       center = [width / 2, height / 2]
+      value_relative_to = [width / 2, height / 2]
 
     hex_grid, cell_size = generate_hexagonal_grid(width, height, total_videos, bounds, center)
-    hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
 
-    assign_hex_cells_to_videos(width, height, hex_grid, cell_size, bounds)
+
+
+    # hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
+    hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
+
+
+
+    assign_hex_cells_to_videos(width, height, hex_grid, cell_size, bounds, value_relative_to)
 
 
     return (base_video, cell_size)
@@ -110,7 +118,7 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
     return coords, cell_size  # return 2 * a (diameter) to match with the circle representation
 
 
-def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video):
+def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video, value_relative_to):
     # Assumes: grid_cells are sorted
     assignments = {}
 
@@ -122,31 +130,37 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video)
         best_spot = None 
         best_adjacent = None
 
+        max_distance = -1
+        for cell in grid_cells:
+          dist = distance(cell, value_relative_to)
+          if dist > max_distance:
+            max_distance = dist
+
+        best_cell = None
+
         for cell in grid_cells:
 
             if cell in assignments.values():
               continue
 
-            score = 0
+            score = 1 + (max_distance - distance(cell, value_relative_to)) / max_distance
 
             # Check the orientation constraint
             if (video['orientation'] == 'center'):
-
               if base_video[0] * .25 <= cell[0] and cell[0] <= base_video[0] * .75:
-                score += 1
-              else:
-                score += 1 / abs(cell[0] - base_video[0] / 2)
+                score *= 1.1
 
             elif (video['orientation'] == 'right'):
-              if cell[0] <= base_video[0] / 2:
-                score += 1
-              else: 
-                score += 1 / abs(cell[0])
+              if cell[0] <= base_video[0] * .5:
+                score *= 1.1
+              elif cell[0] <= base_video[0] * .65:
+                score *= 1.01
+
             else: 
-              if cell[0] >= base_video[0]:
-                score += 1
-              else: 
-                score += 1 / abs(cell[0] - base_video[0])
+              if cell[0] >= base_video[0] * .5:
+                score *= 1.1
+              elif cell[0] >= base_video[0] * .35:
+                score *= 1.01
 
 
             # If the video is featured, ensure it is not on the edge and not adjacent to other featured videos
@@ -154,25 +168,19 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video)
                 # Check if cell is adjacent to another featured video
                 for assigned_key in assignments.keys():
                     if featured_by_key.get(assigned_key, False) and distance(cell, assignments[assigned_key]) <= 1.1*cell_size:
-                        score -= 1
+                        score *= .01
 
             if score > best_score: 
+
               if in_group:
 
                 # Check if there is an open adjacent to the immediate left or right (y-difference is 0, x-difference~=cell_size)
                 # If there is, assign the spot and return the open cell
-                found_adjacent = False
                 for adjacent_cell in cells:
-                  if adjacent_cell in assignments.values():
-                    continue
-                  if abs(cell[1] - adjacent_cell[1]) <= 1 and abs(abs(cell[0] - adjacent_cell[0]) - cell_size) <= 1:
-                    assignments[video['key']] = cell
-                    best_adjacent = adjacent_cell
-                    found_adjacent = True
-                    break
-
-                if not found_adjacent:
-                  continue
+                  if not adjacent_cell in assignments.values():                
+                    if abs(cell[1] - adjacent_cell[1]) <= 1 and abs(abs(cell[0] - adjacent_cell[0]) - cell_size) <= 1:
+                      assignments[video['key']] = cell
+                      return adjacent_cell
 
               best_score = score
               best_spot = cell
@@ -182,47 +190,71 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video)
         return best_adjacent
 
 
-    featured_videos = []
-    connected_videos = []
-    other_videos = []
+    all_reactions = list(conf.get('reactions').items())
+    all_reactions.sort(key=lambda x: x[1].get('priority'), reverse=True)
+
+
+    all_reactors = []
+
+
+    featured_videos = 0
+    connected_videos = 0
+    other_videos = 0
 
     featured_by_key = {}
-    all_reactions = list(conf.get('reactions').items())
-    all_reactions.sort(key=lambda x: x[1].get('priority', 50), reverse=True)
+
+
     for name, reaction in all_reactions:
       reactors = reaction.get('reactors')
-      if reaction.get('featured'):
-        featured_videos.extend(reactors)
-        for featured in reactors:
-          featured_by_key[featured['key']] = True
-      elif len(reactors) > 1:
-        connected_videos.append(reactors)
-      else:
-        print(name, reaction.get('priority', 50))
-        other_videos.extend(reactors)
+      featured = reaction.get('featured')
+      in_group = len(reactors) > 1
+
+      all_reactors.append({
+          'featured': featured,
+          'in_group': in_group,
+          'reactors': reactors
+        })
+
+      if featured:
+        for reactor in reactors:
+          featured_videos += 1
+          featured_by_key[reactor['key']] = True
+
+      if in_group:
+        connected_videos += len(reactors)
+
+        if reactors[0]['priority'] == 50:
+          reactors[0]['priority'] = 60
+
+      if not featured and not in_group:
+        other_videos += len(reactors)
+
         
-    print(f"\tLayout: featured={len(featured_videos)}  grouped={len(connected_videos)*2}   singular={len(other_videos)}")
+    print(f"\tLayout: featured={featured_videos}  grouped={connected_videos}   singular={other_videos}")
 
-    # ...Assign the featured reactors
-    featured_videos.sort(key=lambda x: 0 if x['orientation'] == 'center' else 1, reverse=True)
-    for video in featured_videos:
-        assign_video(video, grid_cells, assignments, featured=True)
+    def sort_reactors(r):
+      first = r['reactors'][0]
+      v = first.get('priority')
+      if first['orientation'] == 'center':
+        v -= 1
+      return v
 
-    # ...Assign the paired reactors
-    for reactors in connected_videos:
-      assert(len(reactors) < 3)
-      p1,p2 = reactors
 
-      p2_spot = assign_video(p1, grid_cells, assignments, in_group=True)
-      if p2_spot is not None:
-        assignments[p2['key']] = p2_spot
-      else: # failed
-        assign_video(p2, grid_cells, assignments)
+    all_reactors.sort(key=sort_reactors, reverse=True)
+    for reactor_group in all_reactors:
+      reactors = reactor_group['reactors']
 
-    # ...Assign the remaining videos
-    other_videos.sort(key=lambda x: 0 if x['orientation'] == 'center' else 1, reverse=True)
-    for video in other_videos:
-        assign_video(video, grid_cells, assignments)
+      if reactor_group['in_group']:
+        assert(len(reactors) < 3, "Only support pairs of reactors for now")
+
+        p2_spot = assign_video(reactors[0], grid_cells, assignments, featured=reactor_group['featured'], in_group=reactor_group['in_group'])
+        if p2_spot is not None:
+          assignments[reactors[1]['key']] = p2_spot
+        else: # failed
+          assign_video(reactors[1], grid_cells, assignments, featured=reactor_group['featured'], in_group=reactor_group['in_group'])
+      else: 
+        for reactor in reactors:
+          assign_video(reactor, grid_cells, assignments, featured=reactor_group['featured'], in_group=False)
 
 
     # Save the grid assigments to the reactors

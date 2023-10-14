@@ -127,7 +127,7 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
   for file in output_files:
     cropped_reactors.append({
       'key': file,
-      # 'reaction': reaction, # circular reference      
+      'priority': reaction.get('priority'), # circular reference      
       'clip': VideoFileClip(file),
       'orientation': get_orientation(file),
     })
