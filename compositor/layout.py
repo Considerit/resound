@@ -163,6 +163,17 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
                 score *= 1.01
 
 
+            if in_group:
+                nearest_open_cell = max_distance
+                for c in grid_cells:
+                    if c != cell and c in assignments.values():
+                        dist = distance(cell, c)
+                        if dist < nearest_open_cell:
+                            nearest_open_cell = dist
+                            best_adjacent = c
+
+                score *= 1 + (max_distance - nearest_open_cell) / max_distance
+
             # If the video is featured, ensure it is not on the edge and not adjacent to other featured videos
             if featured:
                 # Check if cell is adjacent to another featured video

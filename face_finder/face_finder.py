@@ -310,7 +310,7 @@ def get_faces_from(img):
 
 
 
-def detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to_ignore, reduction_factor=0.5):
+def detect_faces_in_frame(reaction, react_frame, show_facial_recognition, width, height, images_to_ignore, reduction_factor=0.5):
     # Resize the frame for faster face detection
     reduced_frame = cv2.resize(react_frame, (int(react_frame.shape[1] * reduction_factor), 
                                              int(react_frame.shape[0] * reduction_factor)))
@@ -329,6 +329,11 @@ def detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to
     faces_this_frame = []
     for ((x, y, w, h), nose) in scaled_faces:
         if w > .05 * width:
+            if reaction.get('fake_reactor_position', False):
+                bad_x, bad_y = reaction.get('fake_reactor_position')
+                if (x / width < bad_x < (x+w) / width and y / height < bad_y < (y + h) / height):
+                  continue
+
             faces_this_frame.append([x, y, w, h, nose])
 
     # compute histogram of grays for later fine-grained matching
@@ -367,7 +372,7 @@ def detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to
     return filtered_faces_this_frame, ignored_faces_this_frame
 
 
-def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False, images_to_ignore=[]):
+def detect_faces_in_frames(reaction, video, frames_to_read, show_facial_recognition=False, images_to_ignore=[]):
 
     # Iterate over each frame in the video
     face_matches = []
@@ -392,7 +397,7 @@ def detect_faces_in_frames(video, frames_to_read, show_facial_recognition=False,
           break
 
 
-        frame_faces, ignored_faces = detect_faces_in_frame(react_frame, show_facial_recognition, width, images_to_ignore)
+        frame_faces, ignored_faces = detect_faces_in_frame(reaction, react_frame, show_facial_recognition, width, height, images_to_ignore)
         face_matches.append( (current_react, frame_faces, ignored_faces) )
         # print("matches:", face_matches)
 
@@ -463,7 +468,7 @@ def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, 
           if f.startswith("face-to-ignore")
       ]
 
-      face_matches = detect_faces_in_frames(video, frames_to_read, show_facial_recognition=show_facial_recognition, images_to_ignore=images_to_ignore)
+      face_matches = detect_faces_in_frames(reaction, video, frames_to_read, show_facial_recognition=show_facial_recognition, images_to_ignore=images_to_ignore)
       output_coarse_face_metadata(coarse_face_metadata, face_matches)
 
     # print('facematches:', [(frame, x,y,w,h) for frame, (x,y,w,nose,hist) in face_matches])
