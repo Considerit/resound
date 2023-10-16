@@ -6,6 +6,7 @@ from aligner.find_segment_end import find_segment_end, initialize_segment_end_ca
 from aligner.scoring_and_similarity import find_best_path, initialize_path_score, initialize_segment_tracking, get_segment_mfcc_cosine_similarity_score, path_score, print_path, path_score_by_mfcc_cosine_similarity, truncate_path
 from aligner.cross_expander import compress_segments
 from aligner.pruning_search import is_path_quality_poor, initialize_path_pruning
+from silence import is_silent
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -15,8 +16,10 @@ import time
 
 
 
-def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=3):
+def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=None):
 
+    if chunk_size is None: 
+        chunk_size = reaction.get('chunk_size', 3)
 
     print(f"\n###############################\n# {conf.get('song_key')} / {reaction.get('channel')}")
 
@@ -28,7 +31,8 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=3)
     initialize_path_pruning()
 
     chunk_size *= sr
-    step = int(chunk_size/6)
+    chunk_size = int(chunk_size)
+    step = int(.5 * sr)
 
     if allowed_spacing is None:
         allowed_spacing = 3 * sr
@@ -62,6 +66,8 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=3)
 
     if len(paths) == 0 and allowed_spacing < 10 * sr: 
         print(f"No paths found. Trying with {allowed_spacing * 2 / sr} spacing")
+        splay_paint(reaction, segments, stroke_alpha=.2, show_live=False)
+
         return paint_paths(reaction, peak_tolerance, allowed_spacing=allowed_spacing * 2)
 
     print(f"Found {len(paths)} paths")
@@ -280,7 +286,7 @@ def finesse_paths(reaction, paths):
 
 def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacing):
     paths = []
-    song_length = len(conf.get('base_audio_data'))
+    song_length = len(conf.get('song_audio_data'))
     partial_paths = []
 
 
@@ -390,22 +396,22 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
 
         print(i, len(partial_paths) + len(backlog), len(paths), len(partial_path[0]), end='\r')
 
+        if partial_path[1]['key'] in joinable_segment_map:
+            next_partials = branch_from( reaction, partial_path, joinable_segment_map[partial_path[1]['key']], allowed_spacing  )
 
-        next_partials = branch_from( reaction, partial_path, joinable_segment_map[partial_path[1]['key']], allowed_spacing  )
-
-        for partial in next_partials:
-            path, last_segment = partial
-            if near_song_end(last_segment, allowed_spacing):
-                complete_path(path)
+            for partial in next_partials:
+                path, last_segment = partial
+                if near_song_end(last_segment, allowed_spacing):
+                    complete_path(path)
 
 
-            should_prune, score = should_prune_path(reaction, path, song_length)
-            if not should_prune and prune_eligible and is_path_quality_poor(reaction, path):
-                prune_cache['poor_path'] += 1
-                should_prune = True
+                should_prune, score = should_prune_path(reaction, path, song_length)
+                if not should_prune and prune_eligible and is_path_quality_poor(reaction, path):
+                    prune_cache['poor_path'] += 1
+                    should_prune = True
 
-            if (not should_prune) and last_segment['key'] in joinable_segment_map and len(joinable_segment_map[last_segment['key']]) > 0:
-                partial_paths.append([partial, score])
+                if (not should_prune) and last_segment['key'] in joinable_segment_map and len(joinable_segment_map[last_segment['key']]) > 0:
+                    partial_paths.append([partial, score])
 
     return paths
 
@@ -593,13 +599,14 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links 
         pruned_another = False
         for segment in segments:
             segment_id = segment['key']
-            joins = joinable_segments[segment_id] = [s for s in joinable_segments[segment_id] if not s.get('pruned', False)]
+            if segment_id in joinable_segments:
+                joins = joinable_segments[segment_id] = [s for s in joinable_segments[segment_id] if not s.get('pruned', False)]
 
-            if len(joins) == 0 and not segment.get('at_end', False):
-                segment['pruned'] = True
-                del joinable_segments[segment_id]
-                pruned_another = True
-                prune_cache['unreachable'] += 1
+                if len(joins) == 0 and not segment.get('at_end', False):
+                    segment['pruned'] = True
+                    del joinable_segments[segment_id]
+                    pruned_another = True
+                    prune_cache['unreachable'] += 1
 
     # now clean up all segments that can't be reached from the start
     pruned_another = True
@@ -863,24 +870,61 @@ def sharpen_segments(reaction, chunk_size, step, segments, allowed_spacing):
 
 
 
+def determine_dominance(vocal_data, accompaniment_data):
+    """
+    Determines if a segment is vocal-dominated or accompaniment-dominated.
+
+    Parameters:
+    - vocal_data: Array representing the audio data of the vocal segment.
+    - accompaniment_data: Array representing the audio data of the accompaniment segment.
+
+    Returns:
+    - "vocal" if the segment is vocal-dominated, "accompaniment" otherwise.
+    """
+
+    # Calculate the energy (or RMS value) for each segment
+    vocal_energy = np.sqrt(np.mean(np.square(vocal_data)))
+    accompaniment_energy = np.sqrt(np.mean(np.square(accompaniment_data)))
+
+    # Determine dominance
+    if vocal_energy > .1 * accompaniment_energy:
+        return "vocal"
+    else:
+        return "accompaniment"
 
 
 def find_segments(reaction, chunk_size, step, peak_tolerance):
 
 
 
-    base_audio = conf.get('base_audio_data')
+    base_audio = conf.get('song_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
+
     hop_length = conf.get('hop_length')
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
-    base_audio_mfcc = conf.get('base_audio_mfcc')
+    song_audio_mfcc = conf.get('song_audio_mfcc')
+
+    base_audio_accompaniment = conf.get('song_audio_accompaniment_data')
+    reaction_audio_accompaniment = reaction.get('reaction_audio_accompaniment_data')
+
+    reaction_audio_accompaniment_mfcc = reaction.get('reaction_audio_accompaniment_mfcc')    
+    base_audio_accompaniment_mfcc = conf.get('song_audio_accompaniment_mfcc')
+
+    base_audio_vocals = conf.get('song_audio_vocals_data')
+    reaction_audio_vocals = reaction.get('reaction_audio_vocals_data')
+
+
 
 
     alignment_bounds = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
 
     starting_points = range(0, len(base_audio) - chunk_size, step)
 
-    minimums = [3 * sr]
+    start_reaction_search_at = reaction.get('start_reaction_search_at', 3)
+
+    minimums = [start_reaction_search_at * sr]
+
+
 
     strokes = []
     active_strokes = []
@@ -898,31 +942,92 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
         print_profiling()
 
-        reaction_start = min(minimums[-18:])
+        reaction_start = max( minimums[0] + start, min(minimums[-18:]))
 
         if start not in candidate_cache:
 
-            reaction_end = get_bound(alignment_bounds, start, len(reaction_audio))
+            upper_bound = get_bound(alignment_bounds, start, len(reaction_audio))
+
+            if reaction.get('unreliable_bounds', False):
+                upper_bound = min(len(reaction_audio), upper_bound * 1.5)
+
 
             chunk = base_audio[start:start+chunk_size]
-            chunk_mfcc = base_audio_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+            chunk_mfcc = song_audio_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
 
-            candidates = find_segment_starts(
-                                    reaction=reaction, 
-                                    open_chunk=reaction_audio[reaction_start:reaction_end], 
-                                    open_chunk_mfcc=reaction_audio_mfcc[:, round( reaction_start / hop_length):round(reaction_end/hop_length)],
-                                    closed_chunk=chunk, 
-                                    closed_chunk_mfcc= chunk_mfcc,
-                                    current_chunk_size=chunk_size, 
-                                    peak_tolerance=peak_tolerance, 
-                                    full_search=True,
-                                    open_start=reaction_start,
-                                    closed_start=start, 
-                                    distance=1 * sr, 
-                                    filter_for_similarity=True)
+            open_chunk = reaction_audio[reaction_start:]
+            open_chunk_mfcc = reaction_audio_mfcc[:, round( reaction_start / hop_length):]
 
+
+
+            predominantly_silent = is_silent(chunk, threshold_db=-30)
+            vocal_dominated = 'vocal' == determine_dominance(base_audio_vocals[start:start+chunk_size], base_audio_accompaniment[start:start+chunk_size])
+
+
+            candidate_start_metrics = [ ('standard', chunk, open_chunk, chunk_mfcc, open_chunk_mfcc),   ]
+
+
+            # we'll also send the accompaniment if it isn't vocally dominated
+            if not vocal_dominated or predominantly_silent:
+                chunk = base_audio_accompaniment[start:start+chunk_size]
+                open_chunk = reaction_audio_accompaniment[reaction_start:]
+
+                chunk_mfcc = base_audio_accompaniment_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+                open_chunk_mfcc = reaction_audio_accompaniment_mfcc[:, round( reaction_start / hop_length):]
+
+                candidate_start_metrics.append( ('accompaniment', chunk, open_chunk, chunk_mfcc, open_chunk_mfcc) )
+
+            else: 
+                song_pitch_contour = conf.get('song_audio_vocals_pitch_contour')
+                reaction_pitch_contour = reaction.get('reaction_audio_vocals_pitch_contour')
+
+                chunk_mfcc      =     song_pitch_contour[:, round( start / hop_length):round((start+chunk_size)/hop_length)]
+                open_chunk_mfcc = reaction_pitch_contour[:, round( reaction_start / hop_length):]
+
+                candidate_start_metrics.append( ('vocals', chunk, open_chunk, chunk_mfcc, open_chunk_mfcc) )
+
+
+            if False: 
+
+                song_spectral_flux = conf.get('song_audio_accompaniment_spectral_flux')
+                reaction_spectral_flux = reaction.get('reaction_audio_accompaniment_spectral_flux')
+
+                song_root_mean_square_energy = conf.get('song_audio_accompaniment_root_mean_square_energy')
+                reaction_root_mean_square_energy = reaction.get('reaction_audio_accompaniment_root_mean_square_energy')
+
+                # chunk_mfcc = song_spectral_flux[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+                # open_chunk_mfcc = reaction_spectral_flux[:, round( reaction_start / hop_length):]
+
+                chunk_mfcc = song_root_mean_square_energy[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+                open_chunk_mfcc = reaction_root_mean_square_energy[:, round( reaction_start / hop_length):]
+
+
+            candidates = []
+            for metric_group, chunk, open_chunk, chunk_mfcc, open_chunk_mfcc in candidate_start_metrics:
+                new_candidates = find_segment_starts(
+                                        metric_group=metric_group,
+                                        reaction=reaction, 
+                                        open_chunk=open_chunk, 
+                                        open_chunk_mfcc=open_chunk_mfcc,
+                                        closed_chunk=chunk, 
+                                        closed_chunk_mfcc= chunk_mfcc,
+                                        current_chunk_size=chunk_size, 
+                                        peak_tolerance=peak_tolerance, 
+                                        full_search=True,
+                                        open_start=reaction_start,
+                                        closed_start=start, 
+                                        distance=1 * sr, 
+                                        filter_for_similarity=True,
+                                        upper_bound=upper_bound)
+
+                if new_candidates is not None: 
+                    for c in new_candidates:
+                        if c not in candidates:
+                            candidates.append(c)
+
+            if len(candidates) == 0:
+                continue
             candidates.sort()
-
             candidate_cache[start] = candidates
         else: 
             candidates = candidate_cache[start]
@@ -1044,7 +1149,7 @@ def near_song_beginning(segment, allowed_spacing):
 
 
 def near_song_end(segment, allowed_spacing):
-    song_length = len(conf.get('base_audio_data'))
+    song_length = len(conf.get('song_audio_data'))
     return song_length - segment['end_points'][3] < allowed_spacing
 
 
@@ -1056,7 +1161,7 @@ def near_song_end(segment, allowed_spacing):
 def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, paths=None):
     plt.figure(figsize=(10, 10))
 
-    x = conf.get('base_audio_data')
+    x = conf.get('song_audio_data')
     y = reaction.get('reaction_audio_data')
 
     if reaction.get('ground_truth'):
@@ -1072,7 +1177,7 @@ def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, pat
     for segment in strokes:
         # if not segment.get('pruned', False) and 'old_end_points' in segment:
         if segment.get('pruned', False):
-            alpha = .1
+            alpha = .25
         else:
             alpha = 1
         make_stroke(segment.get('old_end_points', segment['end_points']), linewidth=2, color='orange', alpha = alpha)

@@ -78,11 +78,11 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
 
     print_profiling()
 
-    base_audio = conf.get('base_audio_data')
+    base_audio = conf.get('song_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
 
     
-    base_audio_mfcc = conf.get('base_audio_mfcc')
+    song_audio_mfcc = conf.get('song_audio_mfcc')
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
     hop_length = conf.get('hop_length')
 
@@ -130,7 +130,7 @@ def branching_search(reaction, current_path=None, current_path_checkpoint_scores
                                 open_chunk=reaction_audio[reaction_start:],                   
                                 open_chunk_mfcc=reaction_audio_mfcc[:, max(0, round(reaction_start / hop_length)):], 
                                 closed_chunk=chunk,
-                                closed_chunk_mfcc= base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length) ],
+                                closed_chunk_mfcc= song_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length) ],
                                 current_chunk_size=current_chunk_size, 
                                 peak_tolerance=peak_tolerance,
                                 open_start=reaction_start, 

@@ -3,7 +3,6 @@ import librosa
 import math
 
 
-from utilities.audio_processing import audio_percentile_loudness
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
@@ -71,8 +70,8 @@ def path_score(path, reaction, end=None, start=0):
     global path_score_cache
     global path_score_cache_perf
 
-    base_audio = conf.get('base_audio_data')
-    base_audio_mfcc = conf.get('base_audio_mfcc')
+    base_audio = conf.get('song_audio_data')
+    song_audio_mfcc = conf.get('song_audio_mfcc')
     hop_length = conf.get('hop_length')
     reaction_audio = reaction['reaction_audio_data']
     reaction_audio_mfcc = reaction['reaction_audio_mfcc']    
@@ -400,9 +399,9 @@ def mfcc_cosine_similarity(mfcc1=None, mfcc2=None, verbose=False):
 
     if use_mfcc_weights:
         global mfcc_cosine_weights
-        if mfcc_cosine_weights is None:
+        if mfcc_cosine_weights is None or len(mfcc_cosine_weights) != len(similarities):
             alpha = 0.9  # decay factor
-            mfcc_cosine_weights = np.array([alpha**i for i in range(conf.get('n_mfcc'))])
+            mfcc_cosine_weights = np.array([alpha**i for i in range(mfcc1.shape[0])])
 
         # Weighted average of similarities using mfcc_cosine_weights
         weighted_similarity = np.dot(similarities, mfcc_cosine_weights) / np.sum(mfcc_cosine_weights)
@@ -455,9 +454,9 @@ def create_reaction_mfcc_from_path(path, reaction):
 
     # these mfcc variables are the result of calls to librosa.feature.mfcc, thus
     # they have a shape of (num_mfcc, length of audio track). The length of the 
-    # reaction_audio_mfcc track is greater than the length of base_audio_mfcc track. 
+    # reaction_audio_mfcc track is greater than the length of song_audio_mfcc track. 
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
-    base_audio_mfcc = conf.get('base_audio_mfcc')
+    song_audio_mfcc = conf.get('song_audio_mfcc')
     hop_length = conf.get('hop_length')
 
     total_length = 0
@@ -475,11 +474,11 @@ def create_reaction_mfcc_from_path(path, reaction):
 
     # the resulting combined mfcc (path_mfcc) should have the same number of mfccs 
     # as the input mfccs, and be the length of the reaction_audio_for_path. 
-    path_mfcc = np.zeros((base_audio_mfcc.shape[0], total_length))
+    path_mfcc = np.zeros((song_audio_mfcc.shape[0], total_length))
 
 
     # Now we're going to fill up the path_mfcc incrementally, taking from either
-    # base_audio_mfcc or reaction_audio_mfcc
+    # song_audio_mfcc or reaction_audio_mfcc
     start = 0
     for reaction_start, reaction_end, current_start, current_end, is_filler in path:
 
@@ -608,15 +607,15 @@ def get_segment_mfcc_mse(reaction, segment):
     key = get_segment_id(segment)
     if key not in segment_mfcc_mses:
       
-      base_audio_mfcc = conf.get('base_audio_mfcc')
+      song_audio_mfcc = conf.get('song_audio_mfcc')
       reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
       hop_length = conf.get('hop_length')
 
       if is_filler:
-          mfcc_react_chunk = np.zeros((base_audio_mfcc.shape[0], reaction_end - reaction_start))
+          mfcc_react_chunk = np.zeros((song_audio_mfcc.shape[0], reaction_end - reaction_start))
       else: 
           mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
-      mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
+      mfcc_song_chunk =      song_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
       mfcc_score = mse_mfcc_similarity(mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk, mse_only=True)
 
       segment_mfcc_mses[key] = mfcc_score
@@ -639,12 +638,12 @@ def get_segment_mfcc_cosine_similarity_score(reaction, segment):
     key = get_segment_id(segment)
     if key not in segment_mfcc_cosine_scores:
       
-      base_audio_mfcc = conf.get('base_audio_mfcc')
+      song_audio_mfcc = conf.get('song_audio_mfcc')
       reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
       hop_length = conf.get('hop_length')
 
       mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]
-      mfcc_song_chunk =      base_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
+      mfcc_song_chunk =      song_audio_mfcc[:, round(current_start / hop_length):round(current_end / hop_length)]
       mfcc_score = mfcc_cosine_similarity(mfcc1=mfcc_song_chunk, mfcc2=mfcc_react_chunk)
       if mfcc_score < 0 or math.isnan(mfcc_score):
         mfcc_score = 0
@@ -663,7 +662,7 @@ def get_segment_raw_cosine_similarity_score(reaction, segment):
     key = get_segment_id(segment)
     if key not in segment_raw_cosine_scores:
       
-      base_audio = conf.get('base_audio_data')
+      base_audio = conf.get('song_audio_data')
       reaction_audio = reaction.get('reaction_audio_data')
 
       react_chunk = reaction_audio[reaction_start:reaction_end]

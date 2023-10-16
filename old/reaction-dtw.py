@@ -284,7 +284,7 @@ def process_directory(song: str, output_dir: str = 'aligned', features: list=['m
     base_video_name, base_video_ext = os.path.splitext(base_video)
 
     # Extract the base audio and get the sample rate
-    base_audio_data, _, base_audio = extract_audio(base_video, directory)
+    song_audio_data, _, base_audio = extract_audio(base_video, directory)
 
 
     # Process each reaction video

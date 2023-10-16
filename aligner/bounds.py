@@ -42,11 +42,11 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     # profiler = cProfile.Profile()
     # profiler.enable()
 
-    base_audio = conf.get('base_audio_data')
+    base_audio = conf.get('song_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
     hop_length = conf.get('hop_length')
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
-    base_audio_mfcc = conf.get('base_audio_mfcc')
+    song_audio_mfcc = conf.get('song_audio_mfcc')
 
     clip_length = int(2 * sr)
     base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
@@ -76,7 +76,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
           (ts, min(len(base_audio), ts + clip_length))
         ]
 
-        segments = [  (s, e, base_audio[s:e], base_audio_mfcc[:, round(s / hop_length): round(e / hop_length)]) for s,e in segment_times  ]
+        segments = [  (s, e, base_audio[s:e], song_audio_mfcc[:, round(s / hop_length): round(e / hop_length)]) for s,e in segment_times  ]
 
 
         # for j, segment in enumerate(segments):

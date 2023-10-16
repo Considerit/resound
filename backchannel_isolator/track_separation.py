@@ -34,6 +34,7 @@ def separate_vocals(output_dir, audio_path, output_filename):
 
         # Perform source separation
         if not os.path.exists(vocals_path):
+            print("\tPerforming source separation")
             get_spleeter().separate_to_file(audio_path, output_dir)
             audio_file_prefix = os.path.splitext(audio_path)[0].split('/')[-1]
             weird_spleeter_outputpath = os.path.join(output_dir, audio_file_prefix)
@@ -43,18 +44,19 @@ def separate_vocals(output_dir, audio_path, output_filename):
                 current_path = os.path.join(weird_spleeter_outputpath, filename)
                 new_path = os.path.join(parent_dir, filename)
                 os.rename(current_path, new_path)
+            print("\tDone with source separation")
 
 
         #vocals, sr_song = librosa.load( vocals_path, sr=sr, mono=True )
         # vocals = post_process_audio(vocals)
         # sf.write(song_vocals_high_passed_path, vocals.T, sr)
 
-        print('READING', vocals_path)
+        print('\tPost processing vocals', vocals_path)
         audio_data, __ = sf.read(vocals_path)
         vocals = convert_to_mono(audio_data)
         vocals = post_process_audio(vocals)
         sf.write(vocals_high_passed_path, vocals, sr)
-
+        print('\tDone post processing vocals')
 
 
 

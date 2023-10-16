@@ -140,7 +140,7 @@ def thin_at_checkpoint(   reaction,
     if prunes_all is None:
         prunes_all = initialize_prune_tracking()
 
-    base_audio = conf.get('base_audio_data')
+    base_audio = conf.get('song_audio_data')
     song_length = len(base_audio)
 
     prunes = {}
@@ -501,7 +501,7 @@ def plot_candidates(reaction, data):
 def visualize_candidate_paths(reaction, idx, checkpoint_ts, paths, best_score, scoring_function, done=False, show_each_iteration=False):
     plt.figure(figsize=(10, 10))
 
-    y = conf.get('base_audio_data')
+    y = conf.get('song_audio_data')
     x = reaction.get('reaction_audio_data')
 
 

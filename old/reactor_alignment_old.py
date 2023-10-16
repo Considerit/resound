@@ -588,7 +588,7 @@ def find_chunk_potential_matches(chunk: List[Tuple[np.ndarray, int, int]], react
     chunk_matches = [(index, (index + chunk_size), base_start, base_end) for index in peak_indices]
     return chunk_matches
 
-def find_potential_matches(base_audio_data, base_sample_rate, reaction_audio_data, reaction_sample_rate, chunk_duration: float = 1.0, peak_tolerance: float = 0.9) -> List[List[Tuple[int, int, int, int]]]:
+def find_potential_matches(song_audio_data, base_sample_rate, reaction_audio_data, reaction_sample_rate, chunk_duration: float = 1.0, peak_tolerance: float = 0.9) -> List[List[Tuple[int, int, int, int]]]:
 
 
     
@@ -596,14 +596,14 @@ def find_potential_matches(base_audio_data, base_sample_rate, reaction_audio_dat
     assert base_sample_rate == reaction_sample_rate, "Sample rates must match!"
 
     chunk_size = int(chunk_duration * base_sample_rate)  # chunk size in samples
-    base_length = len(base_audio_data)
+    base_length = len(song_audio_data)
     reaction_length = len(reaction_audio_data)
 
     assert reaction_length >= base_length
 
 
     # Split base audio into chunks
-    base_chunks = [ (base_audio_data[i:i+chunk_size], i, (i+chunk_size), i, reaction_length - (base_length - (i + chunk_size))) for i in range(0, base_length, chunk_size)]
+    base_chunks = [ (song_audio_data[i:i+chunk_size], i, (i+chunk_size), i, reaction_length - (base_length - (i + chunk_size))) for i in range(0, base_length, chunk_size)]
 
     # Create a Pool of workers
     with Pool(cpu_count() // 2) as pool:

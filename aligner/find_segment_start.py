@@ -45,7 +45,7 @@ def initialize_segment_start_cache():
 # to figure out if the system at least generates the ground truth path.
 # Even if it doesn't select it.
 
-def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, closed_chunk_mfcc, current_chunk_size, peak_tolerance, open_start, closed_start, distance, full_search=True, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None):
+def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, closed_chunk_mfcc, current_chunk_size, peak_tolerance, open_start, closed_start, distance, full_search=True, prune_for_continuity=False, prune_types=None, upper_bound=None, filter_for_similarity=True, current_path=None, metric_group='standard'):
     global full_search_start_cache
     global full_search_cache    
 
@@ -73,7 +73,7 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                 return -1 
 
 
-    key = f"{conf.get('song_key')} {open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
+    key = f"{conf.get('song_key')} {metric_group} {open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
 
     if full_search:
         full_search_key = f"{conf.get('song_key')} {closed_start} {len(closed_chunk)} {upper_bound} {peak_tolerance} {filter_for_similarity} {prune_for_continuity} {hop_length}"
@@ -107,14 +107,15 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
         correlation = correlate(open_chunk, closed_chunk)
         cross_max = np.max(correlation)
         # Find peaks
-        peak_indices, _ = find_peaks(correlation, height=cross_max*(peak_tolerance+(1-peak_tolerance) * .25), distance=distance)
+        peak_indices, _ = find_peaks(correlation, height=cross_max*(peak_tolerance+(1-peak_tolerance) * .25), distance=distance/10)
         peak_indices2, _ = find_peaks(correlation, height=cross_max*peak_tolerance, distance=3*distance)
         peak_indices = np.unique(np.concatenate((peak_indices, peak_indices2)))
 
+        peak_indices_unadjusted = [ [pi, correlation[pi], 0] for pi in peak_indices.tolist()  ]
+        peak_indices_adjusted = [ [correct_peak_index(pi, current_chunk_size), correlation[pi], 0] for pi in peak_indices.tolist()  ]
 
-        peak_indices = [ [correct_peak_index(pi, current_chunk_size), correlation[pi], 0] for pi in peak_indices.tolist()  ]
 
-
+        peak_indices = peak_indices_unadjusted + peak_indices_adjusted
 
         if full_search:
             mfcc_correlations = [correlate(open_chunk_mfcc[i, :], closed_chunk_mfcc[i, :]) for i in range(open_chunk_mfcc.shape[0])]        
@@ -207,12 +208,13 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
             candidates_seen[candidate_index] = True
 
             if upper_bound is not None and not math.isinf(upper_bound) and upper_bound < candidate_index + open_start:
+                # print('\tNAH', upper_bound / sr, (candidate_index + open_start) / sr)
                 continue
 
             open_chunk_here = open_chunk[candidate_index:candidate_index + current_chunk_size]
 
             if len(open_chunk_here) != current_chunk_size:
-                # print(f"Skipping because we couldn't make a chunk of size {current_chunk_size} [{current_chunk_size / sr}] starting at {candidate_index} [{candidate_index / sr}] from chunk of length {len(open_chunk) / sr}")
+                # print(f"Skipping because we couldn't make a chunk of size {current_chunk_size} [{current_chunk_size / sr}] starting at {candidate_index} [{candidate_index / sr}] from chunk of length {len(open_chunk_here) / sr}")
                 continue 
 
             open_chunk_here_mfcc = open_chunk_mfcc[:,      round(candidate_index / hop_length): round((candidate_index + current_chunk_size) / hop_length)       ]
@@ -324,6 +326,9 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
 
                 # (abs(closed_start - 1.2 * sr) < .15 * sr and open_start < 53 * sr), # dan wheeler crutch; should generate continuity 52.4
 
+
+                # (abs(closed_start - 50 * sr) < .15 * sr and open_start < 135 * sr), # dan wheeler crutch; should generate continuity 52.4
+
             ]
             has_point_of_interest = False #full_search
             for pi in points_of_interest:
@@ -338,7 +343,9 @@ def find_segment_starts(reaction, open_chunk, open_chunk_mfcc, closed_chunk, clo
                 plt.plot(new_x_values, correlation)
                 # print(peak_indices)
                 plt.scatter([int(c[0] / sr + open_start / sr) for c in peak_indices], [p[1] for p in peak_indices], color='blue')
-                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores], [p[3] for p in scores], color='red')
+
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in scores],     [p[2] for p in scores], color='purple')
+                plt.scatter([int(c[0] / sr + open_start / sr) for c in candidates], [x[2] for x in candidates], color='green')
 
                 plt.axhline(y=cross_max * (peak_tolerance + (1 - peak_tolerance) * .5), color='b', linestyle='--')
                 plt.xlabel("Time (s)")

@@ -6,7 +6,7 @@ import tempfile
 
 from typing import List, Tuple
 from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, CompositeVideoClip
-from moviepy.editor import ImageClip, CompositeVideoClip
+from moviepy.editor import ImageClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
 
 from utilities import conversion_frame_rate, conversion_audio_sample_rate

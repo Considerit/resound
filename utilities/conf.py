@@ -3,7 +3,12 @@ import librosa
 
 from utilities.utilities import conversion_audio_sample_rate as sr
 from utilities.utilities import extract_audio
-from utilities.audio_processing import audio_percentile_loudness
+from utilities.audio_processing import pitch_contour, spectral_flux, root_mean_square_energy, continuous_wavelet_transform
+
+
+
+
+
 
 
 conf = {} # global conf
@@ -90,10 +95,15 @@ def make_conf(song_def, options, temp_directory):
 
     reactions = {}
 
+    print(reaction_videos)
 
     multiple_reactors = song_def.get('multiple_reactors', None) 
     priority = song_def.get('priority', {}) 
     swap_grid_positions = song_def.get('swap_grid_positions', None)
+    fake_reactor_position = song_def.get('fake_reactor_position', None)
+    start_reaction_search_at = song_def.get('start_reaction_search_at', None)
+    unreliable_bounds = song_def.get('unreliable_bounds', None)
+    chunk_size = song_def.get('chunk_size', None)
 
     for reaction_video_path in reaction_videos:
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
@@ -130,12 +140,23 @@ def make_conf(song_def, options, temp_directory):
         if multiple_reactors is not None:
           reactions[channel]['num_reactors'] = multiple_reactors.get(channel, 1)
         
+        if fake_reactor_position is not None and fake_reactor_position.get(channel, False): 
+          reactions[channel]['fake_reactor_position'] = fake_reactor_position.get(channel)
+
+        if start_reaction_search_at is not None and start_reaction_search_at.get(channel, False):
+          reactions[channel]['start_reaction_search_at'] = start_reaction_search_at.get(channel)
+
+        if unreliable_bounds is not None and unreliable_bounds.get(channel, False):
+          reactions[channel]['unreliable_bounds'] = unreliable_bounds.get(channel)
+
+        if chunk_size is not None and chunk_size.get(channel, False):
+          reactions[channel]['chunk_size'] = chunk_size.get(channel)
 
         if featured: 
           default_priority = 75
         else:
           default_priority = 50
-          
+
         reactions[channel]['priority'] = priority.get(channel, default_priority)
 
 
@@ -158,8 +179,13 @@ def make_conf(song_def, options, temp_directory):
       reaction_conf["reaction_audio_data"] = reaction_audio_data
       reaction_conf['reaction_audio_path'] = reaction_audio_path
 
-      reaction_conf['reaction_audio_mfcc'] = librosa.feature.mfcc(y=reaction_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
-      reaction_conf['reaction_percentile_loudness'] = audio_percentile_loudness(reaction_audio_data, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=conf.get('hop_length'))
+
+      output_dir = conf.get('reaction_directory')
+
+      load_audio_transformations(reaction_conf, 'reaction', output_dir, reaction_audio_path, reaction_audio_data)
+
+
+
 
   def load_aligned_reaction_data(channel):
     reaction_conf = conf.get('reactions')[channel]
@@ -176,18 +202,30 @@ def make_conf(song_def, options, temp_directory):
       aligned_reaction_data, __, __ = extract_audio(path)
       reaction_conf['aligned_reaction_data'] = aligned_reaction_data
 
-
+  def remove_reaction(channel):
+      if channel in conf.get('reactions').get(channel, False):
+        unload_reaction(channel)
+        del conf['reactions'][channel]
 
   conf.update({
     'load_base_video': load_base_video,
     'load_reaction': load_reaction,
     'load_aligned_reaction_data': load_aligned_reaction_data,
+    'remove_reaction': remove_reaction
   })
 
   load_reactions()
 
 
   return False
+
+
+
+
+to_delete = ['aligned_reaction_data']
+for source in ['_', '_vocals', '_accompaniment']:
+  for metric in ['_data', '_mfcc', '_pitch_contour', '_spectral_flux', '_root_mean_square_energy']:     # _continuous_wavelet_transform
+    to_delete.append(f"reaction_audio{source}{metric}")
 
 def unload_reaction(channel):
   import gc
@@ -197,13 +235,61 @@ def unload_reaction(channel):
 
   reaction_conf = conf.get('reactions')[channel]
 
-  to_delete = ['reaction_audio_data', 'reaction_audio_mfcc', 'reaction_percentile_loudness', "aligned_reaction_data"]
-
   for field in to_delete:
     if field in reaction_conf:
       del reaction_conf[field]
 
   gc.collect()
+
+
+
+def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio_data):
+
+    from backchannel_isolator.track_separation import separate_vocals
+
+    vocal_path_filename = 'vocals-post-high-passed.wav'
+
+    separation_path = os.path.join(output_dir, os.path.splitext(audio_path)[0].split('/')[-1] )
+
+    vocals_path = os.path.join(separation_path, vocal_path_filename)
+
+    if not os.path.exists( vocals_path ):
+        separate_vocals(separation_path, audio_path, vocal_path_filename)
+
+
+    # local_conf[f'{prefix}_audio_mfcc'] = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
+    # local_conf[f'{prefix}_audio_pitch_contour'] = pitch_contour(audio_data, sr, hop_length=conf.get('hop_length'))
+
+
+    for source in ( '', 'accompaniment', 'vocals' ):
+
+      if source == '':
+        data = audio_data
+        path = audio_path
+        source = '_'
+      else: 
+        path = os.path.join(separation_path, f'{source}.wav')
+        data, _, _ = extract_audio(path)
+        source = f"_{source}_"
+
+      local_conf[f'{prefix}_audio{source}path'] = path
+      local_conf[f"{prefix}_audio{source}data"] = data
+
+      mfcc = librosa.feature.mfcc(y=data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
+      local_conf[f'{prefix}_audio{source}mfcc'] = mfcc
+
+      pc = pitch_contour(data, sr, hop_length=conf.get('hop_length'))
+      local_conf[f'{prefix}_audio{source}pitch_contour'] = pc
+
+      # sf = spectral_flux(y=data, sr=sr, hop_length=conf.get('hop_length'))
+      # local_conf[f'{prefix}_audio{source}spectral_flux'] = sf
+
+      # rmse = root_mean_square_energy(y=data, sr=sr, hop_length=conf.get('hop_length'))
+      # local_conf[f'{prefix}_audio{source}root_mean_square_energy'] = rmse
+
+
+
+
 
 
 def load_base_video():
@@ -241,17 +327,18 @@ def load_base_video():
         raise Exception()
 
 
-    base_audio_data, _, base_audio_path = extract_audio(base_video_path)
-
-    base_audio_mfcc = librosa.feature.mfcc(y=base_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
-    song_percentile_loudness = audio_percentile_loudness(base_audio_data, loudness_window_size=100, percentile_window_size=1000, std_dev_percentile=None, hop_length=conf.get('hop_length'))
+    song_audio_data, _, base_audio_path = extract_audio(base_video_path)
+    song_audio_data = song_audio_data  #[0:150*sr]
 
     base_data = {
       'base_video_path': base_video_path,
-      'base_audio_data': base_audio_data,
-      'song_percentile_loudness': song_percentile_loudness,
-      'base_audio_mfcc': base_audio_mfcc
+      'song_audio_data': song_audio_data,
     }
+
+    output_dir = conf.get('reaction_directory')
+
+    load_audio_transformations(base_data, 'song', output_dir, base_audio_path, song_audio_data)
+
 
     conf.update(base_data)
 

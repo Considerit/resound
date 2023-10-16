@@ -2,6 +2,115 @@ from scipy import signal
 import numpy as np
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
+import librosa
+
+
+def pitch_contour(y, sr, fmin=50, fmax=4000, hop_length=512):
+    """
+    Extracts the pitch contour of audio data using the Yin algorithm.
+    
+    Parameters:
+    - y: Audio time series.
+    - sr: Sampling rate.
+    - fmin: Minimum frequency to consider for pitch (in Hz).
+    - fmax: Maximum frequency to consider for pitch (in Hz).
+
+    Returns:
+    - pitches: Array of pitch values in Hz.
+    """
+
+    # Compute pitch using Yin algorithm
+    pitches, _ = librosa.piptrack(y=y, sr=sr, fmin=fmin, fmax=fmax, hop_length=hop_length)
+
+    # Extract the maximum pitch for each frame
+    pitch_values = []
+    for t in range(pitches.shape[1]):
+        index = pitches[:, t].argmax()
+        pitch_values.append(pitches[index, t])
+
+    pitch_matrix = np.array(pitch_values).reshape(1, -1)
+    
+    return pitch_matrix
+
+
+
+def spectral_flux(y, sr, hop_length=512):
+    """
+    Computes the spectral flux of audio data.
+    
+    Parameters:
+    - y: Audio time series.
+    - sr: Sampling rate.
+
+    Returns:
+    - flux: A list containing spectral flux values for each time frame.
+    """
+
+    # Compute magnitude spectrogram
+    S = np.abs(librosa.stft(y, hop_length))
+
+    # Compute the spectral flux
+    flux = np.sqrt(np.sum(np.diff(S, axis=1)**2, axis=0))
+
+
+    flux = flux.reshape(1, -1)
+    
+    return flux
+
+
+
+
+def root_mean_square_energy(y, sr, frame_length=2048, hop_length=512):
+    """
+    Computes the Root Mean Square Energy (RMSE) of audio data.
+    
+    Parameters:
+    - y: Audio time series.
+    - sr: Sampling rate.
+    - frame_length: Number of samples in each frame for analysis.
+    - hop_length: Number of samples between successive frames.
+
+    Returns:
+    - rmse_values: An array containing the RMSE values for each frame.
+    """
+
+    rmse_values = librosa.feature.rms(y, frame_length=frame_length, hop_length=hop_length, center=True)
+
+    rmse_values = np.array(rmse_values[0]).reshape(1, -1)
+    
+    return rmse_values
+
+
+
+
+def continuous_wavelet_transform(y, sr, wavelet='cmor', max_scale=128, scale_step=1):
+    import pywt
+
+    """
+    Computes the Continuous Wavelet Transform (CWT) of audio data.
+    
+    Parameters:
+    - y: Audio time series.
+    - sr: Sampling rate.
+    - wavelet: Type of wavelet to use. 'cmor' is the Complex Morlet wavelet, suitable for audio.
+    - max_scale: Maximum scale (or frequency) to compute the CWT for.
+    - scale_step: Step size between scales.
+
+    Returns:
+    - cwt_result: 2D array containing the CWT coefficients. 
+                  Shape is (number of scales, length of y).
+    """
+
+    scales = np.arange(1, max_scale + 1, scale_step)
+    cwt_result, _ = pywt.cwt(y, scales, wavelet, sampling_period=1/sr)
+
+    return cwt_result
+
+
+
+
+
+
 
 
 def convert_to_mono(soundfile_audio):

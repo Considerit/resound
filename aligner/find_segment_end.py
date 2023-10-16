@@ -14,7 +14,7 @@ from utilities import conversion_audio_sample_rate as sr
 def find_correlation_end(reaction, current_start, reaction_start, step, reaction_end=None, end_at=None, max_score=0, cache={}):
     expansion_tolerance = conf.get('expansion_tolerance')
 
-    base_audio = conf.get('base_audio_data')
+    base_audio = conf.get('song_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
 
 
@@ -183,7 +183,7 @@ def initialize_segment_end_cache():
 # (1) recover that base audio and (2) are aligned for subsequent sequences.  
 def check_for_start_adjustment(reaction, current_start, reaction_start, candidate_segment_start, current_chunk_size):
 
-    base_audio = conf.get('base_audio_data')
+    base_audio = conf.get('song_audio_data')
     reverse_search_bound = conf.get('reverse_search_bound')
 
     open_end = min(current_start+current_chunk_size+int(reverse_search_bound * sr), len(base_audio))
@@ -200,7 +200,7 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
     first_n_samples = conf.get('first_n_samples')
 
     reaction_audio = reaction.get('reaction_audio_data')
-    base_audio_mfcc = conf.get('base_audio_mfcc')
+    song_audio_mfcc = conf.get('song_audio_mfcc')
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
     hop_length = conf.get('hop_length')
 
@@ -221,7 +221,7 @@ def check_for_start_adjustment(reaction, current_start, reaction_start, candidat
     reverse_index = find_segment_starts(
                         reaction = reaction, 
                         open_chunk=open_base_chunk, 
-                        open_chunk_mfcc=base_audio_mfcc[:, round(current_start / hop_length):round(open_end / hop_length)], 
+                        open_chunk_mfcc=song_audio_mfcc[:, round(current_start / hop_length):round(open_end / hop_length)], 
                         closed_chunk=candidate_reaction_chunk, 
                         closed_chunk_mfcc=reaction_audio_mfcc[:,      round(candidate_reaction_chunk_start / hop_length):round(candidate_reaction_chunk_end / hop_length) ], 
                         current_chunk_size=reverse_chunk_size, 
@@ -264,7 +264,7 @@ def find_segment_end(reaction, current_start, reaction_start, candidate_segment_
 
     n_samples = conf.get('n_samples')
 
-    base_audio = conf.get('base_audio_data')
+    base_audio = conf.get('song_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
 
     #########################################

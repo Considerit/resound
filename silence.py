@@ -1,8 +1,92 @@
 
 from pydub import AudioSegment
 import subprocess
+import numpy as np
 
 import os
+
+import matplotlib.pyplot as plt
+
+def plot_dB_over_time(data, window_duration=3.0):
+    from utilities import conversion_audio_sample_rate as sr
+
+    """
+    Plots the dB level of an audio file over time using a sliding window.
+
+    Parameters:
+    - filename: Path to the audio file.
+    - window_duration: Duration of the sliding window in seconds.
+    """
+
+    # Number of samples in each window
+    window_size = int(window_duration * sr)
+
+    # Calculate the RMS energy for each window
+    rms_values = []
+    for start in range(0, len(data) - window_size + 1, window_size):
+        window = data[start:start+window_size]
+        rms_energy = np.sqrt(np.mean(window**2))
+        rms_values.append(rms_energy)
+
+    # Convert RMS energy values to dB
+    rms_db = 20 * np.log10(rms_values)
+
+    # Plotting
+    times = np.arange(0, len(data)/sr, window_duration)[:len(rms_db)]
+    plt.figure(figsize=(10, 5))
+    plt.plot(times, rms_db, '-o')
+    plt.title('dB Level Over Time')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Amplitude (dB)')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+def is_normalized(audio_data):
+    """
+    Determines if a given audio data array is normalized.
+    
+    Parameters:
+    - audio_data: Numpy array containing the audio samples.
+    
+    Returns:
+    - True if the audio data is normalized, False otherwise.
+    """
+
+    return np.all(audio_data >= -1.0) and np.all(audio_data <= 1.0)
+
+
+def is_silent(data, threshold_db=-50):
+    from utilities.audio_processing import convert_to_mono
+
+    """
+    Determines if a given audio segment is predominantly silent.
+    
+    Parameters:
+    - data: the soundfile audio data.
+    - threshold_db: The RMS energy threshold below which the segment is considered silent, in decibels.
+    
+    Returns:
+    - True if the segment is silent, False otherwise.
+    """
+    
+    data = convert_to_mono(data)
+
+    assert(is_normalized(data))
+
+    # Calculate the RMS energy of the segment
+    rms_energy = np.sqrt(np.mean(data**2))
+    
+    # Convert the RMS energy to dB
+    rms_db = 20 * np.log10(rms_energy)
+    
+    # Check if the RMS energy in dB is below the threshold
+    return rms_db < threshold_db
+
+
 
 def detect_leading_silence(sound, silence_threshold=-20.0, chunk_size=10):
     '''

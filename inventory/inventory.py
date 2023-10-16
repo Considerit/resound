@@ -27,15 +27,15 @@ def process_reaction(song, artist, search, item, reactors, reactions, test):
     channel_id = item['snippet']['channelId']
     
     if (not test or not test(item['snippet']['title'])):
-        print(f"Bad result: {item['snippet']['title']}", item['snippet']['title'].lower())
+        # print(f"Bad result: {item['snippet']['title']}", item['snippet']['title'].lower())
         return
     
     if item['snippet']['title'] in reactions:
-        print(f"duplicate title {item['snippet']['title']}")
+        # print(f"duplicate title {item['snippet']['title']}")
         return
     
     if not 'videoId' in item['id']:
-        print(f"{reactor_name} doesn't have a videoid")
+        # print(f"{reactor_name} doesn't have a videoid")
         return
 
 
@@ -69,7 +69,7 @@ def search_reactions(artist, song, search, reactors, reactions, test, page_token
         else:
             song_string = '({})'.format(' OR '.join(['"{}"'.format(s) for s in search]))
         
-        print(song_string)
+        # print(song_string)
         params = {
             'q': f'allintitle: {artist} {song_string}',
             'key': api_key,
