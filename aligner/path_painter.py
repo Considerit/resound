@@ -1,7 +1,7 @@
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf, print_profiling, save_object_to_file, read_object_from_file
 from aligner.bounds import get_bound, in_bounds, create_reaction_alignment_bounds
-from aligner.find_segment_start import find_segment_starts, initialize_segment_start_cache
+from aligner.find_segment_start import find_segment_starts, initialize_segment_start_cache, score_start_candidates
 from aligner.find_segment_end import find_segment_end, initialize_segment_end_cache
 from aligner.scoring_and_similarity import find_best_path, initialize_path_score, initialize_segment_tracking, get_segment_mfcc_cosine_similarity_score, path_score, print_path, path_score_by_mfcc_cosine_similarity, truncate_path
 from aligner.cross_expander import compress_segments
@@ -23,7 +23,6 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     print(f"\n###############################\n# {conf.get('song_key')} / {reaction.get('channel')}")
 
-    initialize_segment_start_cache()
     initialize_segment_end_cache()
     initialize_path_score()
     initialize_segment_tracking()
@@ -893,10 +892,7 @@ def determine_dominance(vocal_data, accompaniment_data):
         return "accompaniment"
 
 
-def find_segments(reaction, chunk_size, step, peak_tolerance):
-
-
-
+def get_signals(reaction, start, reaction_start, chunk_size):
     base_audio = conf.get('song_audio_data')
     reaction_audio = reaction.get('reaction_audio_data')
 
@@ -914,9 +910,98 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
     reaction_audio_vocals = reaction.get('reaction_audio_vocals_data')
 
 
+    chunk = base_audio[start:start+chunk_size]
+    chunk_mfcc = song_audio_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+
+    open_chunk = reaction_audio[reaction_start:]
+    open_chunk_mfcc = reaction_audio_mfcc[:, round( reaction_start / hop_length):]
+
+    predominantly_silent = is_silent(chunk, threshold_db=-30)
+    vocal_dominated = 'vocal' == determine_dominance(base_audio_vocals[start:start+chunk_size], base_audio_accompaniment[start:start+chunk_size])
 
 
-    alignment_bounds = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
+    signals = {
+        'standard': (1, chunk, open_chunk),
+        'standard mfcc': (hop_length, chunk_mfcc, open_chunk_mfcc)
+    }
+
+    # we'll also send the accompaniment if it isn't vocally dominated
+    # if not vocal_dominated or predominantly_silent:
+    #     chunk = base_audio_accompaniment[start:start+chunk_size]
+    #     open_chunk = reaction_audio_accompaniment[reaction_start:]
+
+    #     chunk_mfcc = base_audio_accompaniment_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+    #     open_chunk_mfcc = reaction_audio_accompaniment_mfcc[:, round( reaction_start / hop_length):]
+
+    #     signals['accompaniment'] = (hop_length, chunk_mfcc, open_chunk_mfcc)
+
+    # elif vocal_dominated: 
+    #     song_pitch_contour = conf.get('song_audio_vocals_pitch_contour')
+    #     reaction_pitch_contour = reaction.get('reaction_audio_vocals_pitch_contour')
+
+    #     chunk_mfcc      =     song_pitch_contour[:, round( start / hop_length):round((start+chunk_size)/hop_length)]
+    #     open_chunk_mfcc = reaction_pitch_contour[:, round( reaction_start / hop_length):]
+
+    #     signals['pitch contour on vocals'] = (hop_length, chunk_mfcc, open_chunk_mfcc)
+
+
+    if False: 
+
+        song_spectral_flux = conf.get('song_audio_accompaniment_spectral_flux')
+        reaction_spectral_flux = reaction.get('reaction_audio_accompaniment_spectral_flux')
+
+        song_root_mean_square_energy = conf.get('song_audio_accompaniment_root_mean_square_energy')
+        reaction_root_mean_square_energy = reaction.get('reaction_audio_accompaniment_root_mean_square_energy')
+
+        # chunk_mfcc = song_spectral_flux[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+        # open_chunk_mfcc = reaction_spectral_flux[:, round( reaction_start / hop_length):]
+
+        chunk_mfcc = song_root_mean_square_energy[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+        open_chunk_mfcc = reaction_root_mean_square_energy[:, round( reaction_start / hop_length):]
+
+    return signals
+
+
+def get_candidate_starts(reaction, signals, peak_tolerance, open_start, closed_start, chunk_size, distance, upper_bound):
+
+
+    peak_indices = {}
+    for signal, (hop_length, chunk, open_chunk) in signals.items():
+        new_candidates = find_segment_starts(
+                                signal=signal,
+                                reaction=reaction, 
+                                open_chunk=open_chunk, 
+                                closed_chunk=chunk, 
+                                current_chunk_size=chunk_size, 
+                                peak_tolerance=peak_tolerance, 
+                                open_start=open_start,
+                                closed_start=closed_start, 
+                                distance=1 * sr, 
+                                upper_bound=upper_bound,
+                                hop_length=hop_length)
+
+        if new_candidates is not None: 
+            peak_indices[signal] = new_candidates
+
+    candidates = score_start_candidates(
+                                signals = signals,
+                                peak_indices=peak_indices,
+                                open_chunk=signals['standard'][2], 
+                                closed_chunk=signals['standard'][1], 
+                                open_chunk_mfcc=signals['standard mfcc'][2],
+                                closed_chunk_mfcc=signals['standard mfcc'][1],
+                                current_chunk_size=chunk_size, 
+                                peak_tolerance=peak_tolerance, 
+                                open_start=open_start,
+                                closed_start=closed_start)
+    return candidates
+
+
+def find_segments(reaction, chunk_size, step, peak_tolerance):
+
+    base_audio = conf.get('song_audio_data')
+    reaction_audio = reaction.get('reaction_audio_data')
+
 
     starting_points = range(0, len(base_audio) - chunk_size, step)
 
@@ -925,17 +1010,22 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
     minimums = [start_reaction_search_at * sr]
 
 
+    seg_cache_key = f"{minimums[0]}-{conf['first_n_samples']}-{reaction.get('unreliable_bounds','')}"
 
     strokes = []
     active_strokes = []
 
-    candidate_cache_file = os.path.join( conf.get('song_directory'), f"{reaction.get('channel')}-start_cache-{minimums[0]}.pckl"   )
+    candidate_cache_file = os.path.join( conf.get('song_directory'), f"{reaction.get('channel')}-start_cache-{seg_cache_key}.pckl"   )
 
     if os.path.exists(candidate_cache_file):
         candidate_cache = read_object_from_file(candidate_cache_file)
     else:
         candidate_cache = {}
     
+
+    alignment_bounds = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
+
+
     for i,start in enumerate(starting_points):
 
         print(f"\tStroking...{i/len(starting_points)*100:.2f}%",end="\r")
@@ -949,89 +1039,20 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
             upper_bound = get_bound(alignment_bounds, start, len(reaction_audio))
 
             if reaction.get('unreliable_bounds', False):
-                upper_bound = min(len(reaction_audio), upper_bound * 1.5)
+                upper_bound *= 1.5
 
+            upper_bound = min(len(reaction_audio) - (len(base_audio) - start), upper_bound)
 
-            chunk = base_audio[start:start+chunk_size]
-            chunk_mfcc = song_audio_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+            signals = get_signals(reaction, start, reaction_start, chunk_size)
+            candidates = get_candidate_starts(reaction, signals, peak_tolerance, reaction_start, start, chunk_size, 1 * sr, upper_bound)
 
-            open_chunk = reaction_audio[reaction_start:]
-            open_chunk_mfcc = reaction_audio_mfcc[:, round( reaction_start / hop_length):]
-
-
-
-            predominantly_silent = is_silent(chunk, threshold_db=-30)
-            vocal_dominated = 'vocal' == determine_dominance(base_audio_vocals[start:start+chunk_size], base_audio_accompaniment[start:start+chunk_size])
-
-
-            candidate_start_metrics = [ ('standard', chunk, open_chunk, chunk_mfcc, open_chunk_mfcc),   ]
-
-
-            # we'll also send the accompaniment if it isn't vocally dominated
-            if not vocal_dominated or predominantly_silent:
-                chunk = base_audio_accompaniment[start:start+chunk_size]
-                open_chunk = reaction_audio_accompaniment[reaction_start:]
-
-                chunk_mfcc = base_audio_accompaniment_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
-                open_chunk_mfcc = reaction_audio_accompaniment_mfcc[:, round( reaction_start / hop_length):]
-
-                candidate_start_metrics.append( ('accompaniment', chunk, open_chunk, chunk_mfcc, open_chunk_mfcc) )
-
-            else: 
-                song_pitch_contour = conf.get('song_audio_vocals_pitch_contour')
-                reaction_pitch_contour = reaction.get('reaction_audio_vocals_pitch_contour')
-
-                chunk_mfcc      =     song_pitch_contour[:, round( start / hop_length):round((start+chunk_size)/hop_length)]
-                open_chunk_mfcc = reaction_pitch_contour[:, round( reaction_start / hop_length):]
-
-                candidate_start_metrics.append( ('vocals', chunk, open_chunk, chunk_mfcc, open_chunk_mfcc) )
-
-
-            if False: 
-
-                song_spectral_flux = conf.get('song_audio_accompaniment_spectral_flux')
-                reaction_spectral_flux = reaction.get('reaction_audio_accompaniment_spectral_flux')
-
-                song_root_mean_square_energy = conf.get('song_audio_accompaniment_root_mean_square_energy')
-                reaction_root_mean_square_energy = reaction.get('reaction_audio_accompaniment_root_mean_square_energy')
-
-                # chunk_mfcc = song_spectral_flux[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
-                # open_chunk_mfcc = reaction_spectral_flux[:, round( reaction_start / hop_length):]
-
-                chunk_mfcc = song_root_mean_square_energy[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
-                open_chunk_mfcc = reaction_root_mean_square_energy[:, round( reaction_start / hop_length):]
-
-
-            candidates = []
-            for metric_group, chunk, open_chunk, chunk_mfcc, open_chunk_mfcc in candidate_start_metrics:
-                new_candidates = find_segment_starts(
-                                        metric_group=metric_group,
-                                        reaction=reaction, 
-                                        open_chunk=open_chunk, 
-                                        open_chunk_mfcc=open_chunk_mfcc,
-                                        closed_chunk=chunk, 
-                                        closed_chunk_mfcc= chunk_mfcc,
-                                        current_chunk_size=chunk_size, 
-                                        peak_tolerance=peak_tolerance, 
-                                        full_search=True,
-                                        open_start=reaction_start,
-                                        closed_start=start, 
-                                        distance=1 * sr, 
-                                        filter_for_similarity=True,
-                                        upper_bound=upper_bound)
-
-                if new_candidates is not None: 
-                    for c in new_candidates:
-                        if c not in candidates:
-                            candidates.append(c)
+            candidate_cache[start] = candidates
 
             if len(candidates) == 0:
                 continue
-            candidates.sort()
-            candidate_cache[start] = candidates
+
         else: 
             candidates = candidate_cache[start]
-
 
 
         minimums.append( candidates[0] + reaction_start )

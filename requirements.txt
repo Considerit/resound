@@ -19,3 +19,4 @@ PrettyTable
 pympler
 torch
 mtcnn
+screeninfo

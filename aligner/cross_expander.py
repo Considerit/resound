@@ -25,7 +25,7 @@ def find_alignments(reaction):
     # global best_finished_path
     global print_when_possible
 
-    initialize_segment_start_cache()
+    initialize_segment_start_cache(reaction)
     initialize_segment_end_cache()
     initialize_path_score()
     initialize_path_pruning()
@@ -124,7 +124,7 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
             reaction_sample_rate = Decimal(sr)
             best_path_converted = [ ( Decimal(s[0]) / reaction_sample_rate, Decimal(s[1]) / reaction_sample_rate, Decimal(s[2]) / reaction_sample_rate, Decimal(s[3]) / reaction_sample_rate, s[4]) for s in reaction['best_path'] ]
 
-            trim_and_concat_video(react_video, best_path_converted, base_video, output_file, extend_by = extend_by, use_fill = conf.get('include_base_video', True))
+            trim_and_concat_video(reaction, react_video, best_path_converted, base_video, output_file, extend_by = extend_by, use_fill = conf.get('include_base_video', True))
         
 
     return output_file

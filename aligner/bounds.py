@@ -26,7 +26,7 @@ from utilities import conf, save_object_to_file, read_object_from_file
 
 
 def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
-    from aligner.find_segment_start import find_segment_starts
+    from aligner.path_painter import get_candidate_starts, get_signals
 
 
     saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-bounds.pckl'
@@ -91,24 +91,38 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         for start, end, chunk, chunk_mfcc in segments:
             # Find the candidate indices for the start of the matching segment in the reaction audio
 
-            candidates = find_segment_starts(
-                                    reaction=reaction, 
-                                    open_chunk=reaction_audio[start:], 
-                                    open_chunk_mfcc=reaction_audio_mfcc[:, round(start / hop_length):],
-                                    closed_chunk=chunk, 
-                                    closed_chunk_mfcc= chunk_mfcc,
-                                    current_chunk_size=clip_length, 
-                                    peak_tolerance=peak_tolerance, 
-                                    full_search=True,
-                                    open_start=start,
-                                    closed_start=start, 
-                                    distance=first_n_samples, 
-                                    filter_for_similarity=True)
+
+            signals = get_signals(reaction, start, start, clip_length, upper_bound=len(reaction_audio) - (len(base_audio) - start))
+
+            candidates = get_candidate_starts(
+                reaction=reaction, 
+                signals=signals, 
+                peak_tolerance=peak_tolerance, 
+                open_start=start, 
+                closed_start=start, 
+                chunk_size=clip_length,
+                distance=first_n_samples, 
+                upper_bound=None
+            )
+
+            # candidates = find_segment_starts(
+            #                         reaction=reaction, 
+            #                         open_chunk=reaction_audio[start:], 
+            #                         open_chunk_mfcc=reaction_audio_mfcc[:, round(start / hop_length):],
+            #                         closed_chunk=chunk, 
+            #                         closed_chunk_mfcc= chunk_mfcc,
+            #                         current_chunk_size=clip_length, 
+            #                         peak_tolerance=peak_tolerance, 
+            #                         full_search=True,
+            #                         open_start=start,
+            #                         closed_start=start, 
+            #                         distance=first_n_samples, 
+            #                         filter_for_similarity=True)
 
 
             if candidates is None: 
                 candidates = []
-            else:
+            elif len(candidates) > 0:
                 print(f"\tCandidates: {[ int((1000 * (c+start))/sr)/1000 for c in candidates]}  {(max(candidates) + start) / sr:.1f}")
 
             for c in candidates:
@@ -118,6 +132,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
 
         timestamps_samples[i] -= clip_length
     
+
     # Now, ensure the integrity of the bounds
     smoothed_bounds = [max(b) for b in bounds]
     print("smoothed_bounds", [ b/sr for b in smoothed_bounds  ])

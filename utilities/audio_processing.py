@@ -1,8 +1,196 @@
 from scipy import signal
 import numpy as np
 from utilities import conversion_audio_sample_rate as sr
-from utilities import conf
 import librosa
+
+
+def find_best_alignment(song_data, reaction_data, ref_tuple, search_window):
+    song_sr, reaction_sr = ref_tuple
+    song_sr = int(song_sr * sr)
+    reaction_sr = int(reaction_sr * sr)
+
+    # Ensure the segments do not exceed the bounds of the data
+    song_start = max(0, song_sr - search_window)
+    song_end = min(len(song_data), song_sr + search_window)
+
+    reaction_start = max(0, reaction_sr - (song_sr - song_start))
+    reaction_end = min(len(reaction_data), reaction_sr + (song_end - song_sr))
+
+    # Extract segments around the reference points
+    song_segment = song_data[song_start:song_end]
+    reaction_segment = reaction_data[reaction_start:reaction_end]
+    
+    # Check for length discrepancies and adjust
+    if len(song_segment) < len(reaction_segment):
+        reaction_segment = reaction_segment[:len(song_segment)]
+    elif len(reaction_segment) < len(song_segment):
+        song_segment = song_segment[:len(reaction_segment)]
+
+    # Compute cross-correlation
+    cross_corr = np.correlate(song_segment, reaction_segment, "valid")
+
+    # Find the offset for the best alignment
+    offset = np.argmax(cross_corr) - len(reaction_segment) + 1
+
+    # Adjust reference sample rates based on the found offset
+    adjusted_reaction_sr = reaction_sr + offset
+
+    return song_sr, adjusted_reaction_sr
+
+def normalize_audio_manually(song_data, reaction_data, ref_tuple, search_window=None):
+    print(f"\tNormalizing to {ref_tuple[0]} <===> {ref_tuple[1]}")
+    if search_window is None:
+        search_window = int(sr / 2)
+    
+    # Find the best alignment
+    song_sr, reaction_sr = find_best_alignment(song_data, reaction_data, ref_tuple, search_window)
+
+    # Ensure the segments do not exceed the bounds of the data
+    song_start = max(0, song_sr - search_window)
+    song_end = min(len(song_data), song_sr + search_window)
+
+    reaction_start = max(0, reaction_sr - (song_sr - song_start))
+    reaction_end = min(len(reaction_data), reaction_sr + (song_end - song_sr))
+
+    # Compute the sum of absolute amplitudes in the search window
+    sum_amplitude_song = np.sum(np.abs(song_data[song_start:song_end]))
+    sum_amplitude_reaction = np.sum(np.abs(reaction_data[reaction_start:reaction_end]))
+
+    # Avoid division by zero
+    if sum_amplitude_reaction == 0:
+        raise ValueError("The sum of absolute amplitudes in the reaction data segment is zero. Cannot normalize.")
+
+    # Compute the normalization factor
+    normalization_factor = sum_amplitude_song / sum_amplitude_reaction
+
+    # Normalize the reaction data
+    normalized_reaction_data = reaction_data * normalization_factor
+    print(f"\t\tDone! normalization_factor={normalization_factor}")
+
+    return song_data, normalized_reaction_data
+
+
+
+def get_highest_amplitude_segments(audio, segment_length, top_n):
+    from scipy.signal import find_peaks
+
+
+    window_length = int(segment_length * sr)
+    step_size = int(.5 * sr)
+
+    amplitude_sums = np.array([np.sum(np.abs(audio[i:i+window_length])) for i in range(0, len(audio) - window_length, step_size)])
+    
+    # We're using negative amplitude sums to find valleys (lowest amplitude segments)
+    # Since we want the segments of highest amplitude, we search for the valleys of the negative signal
+    peaks, _ = find_peaks(-amplitude_sums, distance=10*sr // step_size)
+
+    # Sort the peaks based on the amplitude and take the top_n segments
+    top_indices = peaks[np.argsort(amplitude_sums[peaks])][-top_n:] * step_size
+
+    return top_indices
+
+def best_matching_segment(song_segment, reaction_audio, song_mfcc_segment, reaction_mfcc, hop_length):
+    from scipy.signal import correlate, find_peaks
+    from aligner.scoring_and_similarity import mfcc_cosine_similarity
+    # Use cross-correlation to find potential alignment
+    cross_corr = correlate(reaction_audio, song_segment)
+    potential_match_start = np.argmax(cross_corr)
+    potential_match_start = max(0, potential_match_start - (len(song_segment) - 1))
+    
+    potential_match_start_mfcc = int(potential_match_start / hop_length)
+
+    return potential_match_start, mfcc_cosine_similarity(song_mfcc_segment, reaction_mfcc[:, potential_match_start_mfcc:potential_match_start_mfcc+song_mfcc_segment.shape[1]])
+
+def normalize_reaction_audio(song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=10):
+    from utilities import conf
+
+    print('\tNormalizing audio')
+    print('\t\tGetting highest amplitude segments')
+
+    hop_length = conf.get('hop_length')
+
+    top_song_indices = get_highest_amplitude_segments(song_audio, segment_length, top_n)
+    window_length = int(segment_length * sr)
+    
+    best_matching_indices = []
+
+    for idx,index in enumerate(top_song_indices):
+        song_segment = song_audio[index:index+window_length]
+        song_mfcc_segment = song_mfcc[:, int(index/hop_length):int((index+window_length)/hop_length)]
+        
+        match, score = best_matching_segment(song_segment, reaction_audio, song_mfcc_segment, reaction_mfcc, hop_length)
+        best_matching_indices.append( ((index, match), score)   )  
+        print(f'\t\t{idx}: {score}  {index / sr} <=> {match / sr}')
+
+    best_matching_indices.sort(key=lambda x: x[1], reverse=True)
+    
+    ref_tuple = best_matching_indices[0][0]
+    
+    return normalize_audio_manually(song_audio, reaction_audio, (ref_tuple[0] / sr, ref_tuple[1] / sr))
+
+
+
+
+
+
+
+
+
+
+
+def compute_waveform(signal, window_size=4410, hop_size=2205):
+    """
+    Compute the waveform (envelope) of the signal using RMS over windows.
+    
+    :param signal: Input audio signal
+    :param window_size: Size of the window for RMS computation
+    :param hop_size: Hop size between windows
+    :return: Waveform of the signal
+    """
+    num_windows = int((len(signal) - window_size) / hop_size) + 1
+    waveform = np.zeros(num_windows)
+    
+    for i in range(num_windows):
+        start = i * hop_size
+        end = start + window_size
+        window = signal[start:end]
+        waveform[i] = np.sqrt(np.mean(window**2))
+    
+    return waveform
+
+def normalize_waveform(waveform, reference_waveform):
+    """
+    Normalize the amplitude of a waveform based on a reference waveform.
+    
+    :param waveform: The waveform to be normalized
+    :param reference_waveform: The waveform to normalize against
+    :return: Normalized waveform
+    """
+    scale_factor = np.max(reference_waveform) / np.max(waveform)
+    return waveform * scale_factor
+
+def get_normalized_waveform(reaction_signal, song_signal=None, window_size=4410, hop_size=2205):
+    """
+    Get the normalized waveform of a reaction signal based on a song signal.
+    If no song signal is provided, returns the unnormalized waveform of the reaction signal.
+    
+    :param reaction_signal: Reaction audio signal
+    :param song_signal: Song audio signal (Optional)
+    :param window_size: Size of the window for RMS computation
+    :param hop_size: Hop size between windows
+    :return: (Normalized) waveform of the reaction signal
+    """
+    reaction_waveform = compute_waveform(reaction_signal, window_size, hop_size)
+    
+    if song_signal is not None:
+        song_waveform = compute_waveform(song_signal, window_size, hop_size)
+        return normalize_waveform(reaction_waveform, song_waveform)
+    else:
+        return reaction_waveform
+
+
+
+
 
 
 def pitch_contour(y, sr, fmin=50, fmax=4000, hop_length=512):
@@ -125,6 +313,8 @@ def convert_to_mono(soundfile_audio):
 
 
 def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=None):
+    from utilities import conf
+
     if hop_length is None:
         hop_length = conf.get('hop_length')
         
