@@ -67,6 +67,12 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     print(f"Creating alignment bounds with tolerance {peak_tolerance} every {seconds_per_checkpoint} seconds at {timestamps} ")
     
     # For each timestamp
+    working_timestamps_samples = []
+
+
+    reaction_span = reaction.get('end_reaction_search_at', len(reaction_audio))
+    start_reaction_search_at = reaction.get('start_reaction_search_at', 0)
+
     for i,ts in enumerate(timestamps_samples):
         # Define the segments on either side of the timestamp
 
@@ -91,46 +97,35 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         for start, end, chunk, chunk_mfcc in segments:
             # Find the candidate indices for the start of the matching segment in the reaction audio
 
+            reaction_start = start + start_reaction_search_at
 
-            signals = get_signals(reaction, start, start, clip_length, upper_bound=len(reaction_audio) - (len(base_audio) - start))
+            signals = get_signals(reaction, start, reaction_start, clip_length)
 
             candidates = get_candidate_starts(
                 reaction=reaction, 
                 signals=signals, 
                 peak_tolerance=peak_tolerance, 
-                open_start=start, 
+                open_start=reaction_start, 
                 closed_start=start, 
                 chunk_size=clip_length,
                 distance=first_n_samples, 
-                upper_bound=None
+                upper_bound=reaction_span - (len(base_audio) - start)
             )
-
-            # candidates = find_segment_starts(
-            #                         reaction=reaction, 
-            #                         open_chunk=reaction_audio[start:], 
-            #                         open_chunk_mfcc=reaction_audio_mfcc[:, round(start / hop_length):],
-            #                         closed_chunk=chunk, 
-            #                         closed_chunk_mfcc= chunk_mfcc,
-            #                         current_chunk_size=clip_length, 
-            #                         peak_tolerance=peak_tolerance, 
-            #                         full_search=True,
-            #                         open_start=start,
-            #                         closed_start=start, 
-            #                         distance=first_n_samples, 
-            #                         filter_for_similarity=True)
 
 
             if candidates is None: 
                 candidates = []
             elif len(candidates) > 0:
-                print(f"\tCandidates: {[ int((1000 * (c+start))/sr)/1000 for c in candidates]}  {(max(candidates) + start) / sr:.1f}")
+                print(f"\tCandidates: {[ int((1000 * (c+reaction_start))/sr)/1000 for c in candidates]}  {(max(candidates) + reaction_start) / sr:.1f}")
 
             for c in candidates:
-                max_indices.append(ts + c + clip_length * 2)
+                max_indices.append(ts + c + start_reaction_search_at + clip_length * 2)
         
-        bounds.append( max_indices )
-
-        timestamps_samples[i] -= clip_length
+        if len(max_indices) == 0:
+            print(f"COULD NOT FIND BOUND FOR {ts / sr}")
+        else: 
+            working_timestamps_samples.append(timestamps_samples[i] - clip_length)
+            bounds.append( max_indices )
     
 
     # Now, ensure the integrity of the bounds
@@ -141,12 +136,12 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         
 
         if i < len(bounds) - 1:
-            previous_bound = smoothed_bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i]) + clip_length * 2 
+            previous_bound = smoothed_bounds[i+1] - (working_timestamps_samples[i+1] - working_timestamps_samples[i]) + clip_length * 2 
 
             # # If the current bound doesn't satisfy the integrity condition
             # if bounds[i] >= previous_bound:
             #     # Update the current bound
-            #     bounds[i] = bounds[i+1] - (timestamps_samples[i+1] - timestamps_samples[i])
+            #     bounds[i] = bounds[i+1] - (working_timestamps_samples[i+1] - working_timestamps_samples[i])
 
         else: 
             previous_bound = 99999999999999999999999999999999
@@ -166,7 +161,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
 
         smoothed_bounds[i] = new_bound
 
-    alignment_bounds = list(zip(timestamps_samples, smoothed_bounds))
+    alignment_bounds = list(zip(working_timestamps_samples, smoothed_bounds))
 
 
 
