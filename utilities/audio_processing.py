@@ -1,7 +1,9 @@
 from scipy import signal
+from scipy.signal import correlate
 import numpy as np
 from utilities import conversion_audio_sample_rate as sr
 import librosa
+import math
 
 
 def find_best_alignment(song_data, reaction_data, ref_tuple, search_window):
@@ -27,7 +29,7 @@ def find_best_alignment(song_data, reaction_data, ref_tuple, search_window):
         song_segment = song_segment[:len(reaction_segment)]
 
     # Compute cross-correlation
-    cross_corr = np.correlate(song_segment, reaction_segment, "valid")
+    cross_corr = correlate(song_segment, reaction_segment, mode="valid")
 
     # Find the offset for the best alignment
     offset = np.argmax(cross_corr) - len(reaction_segment) + 1
@@ -37,7 +39,7 @@ def find_best_alignment(song_data, reaction_data, ref_tuple, search_window):
 
     return song_sr, adjusted_reaction_sr
 
-def normalize_audio_manually(song_data, reaction_data, ref_tuple, search_window=None):
+def find_normalization_factor(song_data, reaction_data, ref_tuple, search_window=None):
     print(f"\tNormalizing to {ref_tuple[0]} <===> {ref_tuple[1]}")
     if search_window is None:
         search_window = int(sr / 2)
@@ -63,7 +65,13 @@ def normalize_audio_manually(song_data, reaction_data, ref_tuple, search_window=
     # Compute the normalization factor
     normalization_factor = sum_amplitude_song / sum_amplitude_reaction
 
-    # Normalize the reaction data
+    return normalization_factor
+
+
+def normalize_audio_manually(song_data, reaction_data, ref_tuple, search_window=None):
+
+    normalization_factor = find_normalization_factor(song_data, reaction_data, ref_tuple, search_window)
+    normalization_factor = max(.9, normalization_factor)
     normalized_reaction_data = reaction_data * normalization_factor
     print(f"\t\tDone! normalization_factor={normalization_factor}")
 
@@ -71,8 +79,24 @@ def normalize_audio_manually(song_data, reaction_data, ref_tuple, search_window=
 
 
 
+
+
+
+
+
 def get_highest_amplitude_segments(audio, segment_length, top_n):
     from scipy.signal import find_peaks
+
+
+    print(f"Finding the top {top_n} amplitude segments")
+
+
+    if top_n < 20:
+        dist = 10*sr
+    elif top_n < 50: 
+        dist = 5*sr
+    else: 
+        dist = sr
 
 
     window_length = int(segment_length * sr)
@@ -82,7 +106,7 @@ def get_highest_amplitude_segments(audio, segment_length, top_n):
     
     # We're using negative amplitude sums to find valleys (lowest amplitude segments)
     # Since we want the segments of highest amplitude, we search for the valleys of the negative signal
-    peaks, _ = find_peaks(-amplitude_sums, distance=10*sr // step_size)
+    peaks, _ = find_peaks(-amplitude_sums, distance=dist // step_size)
 
     # Sort the peaks based on the amplitude and take the top_n segments
     top_indices = peaks[np.argsort(amplitude_sums[peaks])][-top_n:] * step_size
@@ -93,6 +117,7 @@ def best_matching_segment(song_segment, reaction_audio, song_mfcc_segment, react
     from scipy.signal import correlate, find_peaks
     from aligner.scoring_and_similarity import mfcc_cosine_similarity
     # Use cross-correlation to find potential alignment
+
     cross_corr = correlate(reaction_audio, song_segment)
     potential_match_start = np.argmax(cross_corr)
     potential_match_start = max(0, potential_match_start - (len(song_segment) - 1))
@@ -101,7 +126,9 @@ def best_matching_segment(song_segment, reaction_audio, song_mfcc_segment, react
 
     return potential_match_start, mfcc_cosine_similarity(song_mfcc_segment, reaction_mfcc[:, potential_match_start_mfcc:potential_match_start_mfcc+song_mfcc_segment.shape[1]])
 
-def normalize_reaction_audio(song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=10):
+
+import statistics
+def normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=10):
     from utilities import conf
 
     print('\tNormalizing audio')
@@ -114,19 +141,64 @@ def normalize_reaction_audio(song_audio, reaction_audio, song_mfcc, reaction_mfc
     
     best_matching_indices = []
 
+    good_match_threshold = .9
+
     for idx,index in enumerate(top_song_indices):
         song_segment = song_audio[index:index+window_length]
         song_mfcc_segment = song_mfcc[:, int(index/hop_length):int((index+window_length)/hop_length)]
-        
-        match, score = best_matching_segment(song_segment, reaction_audio, song_mfcc_segment, reaction_mfcc, hop_length)
-        best_matching_indices.append( ((index, match), score)   )  
-        print(f'\t\t{idx}: {score}  {index / sr} <=> {match / sr}')
 
-    best_matching_indices.sort(key=lambda x: x[1], reverse=True)
+        reaction_start = max(index, reaction.get('start_reaction_search_at', 0))
+        reaction_end = reaction.get('end_reaction_search_at', len(reaction_audio))
+
+
+        reaction_audio_segment = reaction_audio[reaction_start:reaction_end]
+        reaction_mfcc_segment = reaction_mfcc[:, int(reaction_start/hop_length):int(reaction_end/hop_length)]
+        
+        match, score = best_matching_segment(song_segment, reaction_audio_segment, song_mfcc_segment, reaction_mfcc_segment, hop_length)
+        if not math.isnan(score):
+            best_matching_indices.append( ((index, reaction_start + match), score)   )  
+            print(f'\t\t{idx}: {score}  {index / sr} <=> {(reaction_start + match) / sr}')
+
+            # if score > good_match_threshold and top_n > 50:
+            #     break
+
+
+
+
+    top_matches = [b for b in best_matching_indices if b[1] > good_match_threshold]
+
+    if len(top_matches) > 0: 
+        top_matches.sort(key=lambda x: x[1], reverse=True)
+
+        normalization_factors = []
+        for match in top_matches:
+            ref_tuple, score = match
+
+            normalization_factor = find_normalization_factor(song_audio, reaction_audio, (ref_tuple[0] / sr, ref_tuple[1] / sr))
+            normalization_factors.append(normalization_factor)
+
+        def avg(arr):
+            return sum(arr) / len(arr)
+
+        normalization_factor = avg([avg(normalization_factors), statistics.median(normalization_factors)]) # midmean
+        normalization_factor = max(.9, min(3, normalization_factor))
+
+        print(f"\t\tDone! normalization_factor={normalization_factor}", normalization_factors)
+        normalized_reaction_data = reaction_audio * normalization_factor
+
+        return normalized_reaction_data
+
+
+    else: 
+        if top_n < 100: 
+            next_top_n = top_n * 5
+            return normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=next_top_n)
+        else: 
+            print("Failed to find a normalization point")
+            return reaction_audio
+
+
     
-    ref_tuple = best_matching_indices[0][0]
-    
-    return normalize_audio_manually(song_audio, reaction_audio, (ref_tuple[0] / sr, ref_tuple[1] / sr))
 
 
 
