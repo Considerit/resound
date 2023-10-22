@@ -30,24 +30,27 @@ def process_reaction(song, artist, search, item, reactors, reactions, test):
         # print(f"Bad result: {item['snippet']['title']}", item['snippet']['title'].lower())
         return
     
-    if item['snippet']['title'] in reactions:
-        # print(f"duplicate title {item['snippet']['title']}")
-        return
     
     if not 'videoId' in item['id']:
         # print(f"{reactor_name} doesn't have a videoid")
         return
 
+    video_id = item['id']['videoId']
+
+    if video_id in reactions:
+        # print(f"duplicate title {item['snippet']['title']}")
+        return
+
 
     # print(item)
-    reactions[item['snippet']['title']] = {
+    reactions[video_id] = {
         'song': song,
         'reactor': reactor_name,
         'release_date': item['snippet']['publishedAt'],
         'title': item['snippet']['title'],
         'description': item['snippet']['description'],
         'thumbnails': item['snippet']['thumbnails'],
-        'id': item['id']['videoId'],
+        'id': video_id,
         'download': False
     }
 
@@ -140,18 +143,28 @@ def search_for_song(artist, song, search):
 
 
 
-reactors_to_include=["Chris Liepe", "TrevReacts", 'Neurogal MD', 'DuaneTV', 'SheaWhatNow', 'Kso Big Dipper', 'Lee Reacts', 'redheadedneighbor', 'Black Pegasus', 'Knox Hill', 'Jamel_AKA_Jamal', 'ThatSingerReactions', "That\u2019s Not Acting Either", 'Dicodec', 'BrittReacts', "UNCLE MOMO", "RAP CATALOG by Anthony Ray", "Anthony Ray Reacts", "Kyker2Funny", "Ian Taylor Reacts", "Joe E Sparks", "Cliff Beats", "Rosalie Elliott", 'Ellierose Reacts', 'MrLboyd Reacts']
+reactors_to_include=["Chris Liepe", "TrevReacts", 'Neurogal MD', 'Duane Reacts', 'Doug Helvering', 'DuaneTV', 'SheaWhatNow', 'Kso Big Dipper', 'Lee Reacts', 'redheadedneighbor', 'Black Pegasus', 'Knox Hill', 'Jamel_AKA_Jamal', 'ThatSingerReactions', "That\u2019s Not Acting Either", 'Dicodec', 'BrittReacts', "UNCLE MOMO", "RAP CATALOG by Anthony Ray", "Anthony Ray Reacts", "Kyker2Funny", "Ian Taylor Reacts", "Joe E Sparks", "Cliff Beats", "Rosalie Elliott", 'Ellierose Reacts', 'MrLboyd Reacts']
 def create_manifest(artist, song_title, manifest_file, search, test = None):
     global reactors_to_include
     reactors = {}
     reactions = {}
 
-
-
     if os.path.exists(manifest_file):
         jsonfile = open(manifest_file)
         manifest = json.load(jsonfile)
         jsonfile.close()
+
+        migrated_reactions = {}
+
+        for title, reaction in manifest["reactions"].items():
+            id = reaction.get('id')
+            if id not in migrated_reactions or reaction.get('download', False):
+                migrated_reactions[id] = reaction
+
+        manifest["reactions"] = migrated_reactions
+
+
+
     else:
         manifest = {
             "main_song": None,
@@ -243,12 +256,12 @@ def download_and_parse_reactions(artist, song, search, force=False):
                 key = reaction['reactor'] + '_' + reaction["id"] # handle multiple reactions for a single channel
             reaction_inventory[key] = reaction
 
-    for name, reaction in reaction_inventory.items():
+    for channel, reaction in reaction_inventory.items():
         v_id = reaction["id"]
-        output = os.path.join(full_reactions_path, name + '.webm')
+        output = os.path.join(full_reactions_path, channel + '.webm')
         extracted_output = os.path.splitext(output)[0] + '.mp4'
 
-        if not os.path.exists(output) and not os.path.exists(extracted_output) and not os.path.exists(os.path.join(full_reactions_path, 'tofix', reaction['reactor'] + '.mp4')):
+        if not os.path.exists(output) and not os.path.exists(extracted_output) and not os.path.exists(os.path.join(full_reactions_path, 'tofix', channel + '.mp4')):
             cmd = f"yt-dlp -o \"{output}\" https://www.youtube.com/watch\?v\={v_id}\;"
             # print(cmd)
 
