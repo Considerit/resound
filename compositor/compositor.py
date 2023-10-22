@@ -69,7 +69,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
 
     base_video, cell_size = create_layout_for_composition(base_video, width, height)
     print("\tLayout created")
-    all_clips, clip_length = create_clips(base_video, cell_size, draft)
+    all_clips, clip_length = create_clips(base_video, cell_size, draft, output_size)
     print("\tClips created")
 
     clips = [c for c in all_clips if 'video' in c]
@@ -167,11 +167,97 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
     return final_clip
 
 
-def create_clips(base_video, cell_size, draft):
+
+
+
+
+
+def rms_level_excluding_silence(audio_array, threshold=0.01):
+    '''Compute the RMS level, excluding silence.'''
+    non_silent_samples = audio_array[np.abs(audio_array) > threshold]
+    return np.sqrt(np.mean(non_silent_samples**2))
+
+def adjust_gain_for_rms_match(audio_array, target_rms):
+    '''Adjust the gain of audio_array to match the target RMS.'''
+    current_rms = rms_level_excluding_silence(audio_array)
+    return audio_array * (target_rms / current_rms)
+
+def peak_normalize_with_headroom(audio_array, headroom=0.025):
+    '''Peak normalize the audio with a given headroom.'''
+    peak = np.max(np.abs(audio_array))
+    scale_factor = (1 - headroom) / peak
+    return audio_array * scale_factor
+
+def dynamic_limit_without_combining(base_audio, all_clips, threshold=0.95):
+    '''Dynamically limit the reactor audios in chunks to avoid exceeding the threshold.'''
+    chunk_size = int(sr * 0.5)  # Using half-second chunks
+    
+    # Find out the max length amongst all audios
+    max_len = max(len(base_audio), max([len(clip['audio']) for clip in all_clips]))
+
+    # For padding purposes
+    def pad_audio_chunk(chunk, size):
+        if len(chunk) < size:
+            padding = np.zeros((size - len(chunk), chunk.shape[1]))
+            return np.vstack((chunk, padding))
+        return chunk
+
+    for i in range(0, max_len, chunk_size):
+        chunk_end = min(i + chunk_size, max_len)
+
+        # Fetching base audio chunk and padding if necessary
+        base_chunk = base_audio[i:chunk_end]
+        base_chunk = pad_audio_chunk(base_chunk, chunk_size)
+
+        combined_chunk = base_chunk.copy()
+
+        # Fetching reactor audios chunk-by-chunk and summing them up
+        for clip in all_clips:
+            reactor_audio = clip['audio']
+            reactor_chunk = reactor_audio[i:chunk_end] if i < len(reactor_audio) else np.zeros_like(base_chunk)
+            reactor_chunk = pad_audio_chunk(reactor_chunk, chunk_size)
+            combined_chunk += reactor_chunk
+
+        scaling_factor = min(1, threshold / np.max(np.abs(combined_chunk)))
+
+        # Apply scaling factor back to the original chunks of reactor audios
+        for clip in all_clips:
+            reactor_audio = clip['audio']
+            if i < len(reactor_audio):
+                reactor_chunk = reactor_audio[i:chunk_end]
+                reactor_audio[i:chunk_end] = reactor_chunk * scaling_factor
+
+
+
+
+
+def pan_audio_stereo(audio_array, pan_position):
+    """
+    Pan the audio in stereo field.
+    -1.0 is fully left
+     1.0 is fully right
+     0.0 is centered
+    """
+    # Ensure stereo audio
+    if len(audio_array.shape) == 1:
+        audio_array = np.array([audio_array, audio_array]).T
+
+    # Calculate gain for each channel
+    left_gain = np.clip(1 - pan_position, 0, 1)
+    right_gain = np.clip(1 + pan_position, 0, 1)
+
+    # Apply the gain
+    audio_array[:, 0] *= left_gain
+    audio_array[:, 1] *= right_gain
+
+    return audio_array
+
+
+def create_clips(base_video, cell_size, draft, output_size):
 
     total_reactors = 0 
     for name, reaction in conf.get('reactions').items():
-      total_reactors += len(reaction.get('reactors'))
+      total_reactors += len(reaction.get('reactors', []))
 
     reactor_colors = generate_hsv_colors(total_reactors, 1, .6)
     clip_length = 0
@@ -185,10 +271,19 @@ def create_clips(base_video, cell_size, draft):
     base_video.audio.fps = sr
     base_audio_as_array = base_video.audio.to_soundarray()
 
+    base_audio_as_array = peak_normalize_with_headroom(base_audio_as_array, headroom=0.2)
+    base_audio_rms = rms_level_excluding_silence(base_audio_as_array)
 
+
+    # Collect all reactor audios for dynamic limiting
+    reactor_audios = []
+
+    print("\tCreating all clips")
     for name, reaction in conf.get('reactions').items():
         print(f"\t\tCreating clip for {name}")
         reactors = reaction.get('reactors')
+        if reactors is None:
+            continue
 
 
         positions = []
@@ -202,9 +297,45 @@ def create_clips(base_video, cell_size, draft):
 
             clip = reactor['clip']
 
-            clip.audio.fps = sr  
-            volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
-            volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
+            clip.audio.fps = sr 
+
+            def inspect_clip(clip):
+                try:
+                    # Try to convert the clip's audio to a sound array
+                    _ = clip.audio.to_soundarray()
+                except Exception as e:
+                    # If an error occurs, print or log relevant details about the clip
+                    print(f"Error with clip: {clip}; {clip.duration}")  # Adapt this based on how you want to identify the clip
+                        
+                    path_to_save = os.path.join(conf.get('temp_directory'), 'problem_clip.wav')
+                    # Check if it's a VideoClip, then get its audio to save
+                    if isinstance(clip, VideoClip) and clip.audio:
+                        clip.audio.write_audiofile(path_to_save)
+                        path_to_save = os.path.join(conf.get('temp_directory'), 'problem_clip.mp4')
+                        clip.write_videofile(path_to_save)
+                    elif isinstance(clip, (AudioClip, CompositeAudioClip)):
+                        clip.write_audiofile(path_to_save)
+
+
+                    print(e)
+
+                # Check if the current clip is a CompositeAudioClip
+                if isinstance(clip, CompositeAudioClip):
+                    # If it is, recursively inspect its subclips
+                    for subclip in clip.clips:
+                        inspect_clip(subclip)
+
+            # inspect_clip(clip)
+
+
+            print("\t\t\t\t...to sound array")
+            reactor_audio_array = clip.audio.to_soundarray()
+            print('\t\t\t\t...adjust gain')
+            adjusted_reactor_audio = adjust_gain_for_rms_match(reactor_audio_array, base_audio_rms)
+
+
+            # volume_adjusted_audio = match_audio_peak(base_audio_as_array, clip.audio.to_soundarray(), factor=1)
+            # volume_adjusted_clip = AudioArrayClip(volume_adjusted_audio, fps=clip.audio.fps)
 
             size = cell_size
             if featured: 
@@ -213,9 +344,17 @@ def create_clips(base_video, cell_size, draft):
 
             clip = clip.resize((size, size))
             if not draft:
+              print('\t\t\t\t...masking')
               clip = create_masked_video(clip, border_color=reactor_color, border_thickness=min(30, max(5, size / 15)), width=size, height=size, as_circle=featured)
 
             position = (x - size / 2, y - size / 2)
+
+            # Calculate pan position based on grid assignment
+            pan_position = (2 * position[0] / output_size[0]) - 1
+
+            # Pan the reactor's audio
+            adjusted_reactor_audio = pan_audio_stereo(adjusted_reactor_audio, pan_position)
+
             clip = clip.set_position(position)
 
             if clip_length < clip.duration:
@@ -231,24 +370,30 @@ def create_clips(base_video, cell_size, draft):
               'reaction': reaction,
               'priority': priority,
               'video': clip,
-              'audio': volume_adjusted_clip,
+              'audio': adjusted_reactor_audio,
               'position': position,
               'reactor_idx': idx
             }
 
             all_clips.append(clip_info)
             positions.append(position)
+            print('\t\t\t\t...done!')
 
 
+    # Apply dynamic limiting on the collected reactor audios
+    dynamic_limit_without_combining(base_audio_as_array, all_clips)
+
+    # Set the modified audios back to their respective clips
+    for idx, clip_info in enumerate(all_clips):
+        clip_info['audio'] = AudioArrayClip(clip_info['audio'], fps=sr)
 
 
     base_clip = {
-      'audio': base_video.audio,
+      'audio': AudioArrayClip(base_audio_as_array, fps=sr), #base_video.audio,
       'base': True,
       'priority': 0,
       'video': base_video
     }
-
 
     all_clips.append(base_clip)
 
@@ -259,6 +404,10 @@ def create_clips(base_video, cell_size, draft):
 
 
     return all_clips, clip_length
+
+
+
+
 
 
 # Any of the reaction clips can have any number of "asides". An aside is a bonus 
@@ -274,6 +423,8 @@ def incorporate_asides(base_video):
     all_asides = []
     for name, reaction in conf.get('reactions').items():
         reactors = reaction.get('reactors')
+        if reactors is None:
+            continue
 
         if reaction.get('aside_clips', None):
             for insertion_point, aside_clips in reaction.get('aside_clips').items():
@@ -315,6 +466,8 @@ def incorporate_asides(base_video):
         for name, reaction in conf.get('reactions').items():
             print(f"\t\tCreating clip for {name}")
             reactors = reaction.get('reactors')
+            if reactors is None:
+                continue
 
             for idx, reactor in enumerate(reactors): 
                 # print(reactor, reactor['clip'])
@@ -398,7 +551,12 @@ def create_masked_video(clip, width, height, border_color, border_thickness=10, 
 
         def color_func(t):
             # Get the volume at current time
-            volume = audio_volume[int(t * sr)]
+            idx = int(t * sr)
+
+            if idx < len(audio_volume):
+                volume = audio_volume[idx]
+            else: 
+                volume = 0
 
             # If volume is zero, return white
             if volume == 0:
