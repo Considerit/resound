@@ -9,7 +9,7 @@ from utilities import conversion_audio_sample_rate as sr
 from inventory import download_and_parse_reactions, get_manifest_path
 from aligner import create_aligned_reaction_video
 from face_finder import create_reactor_view
-from backchannel_isolator import process_reactor_audio
+from backchannel_isolator import isolate_reactor_backchannel
 from compositor import compose_reactor_compilation
 from aligner.scoring_and_similarity import print_path, ground_truth_overlap
 
@@ -63,7 +63,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
 
     reaction["aligned_audio_path"] = aligned_reaction_audio_path
 
-    reaction["backchannel_audio"] = process_reactor_audio(reaction, extended_by=extend_by)
+    reaction["backchannel_audio"] = isolate_reactor_backchannel(reaction, extended_by=extend_by)
     
     if not conf["create_reactor_view"]:
         return []
@@ -161,11 +161,11 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             return []
 
 
-        extend_by = 8
+        extend_by = 12
         for i, (name, reaction) in enumerate(conf.get('reactions').items()):
 
 
-            # if reaction.get('channel') != "The Dan Wheeler Show":
+            # if reaction.get('channel') != "Duane Reacts" and reaction.get('channel') != "Kyker2Funny":
             #     continue
 
 
@@ -185,6 +185,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
                 print(e)
                 traceback_str = traceback.format_exc()
                 failed_reactions.append((reaction.get('channel'), e, traceback_str))
+                conf['remove_reaction'](reaction.get('channel'))
 
             log_progress(progress)
             print_progress(progress)
@@ -264,11 +265,11 @@ def log_progress(progress):
 
 def print_progress(progress):
 
-    for song_key, alignments in progress.items():
-        for channel, reaction in alignments.items():
-            if reaction.get('best_path'):
-                print(f"************* best path for {channel} / {song_key} ****************")
-                print(reaction.get('best_path_output'))
+    # for song_key, alignments in progress.items():
+    #     for channel, reaction in alignments.items():
+    #         if reaction.get('best_path'):
+    #             print(f"************* best path for {channel} / {song_key} ****************")
+    #             print(reaction.get('best_path_output'))
 
     x = PrettyTable()
     x.field_names = ["Song", "Channel", "Duration", "Score", "Best Seen Score", "Ground Truth", "Local Best Ground Truth", "Best Seen Ground Truth"]
@@ -295,7 +296,7 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = 'completion' #'painter-high-tolerance' #'earliness-alignment' # 'painter-high-tolerance' # "twosecpaints" # # #"more_sensitive_ends" #"tighter_overall_prune"
+    output_dir = 'centered'
 
     for song in finished:
         clean_up(song)
@@ -308,6 +309,7 @@ if __name__ == '__main__':
 
     failures = []
     for song in manifest_only: 
+        print(f"Updating manifest for {song.get('song')}")
         failed = create_reaction_compilation(song, progress, output_dir = output_dir, options=manifest_options)
         if(len(failed) > 0):
             failures.append((song, failed)) 

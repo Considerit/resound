@@ -9,12 +9,12 @@ from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, Com
 from moviepy.editor import ImageClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
 
-from utilities import conversion_frame_rate, conversion_audio_sample_rate
+from utilities import conversion_frame_rate, conversion_audio_sample_rate as sr
 
 
-def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, extend_by=0, use_fill=True):
+def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[float, float]],  filler_video: str, output_file: str, extend_by=0, use_fill=True):
 
-    print(f"Frame rate: {conversion_frame_rate}, Audio rate: {conversion_audio_sample_rate}")
+    print(f"Frame rate: {conversion_frame_rate}, Audio rate: {sr}")
     temp_dir, _ = os.path.splitext(output_file)
 
     if not os.path.exists(temp_dir):
@@ -29,25 +29,14 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
     if reaction_video.w > 1920:
         reaction_video = reaction_video.resize( 1920 / reaction_video.w )
 
-    if reaction_video.audio.fps != conversion_audio_sample_rate:
-        reaction_video = reaction_video.set_audio(reaction_video.audio.set_fps(conversion_audio_sample_rate))
+    if reaction_video.audio.fps != sr:
+        reaction_video = reaction_video.set_audio(reaction_video.audio.set_fps(sr))
 
     width = reaction_video.w
     height = reaction_video.h
 
     base_video = VideoFileClip(filler_video)
 
-    #########################################################
-    # Append 15 seconds (or extend_by) of each reaction video
-    if extend_by > 0:
-        fill_length = 0
-        for (start, end, filler_start, filler_end, filler) in reversed(video_segments):
-            if not filler: 
-                break
-            fill_length += filler_end - filler_start
-
-        if end + fill_length + extend_by <= reaction_video.duration:  # Make sure not to exceed the reaction video duration
-            video_segments.append((end + fill_length, end + fill_length + extend_by, filler_end, filler_end + fill_length + extend_by, False))
     
     ##################
 
@@ -77,6 +66,35 @@ def trim_and_concat_video(video_file: str, video_segments: List[Tuple[float, flo
 
         print(f'Adding frames from {start_frame}s to {end_frame}s filler? {filler}')
         clips.append(subclip)
+
+
+    #########################################################
+    # Append 15 seconds (or extend_by) of each reaction video
+    if extend_by > 0:
+        fill_length = 0
+        for (start, end, filler_start, filler_end, filler) in reversed(video_segments):
+            if not filler: 
+                break
+            fill_length += filler_end - filler_start
+
+        if end + fill_length + extend_by <= reaction_video.duration:  # Make sure not to exceed the reaction video duration
+            
+            start = end + fill_length
+            end = end + fill_length + extend_by
+            filler_start = filler_end 
+            filler_end = filler_end + fill_length
+            filler = False 
+
+            print(reaction.get('reaction_audio_vocals_data'), start, end, filler_end)
+            end_frame = min(end_frame, reaction_video.duration)
+            subclip = reaction_video.subclip(float(start), float(end))
+            # replace audio with the source-separated vocal track
+            vocals_audio = reaction.get('reaction_audio_vocals_data')[int(start*sr):int(end*sr)]
+            subclip.set_audio(vocals_audio)
+            clips.append(subclip)
+
+
+
 
 
     # Concatenate the clips together

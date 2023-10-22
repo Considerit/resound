@@ -71,13 +71,20 @@ def find_segment_starts(reaction, open_chunk, closed_chunk, current_chunk_size, 
             open_chunk = open_chunk[:, :int((upper_bound - open_start + current_chunk_size) / hop_length)]            
 
 
-    if len(open_chunk) == 0 or len(closed_chunk) == 0: 
-        print("\nError! Open chunk and/or closed chunk are zero length", len(open_chunk), len(closed_chunk), upper_bound, open_start, current_chunk_size, prev)
-        return None
+
+
 
     if not multi_dimensional:
+        if len(open_chunk) == 0 or len(closed_chunk) == 0: 
+            print("\nError! Open chunk and/or closed chunk are zero length", len(open_chunk), len(closed_chunk), upper_bound, open_start, current_chunk_size)
+            return None
+
         correlation = correlate(open_chunk, closed_chunk)
     else: 
+        if open_chunk.shape[1] == 0 or closed_chunk.shape[1] == 0: 
+            print("\nError! Open chunk and/or closed chunk are zero length", open_chunk.shape, closed_chunk.shape, upper_bound, open_start, current_chunk_size)
+            return None
+
         correlations = [correlate(open_chunk[i, :], closed_chunk[i, :]) for i in range(open_chunk.shape[0])]        
         correlation = np.mean(correlations, axis=0)
         correlation = correlation - np.mean(correlation[100:len(correlation)-100])

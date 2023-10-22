@@ -1,1 +1,1 @@
-from backchannel_isolator.backchannel_isolator import process_reactor_audio
+from backchannel_isolator.backchannel_isolator import isolate_reactor_backchannel

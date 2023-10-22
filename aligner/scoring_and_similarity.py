@@ -622,7 +622,8 @@ def get_segment_mfcc_mse(reaction, segment):
 
     return segment_mfcc_mses[key]
 
-def get_segment_mfcc_cosine_similarity_score(reaction, segment):
+def get_segment_mfcc_cosine_similarity_score(reaction, segment, reaction_audio_mfcc=None):
+
 
     if len(segment) == 4:
         reaction_start, reaction_end, current_start, current_end = segment
@@ -637,9 +638,11 @@ def get_segment_mfcc_cosine_similarity_score(reaction, segment):
 
     key = get_segment_id(segment)
     if key not in segment_mfcc_cosine_scores:
+
+      if reaction_audio_mfcc is None:
+        reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
       
       song_audio_mfcc = conf.get('song_audio_mfcc')
-      reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
       hop_length = conf.get('hop_length')
 
       mfcc_react_chunk = reaction_audio_mfcc[:, round(reaction_start / hop_length):round(reaction_end / hop_length)]

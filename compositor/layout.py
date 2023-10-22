@@ -9,7 +9,7 @@ def create_layout_for_composition(base_video, width, height):
 
     total_videos = 0
     for name, reaction in conf.get('reactions').items():
-      total_videos += len(reaction.get('reactors'))
+      total_videos += len(reaction.get('reactors', []))
 
     include_base_video = conf['include_base_video']
 
@@ -217,6 +217,8 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
 
     for name, reaction in all_reactions:
       reactors = reaction.get('reactors')
+      if reactors is None:
+        continue
       featured = reaction.get('featured')
       in_group = len(reactors) > 1
 
@@ -271,11 +273,17 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
     # Save the grid assigments to the reactors
     for name, reaction in conf.get('reactions').items():
       reactors = reaction.get('reactors')
+      if reactors is None:
+        continue
 
       reactor_assignments = [assignments[reactor['key']] for reactor in reactors]
 
+
       if reaction.get('swap_grid_positions', False):
+        print("\n\n************\nSWAPPING GRID POSITIONS!\n**************************")
+        print(reactor_assignments)
         reactor_assignments.reverse()
+        print(reactor_assignments)
 
       for i, reactor in enumerate(reactors): 
         reactor['grid_assignment'] = reactor_assignments[i]

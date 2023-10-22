@@ -252,7 +252,7 @@ input_events = {}
 def on_press_key(key, callback):
     global input_events
     input_events[key] = callback
-    print('set callback for', key)
+    # print('set callback for', key)
 
 # Function that will be called whenever a key is pressed
 def on_press(key):

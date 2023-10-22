@@ -21,7 +21,7 @@ def get_spleeter():
     return spleeter_separator
 
 
-def separate_vocals(output_dir, audio_path, output_filename):
+def separate_vocals(output_dir, audio_path, output_filename, duration=600):
     # Create a separator with 2 stems (vocals and accompaniment)
 
     vocals_high_passed_path = os.path.join(output_dir, output_filename)
@@ -35,7 +35,7 @@ def separate_vocals(output_dir, audio_path, output_filename):
         # Perform source separation
         if not os.path.exists(vocals_path):
             print("\tPerforming source separation")
-            get_spleeter().separate_to_file(audio_path, output_dir)
+            get_spleeter().separate_to_file(audio_path, output_dir, duration=duration)
             audio_file_prefix = os.path.splitext(audio_path)[0].split('/')[-1]
             weird_spleeter_outputpath = os.path.join(output_dir, audio_file_prefix)
 
