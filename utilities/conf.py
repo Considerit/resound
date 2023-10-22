@@ -6,7 +6,7 @@ from utilities.utilities import conversion_audio_sample_rate as sr
 from utilities.utilities import extract_audio
 from utilities.audio_processing import normalize_audio_manually, pitch_contour, spectral_flux, root_mean_square_energy, continuous_wavelet_transform, convert_to_mono, normalize_reaction_audio
 
-
+from utilities import print_profiling
 
 
 
@@ -102,12 +102,15 @@ def make_conf(song_def, options, temp_directory):
     priority = song_def.get('priority', {}) 
     swap_grid_positions = song_def.get('swap_grid_positions', None)
     fake_reactor_position = song_def.get('fake_reactor_position', None)
-    start_reaction_search_at = song_def.get('start_reaction_search_at', None)
+    start_reaction_search_at = song_def.get('start_reaction_search_at', {})
+
+    end_reaction_search_at = song_def.get('end_reaction_search_at', None)
     unreliable_bounds = song_def.get('unreliable_bounds', None)
-    chunk_size = song_def.get('chunk_size', None)
+    chunk_size = song_def.get('chunk_size', {})
     manual_normalization_point = song_def.get('manual_normalization_point', None)
 
     for reaction_video_path in reaction_videos:
+      print_profiling()
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
 
       ground_truth = song_def.get('ground_truth', {}).get(channel, None)
@@ -145,14 +148,15 @@ def make_conf(song_def, options, temp_directory):
         if fake_reactor_position is not None and fake_reactor_position.get(channel, False): 
           reactions[channel]['fake_reactor_position'] = fake_reactor_position.get(channel)
 
-        if start_reaction_search_at is not None and start_reaction_search_at.get(channel, False):
-          reactions[channel]['start_reaction_search_at'] = start_reaction_search_at.get(channel)
+        reactions[channel]['start_reaction_search_at'] = start_reaction_search_at.get(channel, 3) * sr
+
+        if end_reaction_search_at is not None and end_reaction_search_at.get(channel, False):
+          reactions[channel]['end_reaction_search_at'] = end_reaction_search_at.get(channel) * sr
 
         if unreliable_bounds is not None and unreliable_bounds.get(channel, False):
           reactions[channel]['unreliable_bounds'] = unreliable_bounds.get(channel)
 
-        if chunk_size is not None and chunk_size.get(channel, False):
-          reactions[channel]['chunk_size'] = chunk_size.get(channel)
+        reactions[channel]['chunk_size'] = chunk_size.get(channel, 3)
 
         if manual_normalization_point is not None and manual_normalization_point.get(channel, False): 
           reactions[channel]['manual_normalization_point'] = manual_normalization_point.get(channel)
@@ -165,13 +169,14 @@ def make_conf(song_def, options, temp_directory):
         reactions[channel]['priority'] = priority.get(channel, default_priority)
 
 
-        if swap_grid_positions is not None and swap_grid_positions.get(channel, None):
+        if swap_grid_positions is not None and swap_grid_positions.get(channel, False):
           reactions[channel]['swap_grid_positions'] = swap_grid_positions.get(channel)
 
 
     conf['reactions'] = reactions
 
   def load_reaction(channel):
+      print_profiling()
       print(f"Loading reaction {channel}")
       reaction_conf = conf.get('reactions')[channel]
 
@@ -187,14 +192,18 @@ def make_conf(song_def, options, temp_directory):
           else: 
               song_mfcc = librosa.feature.mfcc(y=conf.get('song_audio_data'), sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
               reaction_mfcc = librosa.feature.mfcc(y=reaction_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
-              _, normalized_reaction_audio_data = normalize_reaction_audio(conf.get('song_audio_data'), reaction_audio_data, song_mfcc, reaction_mfcc)
+              normalized_reaction_audio_data = normalize_reaction_audio(reaction_conf, conf.get('song_audio_data'), reaction_audio_data, song_mfcc, reaction_mfcc)
+              if normalized_reaction_audio_data is not None: 
 
-          # Writing the normalized_reaction_audio_data to a file
-          root, ext = os.path.splitext(reaction_audio_path)
-          normalized_audio_path = f"{root}_normalized{ext}"
-          sf.write(normalized_audio_path, normalized_reaction_audio_data, sr)
+                # Writing the normalized_reaction_audio_data to a file
+                root, ext = os.path.splitext(reaction_audio_path)
+                normalized_audio_path = f"{root}_normalized{ext}"
+                sf.write(normalized_audio_path, normalized_reaction_audio_data, sr)
 
-          reaction_conf["reaction_audio_data"] = normalized_reaction_audio_data
+                reaction_conf["reaction_audio_data"] = normalized_reaction_audio_data
+              else: 
+                reaction_conf["reaction_audio_data"] = reaction_audio_data
+
           reaction_conf['reaction_audio_path'] = reaction_audio_path
 
           output_dir = conf.get('reaction_directory')
@@ -205,6 +214,7 @@ def make_conf(song_def, options, temp_directory):
 
 
   def load_aligned_reaction_data(channel):
+    print_profiling()
     reaction_conf = conf.get('reactions')[channel]
 
     if not conf.get('base_video_path'):
@@ -248,7 +258,7 @@ def unload_reaction(channel):
   import gc
   global conf
 
-  print(f"Unloading reaction {channel}")
+  # print(f"Unloading reaction {channel}")
 
   reaction_conf = conf.get('reactions')[channel]
 
@@ -261,6 +271,7 @@ def unload_reaction(channel):
 
 
 def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio_data):
+    print_profiling()
 
     from backchannel_isolator.track_separation import separate_vocals
 
@@ -274,8 +285,7 @@ def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio
         separate_vocals(separation_path, audio_path, vocal_path_filename, duration=len(audio_data) / sr + 1)
 
 
-    for source in ( '', 'accompaniment', 'vocals' ):
-
+    for source in [ '', 'vocals' ]: #, 'accompaniment', 'vocals' ):
       if source == '':
         data = audio_data
         path = audio_path
@@ -291,8 +301,8 @@ def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio
       mfcc = librosa.feature.mfcc(y=data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
       local_conf[f'{prefix}_audio{source}mfcc'] = mfcc
 
-      pc = pitch_contour(data, sr, hop_length=conf.get('hop_length'))
-      local_conf[f'{prefix}_audio{source}pitch_contour'] = pc
+      # pc = pitch_contour(data, sr, hop_length=conf.get('hop_length'))
+      # local_conf[f'{prefix}_audio{source}pitch_contour'] = pc
 
       # sf = spectral_flux(y=data, sr=sr, hop_length=conf.get('hop_length'))
       # local_conf[f'{prefix}_audio{source}spectral_flux'] = sf
