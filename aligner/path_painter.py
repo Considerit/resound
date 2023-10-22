@@ -12,16 +12,25 @@ import numpy as np
 import os
 import copy
 import time
+import math
 
 
 
-
-def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=None):
+def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=None, attempts=0):
 
     if chunk_size is None: 
-        chunk_size = reaction.get('chunk_size', 3)
+        chunk_size = reaction.get('chunk_size') * (1 + math.floor(  attempts / 3  ))
+        chunk_size *= sr
+
+
+    if allowed_spacing is None: 
+        allowed_spacing = 3 * (1 + attempts % 3 )
+        print(f"Attempts={attempts}   {attempts % 3}    {allowed_spacing}")
+        allowed_spacing *= sr
+        
 
     print(f"\n###############################\n# {conf.get('song_key')} / {reaction.get('channel')}")
+    print(f"Painting path with chunk size {chunk_size / sr} and {allowed_spacing * 2 / sr} spacing")
 
     initialize_segment_end_cache()
     initialize_path_score()
@@ -29,33 +38,31 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
     initialize_paint_caches()
     initialize_path_pruning()
 
-    chunk_size *= sr
+    
     chunk_size = int(chunk_size)
     step = int(.5 * sr)
 
-    if allowed_spacing is None:
-        allowed_spacing = 3 * sr
 
     start = time.perf_counter()
 
     segments = find_segments(reaction, chunk_size, step, peak_tolerance)
 
-    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True)
+    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     pruned_segments, __ = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = False)
 
-    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True)
+    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     sharpen_segments(reaction, chunk_size, step, pruned_segments, allowed_spacing)
 
     # pruned_segments = prune_low_quality_segments(reaction, pruned_segments, allowed_spacing)
     
-    if allowed_spacing == 3 * sr:
+    if attempts % 3 == 0:
         pruned_segments = prune_neighbors(reaction, pruned_segments, allowed_spacing)
 
     pruned_segments, joinable_segment_map = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = True)
 
-    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True)
+    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print(f"Constructing paths from {len(pruned_segments)} viable segments")
 
@@ -63,11 +70,11 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     paths = finesse_paths(reaction, paths)
 
-    if len(paths) == 0 and allowed_spacing < 10 * sr: 
-        print(f"No paths found. Trying with {allowed_spacing * 2 / sr} spacing")
-        splay_paint(reaction, segments, stroke_alpha=.2, show_live=False)
+    if len(paths) == 0 and attempts < 4 * 3: 
+        print(f"No paths found.")
+        splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
 
-        return paint_paths(reaction, peak_tolerance, allowed_spacing=allowed_spacing * 2)
+        return paint_paths(reaction, peak_tolerance, attempts=attempts+1)
 
     print(f"Found {len(paths)} paths")
 
@@ -76,7 +83,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     alignment_duration = (time.perf_counter() - start) / 60 # in minutes
 
-    splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, paths=[best_path])
+    splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, paths=[best_path], chunk_size=chunk_size)
 
     return best_path
 
@@ -900,14 +907,14 @@ def get_signals(reaction, start, reaction_start, chunk_size):
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
     song_audio_mfcc = conf.get('song_audio_mfcc')
 
-    base_audio_accompaniment = conf.get('song_audio_accompaniment_data')
-    reaction_audio_accompaniment = reaction.get('reaction_audio_accompaniment_data')
+    # base_audio_accompaniment = conf.get('song_audio_accompaniment_data')
+    # reaction_audio_accompaniment = reaction.get('reaction_audio_accompaniment_data')
 
-    reaction_audio_accompaniment_mfcc = reaction.get('reaction_audio_accompaniment_mfcc')    
-    base_audio_accompaniment_mfcc = conf.get('song_audio_accompaniment_mfcc')
+    # reaction_audio_accompaniment_mfcc = reaction.get('reaction_audio_accompaniment_mfcc')    
+    # base_audio_accompaniment_mfcc = conf.get('song_audio_accompaniment_mfcc')
 
-    base_audio_vocals = conf.get('song_audio_vocals_data')
-    reaction_audio_vocals = reaction.get('reaction_audio_vocals_data')
+    # base_audio_vocals = conf.get('song_audio_vocals_data')
+    # reaction_audio_vocals = reaction.get('reaction_audio_vocals_data')
 
 
     chunk = base_audio[start:start+chunk_size]
@@ -916,8 +923,8 @@ def get_signals(reaction, start, reaction_start, chunk_size):
     open_chunk = reaction_audio[reaction_start:]
     open_chunk_mfcc = reaction_audio_mfcc[:, round( reaction_start / hop_length):]
 
-    predominantly_silent = is_silent(chunk, threshold_db=-30)
-    vocal_dominated = 'vocal' == determine_dominance(base_audio_vocals[start:start+chunk_size], base_audio_accompaniment[start:start+chunk_size])
+    # predominantly_silent = is_silent(chunk, threshold_db=-30)
+    # vocal_dominated = 'vocal' == determine_dominance(base_audio_vocals[start:start+chunk_size], base_audio_accompaniment[start:start+chunk_size])
 
 
     signals = {
@@ -1005,12 +1012,12 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
     starting_points = range(0, len(base_audio) - chunk_size, step)
 
-    start_reaction_search_at = reaction.get('start_reaction_search_at', 3)
+    start_reaction_search_at = reaction.get('start_reaction_search_at')
 
-    minimums = [start_reaction_search_at * sr]
+    minimums = [start_reaction_search_at]
 
 
-    seg_cache_key = f"{minimums[0]}-{conf['first_n_samples']}-{reaction.get('unreliable_bounds','')}"
+    seg_cache_key = f"{minimums[0]}-{chunk_size}-{conf['first_n_samples']}-{reaction.get('unreliable_bounds','')}"
 
     strokes = []
     active_strokes = []
@@ -1025,6 +1032,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
     alignment_bounds = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
 
+    reaction_span = reaction.get('end_reaction_search_at', len(reaction_audio))
 
     for i,start in enumerate(starting_points):
 
@@ -1035,13 +1043,10 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
         reaction_start = max( minimums[0] + start, min(minimums[-18:]))
 
         if start not in candidate_cache:
-
-            upper_bound = get_bound(alignment_bounds, start, len(reaction_audio))
+            upper_bound = get_bound(alignment_bounds, start, reaction_span - (len(base_audio) - start))
 
             if reaction.get('unreliable_bounds', False):
                 upper_bound *= 1.5
-
-            upper_bound = min(len(reaction_audio) - (len(base_audio) - start), upper_bound)
 
             signals = get_signals(reaction, start, reaction_start, chunk_size)
             candidates = get_candidate_starts(reaction, signals, peak_tolerance, reaction_start, start, chunk_size, 1 * sr, upper_bound)
@@ -1134,7 +1139,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
         if len(segment['strokes']) < 4:
             segment['pruned'] = True
 
-    # splay_paint(reaction, strokes, stroke_alpha=step/chunk_size, show_live=False)
+    # splay_paint(reaction, strokes, stroke_alpha=step/chunk_size, show_live=False, chunk_size=chunk_size)
     return strokes
 
 
@@ -1179,7 +1184,7 @@ def near_song_end(segment, allowed_spacing):
 #########################
 # Drawing
 
-def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, paths=None):
+def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, paths=None, chunk_size=None):
     plt.figure(figsize=(10, 10))
 
     x = conf.get('song_audio_data')
@@ -1235,7 +1240,7 @@ def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, pat
 
 
     # Save the plot instead of displaying it
-    filename = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-painting.png")
+    filename = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-painting-{int(chunk_size/sr)}.png")
     plt.savefig(filename, dpi=300)
 
     if show_live:
