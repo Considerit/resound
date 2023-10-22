@@ -15,22 +15,54 @@ from utilities.audio_processing import audio_percentile_loudness, convert_to_mon
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
-# I have two audio files. One file is a song. The other file is a reaction — a recording of 
-# one or two people reacting to the song. The file contains a possibly distorted, though 
-# generally aligned, playback of the song, as well as reactor(s) commenting on the song. 
-# I would like you to write me a python function that tries to separate the song from the 
-# commentary in the reaction audio. If it is too much to do in one pass, please suggest 
-# a series of prompts I can use to arrive at the function. 
+# I have two audio tracks. One track is a song. The other track is a reaction — a recording of 
+# one or two people reacting to the song. The reaction track contains a possibly distorted, though 
+# fairly nicely aligned, playback of the song, as well as reactor(s) commenting occassionally on top 
+# of the song. Because the reactors are re-encoding the audio (including the sound), as well 
+# as having a lot of variation, there are pitch, volume, and other differences in the reaction 
+# audio’s version of the song. 
 
-# One thing we have that typical approaches do not have access to is the base audio of the song 
-# that we want to separate out. That’s a very valuable piece of data that source separation 
-# doesn’t leverage. Neither does your code. Are there any techniques you can come up with 
-# that can use the song’s audio to help in the separation task? 
+# The only thing I really care about in the reaction audio are the sounds the reactor makes while the 
+# base song is playing. This is the backchannel -- the sounds that a listener makes without taking the 
+# speaking baton (laughs, signs, shouts, brief comments, etc).
 
-# Because the reactors are re-encoding the audio (including the sound), as well as having a lot of 
-# variation, there are pitch, volume, and other differences in the reaction audio’s version 
-# of the song. Can you augment your code with a best-effort attempt to normalize some of these 
-# differences between the song and reaction audio?
+# Because I'm compiling these reaction tracks together, I have a way to isolate the backchannel sounds 
+# in the reaction audio from the audio of the song itself in the reaction audio. Subtracting out the 
+# base audio from the aligned reaction didn't work, but then I realized I could simply try to detect 
+# the portions of the reaction audio where the reactor was making noise, without trying to eliminate 
+# the base song audio. Reactors don't make noise that often relative to the length of the song, so 
+# I could just mute all the segments of the reaction audio where we didn't detect an active backchannel. 
+# Then when we stitch all the reaction together, only a few reactors will tend to be active at the 
+# same time. This has proven tractible. 
+
+# I invented a new measure to help find active backchannels: Relative Volume Difference. Consider an audio track. 
+# Calculate the max perceptual volume in the track. For each audio sample in the track calculate the percentage 
+# of the max observed volume, and store it in a vector. Now we have a normalized measure to compare against other 
+# tracks! If we compare the percentile volume vectors for the base audio track and an aligned reaction track 
+# where the reactor doesn't make any noise, the vectors should be about the same. If we subtract one from the 
+# other, the resulting vector should be close to zero throughout. However, because volume is a measure of energy, 
+# a reactor adds energy to the audio signal whenever they make noise. The insight is thus that the backchannel 
+# is active when the percentile volume of the reaction audio is significantly higher than the percentile 
+# volume of the base song audio. So we can find the backchannel by subtracting the percentile volume vector of 
+# the song audio from the percentile volume vector of the reaction audio, and declaring the back channel 
+# active when the value is above some threshold (with some smoothing as well of course).
+
+# This all works fairly well, but there are still significant false positives and negatives. 
+# I'd like to improve on these issues. Before we delve into those issues though, I'd like to ask you about
+# you:
+# (1) What do you think of this approach? What would you change or add? 
+# (2) How would you approach the issue of backchannel isolation given a reaction track and song track? 
+# (3) Has relative volume difference already been invented, and if so, by what name does it go by? 
+# (4) Are there other metrics that could also leverage the relationship between the reaction and 
+#     song track, and serve as confirming metrics? 
+
+
+
+# In particular, I'd like to 
+# address false positives in the identification of a meaningful backchannel activation. 
+
+
+
 
 import cProfile
 import pstats
@@ -39,6 +71,49 @@ import pstats
 profile_isolator = False
 if profile_isolator:
     profiler = cProfile.Profile()
+
+
+def plot_masks(song_percentile_loudness, reaction_percentile_loudness, diff, mask):
+    print('plotting')
+
+    # Create a time array for plotting
+    time_song = np.arange(song_percentile_loudness.shape[0]) / sr
+    time_reaction = np.arange(reaction_percentile_loudness.shape[0]) / sr
+
+    plt.figure(figsize=(12, 10))  # Increase figure size for 6 subplots
+
+    plots = 6 
+    # # Plot the absolute difference for volume
+    # plt.subplot(plots, 2, 1)
+    # plt.plot(time_reaction, diff1, label='Absolute Difference, volume')
+    # plt.legend()
+    # plt.xlabel('Time (s)')
+    # plt.ylabel('Absolute Difference')
+    # plt.title('Absolute Difference in Percentile Volume')
+
+    # # Plot the volume mask
+    # plt.subplot(plots, 2, 2)
+    # plt.plot(time_reaction, mask1, label='Dilated Mask, volume')
+    # plt.legend()
+    # plt.xlabel('Time (s)')
+    # plt.ylabel('Mask Values')
+    # plt.title('Masks of Commentator Segments (Volume)')
+
+
+    # Plot the absolute difference for joint
+    plt.subplot(plots, 2, 3)
+    plt.plot(time_reaction, diff, label='Absolute Difference, long vol 1')
+    plt.legend()
+    plt.ylabel('Absolute Difference')
+
+    # Plot the joint mask
+    plt.subplot(plots, 2, 4)
+    plt.plot(time_reaction, mask, label='Dilated Mask, long vol 1')
+    plt.legend()
+    plt.ylabel('Mask Values')
+
+    plt.tight_layout()
+    plt.show()    
 
 
 
@@ -126,29 +201,6 @@ def create_mask_by_relative_perceptual_loudness_difference(song, reaction, thres
 
 
     return dilated_mask, diff, song_percentile_loudness, reaction_percentile_loudness
-
-
-# def create_mask_by_relative_pitch_difference(song, reaction, threshold, plot=False):
-#     # Calculate the pitch of each audio
-#     print("\tsong pitch")
-#     song_pitch = calculate_pitch_level(song)
-#     print("\treaction pitch")
-#     reaction_pitch = calculate_pitch_level(reaction, sr)
-
-#     # Calculate the percentile pitch of each audio
-#     print("\tpercentile song pitch")
-#     song_percentile_pitch = calculate_percentile_pitch(song_pitch)
-#     print("\tpercentile reaction pitch")
-#     reaction_percentile_pitch = calculate_percentile_pitch(reaction_pitch)
-
-#     # Calculate the absolute difference between the percentile pitches
-#     diff = song_percentile_pitch - reaction_percentile_pitch
-
-#     dilated_mask = construct_mask(diff, threshold)
-
-
-#     return dilated_mask, diff, song_percentile_pitch, reaction_percentile_pitch
-
 
 
 
@@ -240,19 +292,50 @@ def pad_segments(segments, length, pad_beginning=0.1, pad_ending=0.1):
     
     return padded_segments
 
-def apply_segments(audio, segments):
+def apply_segments(audio, segments, audibility_threshold=0.01, suppresion_period=2): 
     # Initialize a new audio array with zeros
     suppressed_audio = np.zeros_like(audio)
+    suppresion_period *= sr
 
-    # For each segment, copy the corresponding audio from the original reaction
+    # For each segment, check if it contains an audible sample and if so, copy it
     for (start, end) in segments:
-        suppressed_audio[start:end] = audio[start:end]
+        segment_audio = audio[start:end]
+        
+        # Find the indices where the audio is above the threshold
+        audible_indices = np.where(np.abs(segment_audio) > audibility_threshold)[0]
+        
+        # Check for inaudible stretches of more than 1 second
+        inaudible_stretches = np.diff(audible_indices) > suppresion_period
+        
+        # If there are any inaudible stretches of more than 1 second
+        if np.any(inaudible_stretches):
+            # Start copying from the beginning of the segment
+            chunk_start = 0
+            
+            # Iterate through the inaudible stretches
+            for i in np.where(inaudible_stretches)[0]:
+                chunk_end = audible_indices[i]
+                suppressed_audio[start + chunk_start:start + chunk_end] = segment_audio[chunk_start:chunk_end]
+                print(f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}")
+                
+                # Skip 1 second after the inaudible stretch
+                chunk_start = audible_indices[i+1]
+
+            # Handle the segment after the last inaudible stretch
+            chunk_end = len(segment_audio)
+            suppressed_audio[start + chunk_start:start + chunk_end] = segment_audio[chunk_start:chunk_end]
+            print(f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}")
+
+        else:
+            # If there are no inaudible stretches of more than 1 second, just copy the entire segment
+            suppressed_audio[start:end] = segment_audio
+            print(f"Selected entire segment from {start / sr} to {end / sr}")
 
     return suppressed_audio
 
 
 
-def mute_by_deviation(reaction, song_path, reaction_path, output_path, original_reaction):
+def mute_by_deviation(reaction, song_path, reaction_path, output_path):
 
     if profile_isolator:
         global profiler
@@ -261,36 +344,13 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path, original_
 
     min_segment_length = 0.01
     max_gap_frames = 0.5
-    percentile_thresh = 90
-    percent_volume_diff_thresh = 8
-
-    # Load the song and reaction audio
+    percent_volume_diff_thresh = 5
 
     audio_data, __ = sf.read(song_path)
     song = convert_to_mono(audio_data)
 
-
-    # song, __ = librosa.load(song_path, sr=sr, mono=True)
-
-
     audio_data, __ = sf.read(reaction_path)
     reaction_data = convert_to_mono(audio_data)
-
-    # reaction_data, __ = librosa.load(reaction_path, sr=sr, mono=True)
-
-
-
-    # assert sr_reaction == sr_song, f"Sample rates must be equal {sr_reaction} {sr_song}"
-    # assert sr == sr_reaction, f"Sample rate must be equal to global value"
-
-
-    # if mono:
-    #     # Convert them to pseudo multi-channel (still mono but with an extra dimension to look like multi-channel)
-    #     song = np.expand_dims(song, axis=0)
-    #     reaction_data = np.expand_dims(reaction_data, axis=0)
-
-    # Check the standard deviation of the audio data
-    # assert song.shape == reaction_data.shape, f"Song and reaction must have the same number of channels (song = {song.shape}, reaction = {reaction_data.shape})"
 
     delay = 0
     extra_reaction = None # often a result of extend by
@@ -304,253 +364,42 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path, original_
         extra_reaction = original_reaction[len(song):] # extract this from the original reaction audio, not the source separated content
         reaction_data = reaction_data[:len(song)]
 
-
-
-        # pad_width = len(reaction_data) - len(song) - delay
-        # song = np.pad(song, (delay, pad_width))
-
-
     # print("calculating short volume diff")
     # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh)
 
-    # print("calculating short volume diff")
-    # mask12, diff12 = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, std_dev=1000/4)
-
     print("calculating long volume diff")
     percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, window=1 * sr, plot=False)
-    long_mask1, long_diff1, song_percentile_pitch, reaction_percentile_pitch = percep_mask
+    long_mask1, long_diff1, song_percentile_loudness, reaction_percentile_loudness = percep_mask
     
-    # print("calculating long volume diff2")
-    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, window=sr / 2)
-    # long_mask12, long_diff12, song_percentile_pitch, reaction_percentile_pitch = percep_mask
-
-    # print("calculating long volume diff")
-    # percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, window=4 * sr, plot=False)
-    # long_mask2, long_diff2, song_percentile_pitch, reaction_percentile_pitch = percep_mask
-
-
-
-    # print('calculating pitch diff')
-    # mask2, diff2, song_percentile_pitch, reaction_percentile_pitch = create_mask_by_relative_pitch_difference(song, reaction_data, threshold=50, plot=False)
-
 
     # print('calculating diffs and masks')
 
-    # combined_diff = diff1 * diff2
-    # combined_diff = 100 * combined_diff / np.max(combined_diff)
-
-    # mask = combined_diff > 15
-    # dilated_mask = combined_diff > 15
-
-    # confirmed_diff = diff1
-    # confirmed_mask = (diff1 > percent_volume_diff_thresh) & (diff2 > 5)
-    # confirmed_dilated_mask = (diff1 > percent_volume_diff_thresh) & (diff2 > 5)
-
-    # long_confirmed_diff = (diff1 + long_diff1 + diff12 + long_diff12) / 4
+    # long_confirmed_diff = (diff1 + long_diff1) / 4
     # long_confirmed_mask = long_confirmed_diff > percent_volume_diff_thresh
     # long_confirmed_dilated_mask = long_confirmed_diff > percent_volume_diff_thresh
 
-    # print('dialating masks')
-
-    # # dilated_mask should be an expansion of mask. It should be True for all segments of positive values of diff 
-    # # that contain at least one sample where diff > threshold.
-    # i = 0
-    # while i < len(mask):
-    #     if mask[i] and combined_diff[i] > 1:
-    #         # find start of positive segment
-    #         start = i
-    #         while i < len(mask) and combined_diff[i] > 1:
-    #             i += 1
-    #         # mark segment in dilated_mask
-    #         dilated_mask[start:i] = True
-    #     else:
-    #         dilated_mask[i] = False
-    #         i += 1
-
-    # print('\tdialated volume')
-
-    # # dilated_mask should be an expansion of mask. It should be True for all segments of positive values of diff 
-    # # that contain at least one sample where diff > threshold.
-    # i = 0
-    # while i < len(confirmed_mask):
-    #     if confirmed_mask[i] and confirmed_diff[i] > 1:
-    #         # find start of positive segment
-    #         start = i
-    #         while i < len(confirmed_mask) and confirmed_diff[i] > 1:
-    #             i += 1
-    #         # mark segment in dilated_mask
-    #         confirmed_dilated_mask[start:i] = True
-    #     else:
-    #         confirmed_dilated_mask[i] = False
-    #         i += 1
-
-    # print('\tdialated pitch+volume')
-
-    # # dilated_mask should be an expansion of mask. It should be True for all segments of positive values of diff 
-    # # that contain at least one sample where diff > threshold.
-    # i = 0
-    # while i < len(long_mask1):
-    #     print(f"\ti={i} {len(long_mask1)}", end='\r')
-    #     if long_mask1[i] and long_confirmed_diff[i] > 1:
-    #         # find start of positive segment
-    #         start = i
-    #         while i < len(long_mask1) and long_confirmed_diff[i] > 1:
-    #             i += 1
-    #             print(f"\ti={i} {len(long_mask1)}", end='\r')
-    #         # mark segment in dilated_mask
-    #         long_confirmed_dilated_mask[start:i] = True
-    #     else:
-    #         long_confirmed_dilated_mask[i] = False
-    #         i += 1
-
-    # print('\tdialated long_vol+volume')
-
 
     if False: 
-        print('plotting')
-
-        # Create a time array for plotting
-        time_song = np.arange(song_percentile_pitch.shape[0]) / sr
-        time_reaction = np.arange(reaction_percentile_pitch.shape[0]) / sr
-
-        # Plot the percentile pitches
-        plt.figure(figsize=(12, 10))  # Increase figure size for 6 subplots
-
-        plots = 6 
-        # # Plot the absolute difference for volume
-        # plt.subplot(plots, 2, 1)
-        # plt.plot(time_reaction, diff1, label='Absolute Difference, volume')
-        # plt.legend()
-        # plt.xlabel('Time (s)')
-        # plt.ylabel('Absolute Difference')
-        # plt.title('Absolute Difference in Percentile Volume')
-
-        # # Plot the volume mask
-        # plt.subplot(plots, 2, 2)
-        # plt.plot(time_reaction, mask1, label='Dilated Mask, volume')
-        # plt.legend()
-        # plt.xlabel('Time (s)')
-        # plt.ylabel('Mask Values')
-        # plt.title('Masks of Commentator Segments (Volume)')
-
-        # # Plot the absolute difference for pitch
-        # plt.subplot(plots, 2, 3)
-        # plt.plot(time_reaction, diff2, label='Absolute Difference, pitch')
-        # plt.legend()
-        # plt.ylabel('Absolute Difference')
-
-        # # Plot the pitch mask
-        # plt.subplot(plots, 2, 4)
-        # plt.plot(time_reaction, mask2, label='Dilated Mask, pitch')
-        # plt.legend()
-        # plt.ylabel('Mask Values')
-
-        # Plot the absolute difference for joint
-        plt.subplot(plots, 2, 1)
-        plt.plot(time_reaction, long_diff12, label='Absolute Difference, long vol 12')
-        plt.legend()
-        plt.ylabel('Absolute Difference')
-
-        # Plot the joint mask
-        plt.subplot(plots, 2, 2)
-        plt.plot(time_reaction, long_mask12, label='Dilated Mask, long vol 12')
-        plt.legend()
-        plt.ylabel('Mask Values')
-
-        # Plot the absolute difference for joint
-        plt.subplot(plots, 2, 3)
-        plt.plot(time_reaction, long_diff1, label='Absolute Difference, long vol 1')
-        plt.legend()
-        plt.ylabel('Absolute Difference')
-
-        # Plot the joint mask
-        plt.subplot(plots, 2, 4)
-        plt.plot(time_reaction, long_mask1, label='Dilated Mask, long vol 1')
-        plt.legend()
-        plt.ylabel('Mask Values')
-
-        # Plot the absolute difference for joint
-        plt.subplot(plots, 2, 5)
-        plt.plot(time_reaction, long_diff2, label='Absolute Difference, long vol 2')
-        plt.legend()
-        plt.ylabel('Absolute Difference')
-
-        # Plot the joint mask
-        plt.subplot(plots, 2, 6)
-        plt.plot(time_reaction, long_mask2, label='Dilated Mask, long vol 2')
-        plt.legend()
-        plt.ylabel('Mask Values')
-
-        # # # Plot the absolute difference for joint
-        # # plt.subplot(plots, 2, 5)
-        # # plt.plot(time_reaction, combined_diff, label='Absolute Difference, joint')
-        # # plt.legend()
-        # # plt.ylabel('Absolute Difference')
-
-        # # # Plot the joint mask
-        # # plt.subplot(plots, 2, 6)
-        # # plt.plot(time_reaction, dilated_mask, label='Dilated Mask, joint')
-        # # plt.legend()
-        # # plt.ylabel('Mask Values')
-
-
-        # # Plot the absolute difference for joint
-        # plt.subplot(plots, 2, 7)
-        # plt.plot(time_reaction, confirmed_diff, label='Absolute Difference, confirmed')
-        # plt.legend()
-        # plt.ylabel('Absolute Difference')
-
-        # # Plot the joint mask
-        # plt.subplot(plots, 2, 8)
-        # plt.plot(time_reaction, confirmed_dilated_mask, label='Dilated Mask, confirmed')
-        # plt.legend()
-        # plt.ylabel('Mask Values')
-
-
-        # # Plot the absolute difference for joint
-        # plt.subplot(plots, 2, 9)
-        # plt.plot(time_reaction, long_confirmed_diff, label='Absolute Difference, long confirmed')
-        # plt.legend()
-        # plt.ylabel('Absolute Difference')
-
-        # # Plot the joint mask
-        # plt.subplot(plots, 2, 10)
-        # plt.plot(time_reaction, long_confirmed_dilated_mask, label='Dilated Mask, long confirmed')
-        # plt.legend()
-        # plt.ylabel('Mask Values')
+        plot_masks(song_percentile_loudness, reaction_percentile_loudness, long_diff1, long_mask1)
 
 
 
-        plt.tight_layout()
-        plt.show()
-
-
-    # mask = confirmed_dilated_mask
     mask = long_mask1
 
     segments = process_mask(mask, min_segment_length / 1000)
 
-    padded_segments = pad_segments(segments, len(reaction_data), pad_beginning=0.5, pad_ending=0.1)
+    confirmed_segments = confirm_via_correlation(reaction, segments)
+
+    padded_segments = pad_segments(confirmed_segments, len(reaction_data), pad_beginning=0.75, pad_ending=0.25)
     merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
 
     suppressed_reaction = apply_segments(reaction_data, merged_segments)
 
 
     if extra_reaction is not None:
-
         suppressed_reaction = np.concatenate((suppressed_reaction, extra_reaction))
-
-    # if mono:
-    #     # Squeeze the 2D arrays to 1D
-    #     suppressed_reaction = np.squeeze(suppressed_reaction)
-
     
     sf.write(output_path, suppressed_reaction, sr)
-
-    # suppressed_reaction = post_process_audio(suppressed_reaction, original_sr_reaction)
-    # # Now you can save suppressed_reaction into a file
-    # output_path = os.path.splitext(reaction_path)[0] + "_commentary.wav"
-    # sf.write(output_path, suppressed_reaction, original_sr_reaction)  # Transpose the output because soundfile expects shape (n_samples, n_channels)
 
     if profile_isolator:
         profiler.disable()
@@ -562,8 +411,49 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path, original_
 
 
 
+from scipy.signal import correlate
 
-def process_reactor_audio(reaction, extended_by=0):
+def confirm_via_correlation(reaction, segments, threshold=.9):
+    from aligner.scoring_and_similarity import get_segment_mfcc_cosine_similarity_score
+    from aligner.find_segment_start import correct_peak_index
+
+    aligned_reaction_audio = reaction.get('aligned_reaction_data')
+    aligned_reaction_mfcc = librosa.feature.mfcc(y=aligned_reaction_audio, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
+
+    song_audio = conf.get('song_audio_data')
+
+    confirmed_segments = []
+    for segment in segments:
+        reaction_start, reaction_end = segment
+
+        song_search_start = max(0, reaction_start - 5 * sr)
+        song_search_end = min(len(song_audio) - 1, reaction_start + 5 * sr)
+
+        song_segment = song_audio[song_search_start:song_search_end]
+        reaction_segment = aligned_reaction_audio[reaction_start:reaction_end]
+
+        correlation = correlate(song_segment, reaction_segment)
+        song_start = song_search_start + correct_peak_index(np.argmax(correlation), len(reaction_segment))
+        song_end = song_start + len(reaction_segment)
+
+        full_segment = (reaction_start, reaction_end, song_start, song_end)
+        similarity = get_segment_mfcc_cosine_similarity_score(reaction, full_segment, reaction_audio_mfcc=aligned_reaction_mfcc)
+
+        if similarity > threshold:
+            print(f'REMOVE! Candidate backchannel {reaction_start/sr:.1f}, {reaction_end/sr:.1f}<==>{song_start/sr:.1f}, {song_end/sr:.1f} failed confirmation. Cosine similarity={similarity}')
+        else: 
+            print(f'KEEP! Candidate backchannel {reaction_start/sr:.1f}, {reaction_end/sr:.1f}<==>{song_start/sr:.1f}, {song_end/sr:.1f} passed confirmation. Cosine similarity={similarity}')
+
+            confirmed_segments.append(segment)
+
+    return confirmed_segments
+
+
+
+def isolate_reactor_backchannel(reaction, extended_by=0):
+
+    conf.get('load_base_video')()
+    
     output_dir = conf.get('temp_directory')
     reaction_audio = reaction.get('aligned_audio_path')
     base_audio = conf.get('base_audio_path')
@@ -577,21 +467,28 @@ def process_reactor_audio(reaction, extended_by=0):
     reaction_vocals_path = os.path.join(react_separation_path, vocal_path_filename)
     song_vocals_path =     os.path.join(song_separation_path, vocal_path_filename)
 
-    backchannel_filename = f"{vocal_path_filename.split('.')[0]}_isolated_commentary.wav"
-    backchannel_path = os.path.join(react_separation_path, backchannel_filename)
+    backchannel_filename = f"{reaction.get('channel')}_isolated_backchannel.wav"
+    backchannel_path = os.path.join(output_dir, backchannel_filename)
+
+    song_length = len(conf.get('song_audio_data')) / sr + 1
 
     if not os.path.exists( reaction_vocals_path ):
-        separate_vocals(react_separation_path, reaction_audio, vocal_path_filename)
+        separate_vocals(react_separation_path, reaction_audio, vocal_path_filename, duration=song_length)
 
     if not os.path.exists( song_vocals_path ):
-        separate_vocals(song_separation_path, base_audio, vocal_path_filename)
+        separate_vocals(song_separation_path, base_audio, vocal_path_filename, duration=song_length)
 
     if not os.path.exists(backchannel_path):
 
         print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
-        mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path, reaction_audio)
+        mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)
 
     return backchannel_path
+
+
+
+
+
 
 
 
