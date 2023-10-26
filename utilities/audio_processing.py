@@ -4,7 +4,7 @@ import numpy as np
 from utilities import conversion_audio_sample_rate as sr
 import librosa
 import math
-
+import os
 
 def find_best_alignment(song_data, reaction_data, ref_tuple, search_window):
     song_sr, reaction_sr = ref_tuple
@@ -128,8 +128,9 @@ def best_matching_segment(song_segment, reaction_audio, song_mfcc_segment, react
 
 
 import statistics
-def normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=10):
+def normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=10, shot_in_the_dark=False, good_match_threshold=.9):
     from utilities import conf
+
 
     print('\tNormalizing audio')
     print('\t\tGetting highest amplitude segments')
@@ -140,8 +141,6 @@ def normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, re
     window_length = int(segment_length * sr)
     
     best_matching_indices = []
-
-    good_match_threshold = .9
 
     for idx,index in enumerate(top_song_indices):
         song_segment = song_audio[index:index+window_length]
@@ -181,21 +180,29 @@ def normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, re
             return sum(arr) / len(arr)
 
         normalization_factor = avg([avg(normalization_factors), statistics.median(normalization_factors)]) # midmean
-        normalization_factor = max(.9, min(3, normalization_factor))
+        normalization_factor = max(.9, min(4, normalization_factor))
 
         print(f"\t\tDone! normalization_factor={normalization_factor}", normalization_factors)
-        normalized_reaction_data = reaction_audio * normalization_factor
 
-        return normalized_reaction_data
+        return normalization_factor
 
 
     else: 
         if top_n < 100: 
             next_top_n = top_n * 5
-            return normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=next_top_n)
-        else: 
-            print("Failed to find a normalization point")
-            return reaction_audio
+            return normalize_reaction_audio(reaction, song_audio, reaction_audio, song_mfcc, reaction_mfcc, segment_length=1, top_n=next_top_n, shot_in_the_dark=shot_in_the_dark, good_match_threshold=good_match_threshold)
+        
+        elif not shot_in_the_dark: 
+            normalized_reaction_data = reaction_audio * 5 # Almost always failure to find an alignment point is when the reaction audio is way low.
+                                                          # We'll try to give it a boost and then try again.
+
+            normalized_reaction_mfcc = librosa.feature.mfcc(y=normalized_reaction_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
+
+            return normalize_reaction_audio(reaction, song_audio, normalized_reaction_data, song_mfcc, normalized_reaction_mfcc, segment_length=1, top_n=10, shot_in_the_dark=True, good_match_threshold=.85)
+
+        else:
+            print("Failed to find a normalization point", shot_in_the_dark)
+            return 1
 
 
     

@@ -1,10 +1,13 @@
 import glob, os
 import librosa
 import soundfile as sf
+import ffmpeg
+import numpy as np
 
 from utilities.utilities import conversion_audio_sample_rate as sr
 from utilities.utilities import extract_audio
 from utilities.audio_processing import normalize_audio_manually, pitch_contour, spectral_flux, root_mean_square_energy, continuous_wavelet_transform, convert_to_mono, normalize_reaction_audio
+from utilities import conf, save_object_to_file, read_object_from_file
 
 from utilities import print_profiling
 
@@ -96,8 +99,6 @@ def make_conf(song_def, options, temp_directory):
 
     reactions = {}
 
-    print(reaction_videos)
-
     multiple_reactors = song_def.get('multiple_reactors', None) 
     priority = song_def.get('priority', {}) 
     swap_grid_positions = song_def.get('swap_grid_positions', None)
@@ -108,6 +109,7 @@ def make_conf(song_def, options, temp_directory):
     unreliable_bounds = song_def.get('unreliable_bounds', None)
     chunk_size = song_def.get('chunk_size', {})
     manual_normalization_point = song_def.get('manual_normalization_point', None)
+    insert_filler = song_def.get('insert_filler', None)
 
     for reaction_video_path in reaction_videos:
       print_profiling()
@@ -161,6 +163,9 @@ def make_conf(song_def, options, temp_directory):
         if manual_normalization_point is not None and manual_normalization_point.get(channel, False): 
           reactions[channel]['manual_normalization_point'] = manual_normalization_point.get(channel)
 
+        if insert_filler is not None and insert_filler.get(channel, False): 
+          reactions[channel]['insert_filler'] = insert_filler.get(channel)
+
         if featured: 
           default_priority = 75
         else:
@@ -192,17 +197,39 @@ def make_conf(song_def, options, temp_directory):
           else: 
               song_mfcc = librosa.feature.mfcc(y=conf.get('song_audio_data'), sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
               reaction_mfcc = librosa.feature.mfcc(y=reaction_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
-              normalized_reaction_audio_data = normalize_reaction_audio(reaction_conf, conf.get('song_audio_data'), reaction_audio_data, song_mfcc, reaction_mfcc)
-              if normalized_reaction_audio_data is not None: 
+
+              normalization_dir = os.path.join(conf.get('song_directory'), '_normalization')
+              if not os.path.exists(normalization_dir):
+                  os.makedirs(normalization_dir)
+              normalization_file = os.path.join(normalization_dir, f"{reaction_conf.get('channel')}-normalization.pckl")
+
+              if os.path.exists(normalization_file):
+                  normalization_factor = read_object_from_file(normalization_file)
+              else: 
+                  normalization_factor = normalize_reaction_audio(reaction_conf, conf.get('song_audio_data'), reaction_audio_data, song_mfcc, reaction_mfcc)
+                  save_object_to_file(normalization_file, normalization_factor)
+
+              if normalization_factor != 1: 
+                normalized_reaction_audio_data = reaction_audio_data * normalization_factor
 
                 # Writing the normalized_reaction_audio_data to a file
                 root, ext = os.path.splitext(reaction_audio_path)
                 normalized_audio_path = f"{root}_normalized{ext}"
-                sf.write(normalized_audio_path, normalized_reaction_audio_data, sr)
+                if not os.path.exists(normalized_audio_path):
+                  sf.write(normalized_audio_path, normalized_reaction_audio_data, sr)
 
                 reaction_conf["reaction_audio_data"] = normalized_reaction_audio_data
               else: 
                 reaction_conf["reaction_audio_data"] = reaction_audio_data
+
+          if reaction_conf.get('insert_filler', False):
+              reaction_audio_data = reaction_conf["reaction_audio_data"]
+              insert_at, amount = reaction_conf.get('insert_filler')
+              insert_at = int(insert_at * sr)
+              amount = int(amount * sr)
+              silence = [0] * amount
+              print(f"INSERTING {len(silence) / sr} at {insert_at / sr}")
+              reaction_audio_data = np.insert(reaction_audio_data, insert_at, np.zeros(amount))
 
           reaction_conf['reaction_audio_path'] = reaction_audio_path
 
@@ -236,12 +263,12 @@ def make_conf(song_def, options, temp_directory):
 
   conf.update({
     'load_base_video': load_base_video,
+    'load_reactions':  load_reactions,
     'load_reaction': load_reaction,
     'load_aligned_reaction_data': load_aligned_reaction_data,
     'remove_reaction': remove_reaction
   })
 
-  load_reactions()
 
 
   return False
@@ -374,11 +401,30 @@ def prepare_reactions():
     print("Processing reactions in: ", reaction_dir)
 
     # Get all reaction video files
+    mkv_videos = glob.glob(os.path.join(reaction_dir, "*.mkv"))
+
+    # Convert all mkv videos to mp4 in the same directory and then delete the mkv videos
+
+    for mkv_video in mkv_videos:
+        print(f"HANDLING MKV {mkv_video}")
+        # Strip existing video extension from filename
+        base_name = os.path.basename(mkv_video)
+        file_name_without_ext = os.path.splitext(base_name)[0]
+        # If the stripped filename still has an extension, remove that too
+        if any(ext in file_name_without_ext for ext in ['.webm', '.mp4', '.mkv']):
+            file_name_without_ext = os.path.splitext(file_name_without_ext)[0]
+
+        output_file = os.path.join(reaction_dir, file_name_without_ext + '.mp4')
+
+        print(f'OUTPUT FILE {output_file}')
+        ffmpeg.input(mkv_video).output(output_file).run()
+        os.remove(mkv_video)
+
     webm_videos = glob.glob(os.path.join(reaction_dir, "*.webm"))
     mp4_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
-    mkv_videos = glob.glob(os.path.join(reaction_dir, "*.mkv"))    
     react_videos = webm_videos + mp4_videos + mkv_videos    
 
+    return react_videos
 
     # # Process each reaction video
     # for react_video in react_videos:
@@ -408,7 +454,4 @@ def prepare_reactions():
     #             os.remove(react_video)
     # react_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
 
-
-
-    return react_videos
 
