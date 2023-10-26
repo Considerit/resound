@@ -73,9 +73,11 @@ def should_prune_path(reaction, current_path, current_start, reaction_start):
 def is_path_quality_poor(reaction, path):
     global prune_types
 
+
+
     spacing_min_length = 2.5 * sr
     spacing_max_separation = 15 * sr
-    path_without_fillers = [p for p in path if not p[-1]]
+    path_without_fillers = [p for p in path if not p[4]]
     if len(path_without_fillers) >= 3:
         first = path_without_fillers[-3]
         middle = path_without_fillers[-2]
@@ -99,8 +101,12 @@ def is_path_quality_poor(reaction, path):
     filler_duration = 0
     duration = 0
 
-    for i, segment in enumerate(path): 
-        (reaction_start, reaction_end, current_start, current_end, filler) = segment
+    for i, segment in enumerate(path):
+        if len(segment) == 5:   
+            (reaction_start, reaction_end, current_start, current_end, filler) = segment
+        else: 
+            (reaction_start, reaction_end, current_start, current_end, filler, strokes) = segment
+
         duration += current_end - current_start
         if filler:
             filler_duration += current_end - current_start

@@ -98,7 +98,11 @@ def path_score(path, reaction, end=None, start=0):
 
     segment_penalty = 1
     for segment in path:
-        reaction_start, reaction_end, current_start, current_end, is_filler = segment
+        if len(segment) == 5:
+            reaction_start, reaction_end, current_start, current_end, is_filler = segment
+        else: 
+            reaction_start, reaction_end, current_start, current_end, is_filler, strokes = segment
+
         if reaction_start < 0:
             reaction_end += -1 * reaction_start
             reaction_start = 0
@@ -144,9 +148,8 @@ def path_score(path, reaction, end=None, start=0):
     # mfcc_alignment = path_score_by_mfcc_mse_similarity(path, reaction)
     mfcc_alignment = 0
     cosine_mfcc_alignment = path_score_by_mfcc_cosine_similarity(path, reaction)
-    # cosine_raw_alignment = path_score_by_raw_cosine_similarity(path, reaction)
 
-    alignment = 100 * cosine_mfcc_alignment # * mfcc_alignment # * cosine_raw_alignment
+    alignment = 100 * cosine_mfcc_alignment
 
 
 
@@ -171,7 +174,11 @@ def path_score_by_mfcc_cosine_similarity(path, reaction):
     min_sequence_score = 1
 
     for sequence in path:
-        if len(sequence) < 5 or not sequence[-1]: 
+
+
+
+
+        if len(sequence) == 4 or (len(sequence) == 5 and not sequence[-1]) or (len(sequence) == 6 and not sequence[-2]): 
             mfcc_score = get_segment_mfcc_cosine_similarity_score(reaction, sequence)
             duration_factor = (sequence[1] - sequence[0]) / total_duration
             mfcc_sequence_sum_score    += mfcc_score * duration_factor
@@ -290,22 +297,19 @@ def find_best_path(reaction, candidate_paths):
 
     print(f"\tDone scoring, now processing paths") 
 
-
+    normalized_scores = []
     for path, scores in paths_with_scores:
         total_score = scores[0] / best_score
         completion_score = scores[1] / best_early_completion_score
         similarity_score = scores[2] / best_similarity
         fill_score = scores[3] / best_duration
 
-        scores[0] = total_score
-        scores[1] = completion_score
-        scores[2] = similarity_score
-        scores[3] = fill_score
+        normalized_scores.append( (path, (total_score,completion_score,similarity_score,fill_score)    ))
 
-    paths_with_scores.sort(key=lambda x: x[1][0], reverse=True)
+    normalized_scores.sort(key=lambda x: x[1][0], reverse=True)
 
     print("Paths by score:")
-    for idx, (path,scores) in enumerate(paths_with_scores[:1]):
+    for idx, (path,scores) in enumerate(normalized_scores[:1]):
             
         if gt:
             gtpp = ground_truth_overlap(path, gt)
@@ -323,7 +327,7 @@ def find_best_path(reaction, candidate_paths):
 
 
 
-    return paths_with_scores[0][0]
+    return normalized_scores[0][0]
 
 
 
@@ -503,7 +507,7 @@ def create_reaction_mfcc_from_path(path, reaction):
 # Printing path
 
 def print_path(path, reaction, ignore_score=False):
-    
+
     gt = reaction.get('ground_truth')
     print("\t\t****************")
     if gt: 
@@ -515,8 +519,12 @@ def print_path(path, reaction, ignore_score=False):
     x.field_names = ["\t\t", "", "Base", "Reaction", "mfcc mse", "mfcc cosine", "raw cosine", "ground truth"]
 
     for sequence in path:
-        reaction_start, reaction_end, current_start, current_end, is_filler = sequence
 
+        if len(sequence) == 5:
+            reaction_start, reaction_end, current_start, current_end, is_filler = sequence
+        else: 
+            reaction_start, reaction_end, current_start, current_end, is_filler, strokes = sequence
+            
         gt_pr = "-"
         mfcc_mse_score = mfcc_cosine_score = raw_cosine_score = 0
 
@@ -587,8 +595,11 @@ def get_segment_id(segment):
     if len(segment) == 4:
         reaction_start, reaction_end, current_start, current_end = segment
         is_filler = False
-    else:
+    elif len(segment) == 5:
         reaction_start, reaction_end, current_start, current_end, is_filler = segment
+    elif len(segment) == 6:
+        reaction_start, reaction_end, current_start, current_end, is_filler, strokes = segment
+
     return f"{reaction_start} {reaction_end} {current_start} {current_end} {is_filler}"
 
 def get_segment_mfcc_mse_score(reaction, segment):
@@ -628,8 +639,10 @@ def get_segment_mfcc_cosine_similarity_score(reaction, segment, reaction_audio_m
     if len(segment) == 4:
         reaction_start, reaction_end, current_start, current_end = segment
         is_filler = False
-    else:
+    elif len(segment) == 5:
         reaction_start, reaction_end, current_start, current_end, is_filler = segment
+    elif len(segment) == 6: 
+        reaction_start, reaction_end, current_start, current_end, is_filler, strokes = segment
 
     if is_filler:
       return 0
@@ -655,7 +668,10 @@ def get_segment_mfcc_cosine_similarity_score(reaction, segment, reaction_audio_m
     return segment_mfcc_cosine_scores[key]
 
 def get_segment_raw_cosine_similarity_score(reaction, segment):
-    reaction_start, reaction_end, current_start, current_end, is_filler = segment
+    if len(segment) == 5:
+        reaction_start, reaction_end, current_start, current_end, is_filler = segment
+    else: 
+        reaction_start, reaction_end, current_start, current_end, is_filler, strokes = segment
 
     if is_filler:
       return 0

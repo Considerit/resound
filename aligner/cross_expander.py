@@ -140,7 +140,12 @@ def compress_segments(match_segments):
     segment_groups = []
     current_group = []
     current_filler = match_segments[0][4]
-    for current_start, current_end, current_base_start, current_base_end, filler in match_segments:
+    for segment in match_segments:
+        if len(segment) == 5:
+            current_start, current_end, current_base_start, current_base_end, filler = segment
+        else: 
+            current_start, current_end, current_base_start, current_base_end, filler, strokes = segment
+            
         if filler != current_filler:
             if len(current_group) > 0:
                 segment_groups.append(current_group)
