@@ -143,7 +143,7 @@ def search_for_song(artist, song, search):
 
 
 
-reactors_to_include=["Chris Liepe", "TrevReacts", 'Neurogal MD', 'Duane Reacts', 'Doug Helvering', 'DuaneTV', 'SheaWhatNow', 'Kso Big Dipper', 'Lee Reacts', 'redheadedneighbor', 'Black Pegasus', 'Knox Hill', 'Jamel_AKA_Jamal', 'ThatSingerReactions', "That\u2019s Not Acting Either", 'Dicodec', 'BrittReacts', "UNCLE MOMO", "RAP CATALOG by Anthony Ray", "Anthony Ray Reacts", "Kyker2Funny", "Ian Taylor Reacts", "Joe E Sparks", "Cliff Beats", "Rosalie Elliott", 'Ellierose Reacts', 'MrLboyd Reacts']
+reactors_to_include=["Peter Barber", "Chris Liepe", "TrevReacts", 'Neurogal MD', 'Duane Reacts', 'Doug Helvering', 'DuaneTV', 'SheaWhatNow', 'Kso Big Dipper', 'Lee Reacts', 'redheadedneighbor', 'Black Pegasus', 'Knox Hill', 'Jamel_AKA_Jamal', 'ThatSingerReactions', "That\u2019s Not Acting Either", 'Dicodec', 'BrittReacts', "UNCLE MOMO", "RAP CATALOG by Anthony Ray", "Anthony Ray Reacts", "Kyker2Funny", "Ian Taylor Reacts", "Joe E Sparks", "Cliff Beats", "Rosalie Elliott", 'Ellierose Reacts', 'MrLboyd Reacts']
 def create_manifest(artist, song_title, manifest_file, search, test = None):
     global reactors_to_include
     reactors = {}
@@ -248,20 +248,14 @@ def download_and_parse_reactions(artist, song, search, force=False):
        # Create a new directory because it does not exist
        os.makedirs(full_reactions_path)
 
-    reaction_inventory = {}
-    for _, reaction in song_data["reactions"].items():
-        if reaction.get("download"):    
-            key = reaction['reactor']
-            if key in reaction_inventory:
-                key = reaction['reactor'] + '_' + reaction["id"] # handle multiple reactions for a single channel
-            reaction_inventory[key] = reaction
+    reaction_inventory = get_selected_reactions(song_data)
 
     for channel, reaction in reaction_inventory.items():
         v_id = reaction["id"]
         output = os.path.join(full_reactions_path, channel + '.webm')
-        extracted_output = os.path.splitext(output)[0] + '.mp4'
+        extracted_output = os.path.join(full_reactions_path, channel + '.mp4')
 
-        if not os.path.exists(output) and not os.path.exists(extracted_output) and not os.path.exists(os.path.join(full_reactions_path, 'tofix', channel + '.mp4')):
+        if not os.path.exists(output) and not os.path.exists(extracted_output):
             cmd = f"yt-dlp -o \"{output}\" https://www.youtube.com/watch\?v\={v_id}\;"
             # print(cmd)
 
@@ -271,5 +265,28 @@ def download_and_parse_reactions(artist, song, search, force=False):
                 print(f"Failed to download {output} {cmd}")
 
 
+def get_selected_reactions(song_data):
+    reaction_inventory = {}
+    for _, reaction in song_data["reactions"].items():
+        if reaction.get("download"):    
+            key = reaction['reactor']
+            if key in reaction_inventory:
+                key = reaction['reactor'] + '_' + reaction["id"] # handle multiple reactions for a single channel
+            reaction_inventory[key] = reaction
+    return reaction_inventory
 
+
+def generate_description_text(artist, song):
+    manifest_file = get_manifest_path(artist, song)
+    song_data = json.load(open(manifest_file))
+
+    reactions = get_selected_reactions(song_data)
+
+    for channel, reaction in reactions.items():
+        print(f"\t{channel}: https://youtube.com/watch?v={reaction.get('id')}")
+
+
+if __name__ == '__main__':
+
+    generate_description_text("Ren", "Fire")
 
