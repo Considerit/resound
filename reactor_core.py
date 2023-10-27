@@ -94,6 +94,51 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
 
 
 
+current_locks = {}
+
+def request_lock(lock_str):
+    full_output_dir = conf.get('temp_directory')
+    lock_file = os.path.join(full_output_dir, f'locked-{lock_str}')
+    if os.path.exists( lock_file  ):
+      return False
+
+    if lock_str == 'compilation':
+        if len(other_locks()) > 0:
+            return False
+
+    global current_locks
+    lock = open(lock_file, 'w')
+    lock.write(f"yo")
+    lock.close()
+    current_locks[lock_str] = True
+
+    return True
+
+def free_lock(lock_str): 
+    global current_locks
+    full_output_dir = conf.get('temp_directory')
+    lock_file = os.path.join(full_output_dir, f'locked-{lock_str}')
+    if os.path.exists( lock_file  ):
+        os.remove(lock_file)
+    del current_locks[lock_str]
+
+def free_all_locks():
+    global current_locks
+    locks = current_locks.keys()
+    for lock in locks:
+        free_lock(lock)
+
+def other_locks():
+    global current_locks
+    full_output_dir = conf.get('temp_directory')
+    # Use glob to get all files that match the pattern "locked-*"
+    lock_files = glob.glob(os.path.join(full_output_dir, "locked-*"))
+    
+    # Strip off the "locked-" prefix and directory structure for each file
+    stripped_files = [os.path.basename(f)[7:] for f in lock_files]
+
+    return [lock for lock in stripped_files if lock not in current_locks ]
+
 from moviepy.editor import VideoFileClip
 
 
@@ -103,11 +148,12 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
     failed_reactions = []
 
+    
 
     try:
 
 
-        locked = make_conf(song_def, options, output_dir)
+        make_conf(song_def, options, output_dir)
 
 
 
@@ -127,13 +173,6 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
         conf['first_n_samples'] = first_n_samples
 
 
-
-
-        if locked:
-            print(f"...Skipping {song_def['song']} because another process is already working on this video")
-            return []
-
-
         temp_directory = conf.get("temp_directory")
         song_directory = conf.get('song_directory')
 
@@ -143,29 +182,33 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
         compilation_exists = os.path.exists(compilation_path)
 
 
-        lock_file = os.path.join(temp_directory, 'locked')
-        lock = open(lock_file, 'w')
-        lock.write(f"yo")
-        lock.close()
+
+        if request_lock('downloading'):
+
+            print("Processing directory", song_directory, "Outputting to", output_dir)
+
+            if not compilation_exists and (conf.get('download_and_parse', False) or conf.get('refresh_manifest', False)):
+                download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'], force=conf.get('refresh_manifest', False))
+        else:
+            print(f"...Skipping {song_def['song']} because another process is already working on this video")
+            return []
+
+        free_lock('downloading')
 
 
-        print("Processing directory", song_directory, "Outputting to", output_dir)
-
-        if not compilation_exists and (conf.get('download_and_parse', False) or conf.get('refresh_manifest', False)):
-            download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'], force=conf.get('refresh_manifest', False))
-
+        conf.get('load_reactions')()
+        
         if conf.get('only_manifest', False):
-            if os.path.exists(lock_file):
-                os.remove(lock_file)
-
             return []
 
 
         extend_by = 12
-        for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+        for i, (channel, reaction) in enumerate(conf.get('reactions').items()):
+            if not request_lock(channel):
+                continue
 
 
-            # if reaction.get('channel') != "Duane Reacts" and reaction.get('channel') != "Kyker2Funny":
+            # if reaction.get('channel') != "IamKing":
             #     continue
 
 
@@ -190,32 +233,26 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             log_progress(progress)
             print_progress(progress)
 
-            unload_reaction(name)
+            unload_reaction(channel)
+            free_lock(channel)
 
-
-        if not compilation_exists and conf['create_compilation']:
+        
+        compilation_exists = os.path.exists(compilation_path)
+        if not compilation_exists and conf['create_compilation'] and request_lock('compilation'):
             compose_reactor_compilation(extend_by=extend_by)
     
 
     except KeyboardInterrupt as e:
-        if os.path.exists(lock_file):
-            os.remove(lock_file)
-        else:
-            print("Could not find lockfile to clean up")
+        free_all_locks()
         raise(e)
 
     except Exception as e:
-        if os.path.exists(lock_file):
-            os.remove(lock_file)
-        else:
-            print("Could not find lockfile to clean up")
-
+        free_all_locks()
         traceback.print_exc()
         print(e)
         
 
-    if os.path.exists(lock_file):
-        os.remove(lock_file)
+    free_all_locks()
     return failed_reactions
 
 
@@ -280,6 +317,7 @@ def print_progress(progress):
 
     for song_key, alignments in progress.items():
         for channel, reaction in alignments.items():
+            print(reaction.get('best_path_score'))
             if reaction.get('best_path'):
                 x.add_row([song_key, channel, f"{reaction.get('alignment_duration'):.1f}", f"{reaction.get('best_path_score')[0]:.3f}", reaction.get('target_score', None) or '-', reaction.get('ground_truth_overlap'), f"{reaction.get('best_local_ground_truth')}%" , f"{reaction.get('best_observed_ground_truth')}%"])
             else:
@@ -296,7 +334,7 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = 'centered'
+    output_dir = 'micro_aligned'
 
     for song in finished:
         clean_up(song)
@@ -318,10 +356,10 @@ if __name__ == '__main__':
         "create_alignment": True,
         "save_alignment_metadata": True,
         "output_alignment_video": True,
-        "isolate_commentary": True,
-        "create_reactor_view": True,
-        "create_compilation": True,
-        "download_and_parse": True,
+        "isolate_commentary": False,
+        "create_reactor_view": False,
+        "create_compilation": False,
+        "download_and_parse": False,
         "alignment_test": False,
         "force_ground_truth_paths": False,
         "draft": True,
