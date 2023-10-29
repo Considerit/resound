@@ -143,9 +143,12 @@ def construct_mask(diff, threshold):
 
 def create_mask_by_relative_perceptual_loudness_difference(song, reaction, threshold, silence_threshold=.001, plot=False, window=1000, std_dev=None):
 
-    print('song percentile loudness')
-    song_percentile_loudness = audio_percentile_loudness(song, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
-    print('reaction percentile loudness')
+    if not 'song_percentile_loudness' in conf:
+        print('calculating song percentile loudness')
+        conf['song_percentile_loudness'] = audio_percentile_loudness(song, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
+    song_percentile_loudness = conf.get('song_percentile_loudness')
+
+    print('calculating reaction percentile loudness')
     reaction_percentile_loudness = audio_percentile_loudness(reaction, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
 
     # Calculate the absolute difference between the percentile loudnesses
@@ -330,6 +333,13 @@ def apply_segments(audio, segments, audibility_threshold=0.01, suppresion_period
             # If there are no inaudible stretches of more than 1 second, just copy the entire segment
             suppressed_audio[start:end] = segment_audio
             print(f"Selected entire segment from {start / sr} to {end / sr}")
+
+
+    muted_sections = reaction.get('mute', False) 
+    if muted_sections:        
+        for start_sample, end_sample in muted_sections:
+            suppressed_audio[start_sample:end_sample] = 0
+
 
     return suppressed_audio
 

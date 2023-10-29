@@ -41,9 +41,6 @@ def make_conf(song_def, options, temp_directory):
      os.makedirs(full_output_dir)
 
 
-  lock_file = os.path.join(full_output_dir, 'locked')
-  if os.path.exists( lock_file  ):
-      return True
 
 
   base_audio_path = os.path.join( song_directory, f"{os.path.basename(song_directory)}.wav")
@@ -110,6 +107,9 @@ def make_conf(song_def, options, temp_directory):
     chunk_size = song_def.get('chunk_size', {})
     manual_normalization_point = song_def.get('manual_normalization_point', None)
     insert_filler = song_def.get('insert_filler', None)
+    manual_bounds = song_def.get('manual_bounds', None)
+
+    mute = song_def.get('mute', None)
 
     for reaction_video_path in reaction_videos:
       print_profiling()
@@ -150,7 +150,7 @@ def make_conf(song_def, options, temp_directory):
         if fake_reactor_position is not None and fake_reactor_position.get(channel, False): 
           reactions[channel]['fake_reactor_position'] = fake_reactor_position.get(channel)
 
-        reactions[channel]['start_reaction_search_at'] = start_reaction_search_at.get(channel, 3) * sr
+        reactions[channel]['start_reaction_search_at'] = int(start_reaction_search_at.get(channel, 3) * sr)
 
         if end_reaction_search_at is not None and end_reaction_search_at.get(channel, False):
           reactions[channel]['end_reaction_search_at'] = end_reaction_search_at.get(channel) * sr
@@ -165,6 +165,13 @@ def make_conf(song_def, options, temp_directory):
 
         if insert_filler is not None and insert_filler.get(channel, False): 
           reactions[channel]['insert_filler'] = insert_filler.get(channel)
+
+        if mute is not None and mute.get(channel, False): 
+          reactions[channel]['mute'] = [(int(s*sr), int(e*sr)) for s,e in mute.get(channel)]
+
+        if manual_bounds is not None and manual_bounds.get(channel, False):
+          reactions[channel]['manual_bounds'] = manual_bounds.get(channel)
+          reactions[channel]['manual_bounds'].sort(key=lambda x: x[0])
 
         if featured: 
           default_priority = 75
@@ -223,13 +230,16 @@ def make_conf(song_def, options, temp_directory):
                 reaction_conf["reaction_audio_data"] = reaction_audio_data
 
           if reaction_conf.get('insert_filler', False):
+              print("REACTION SIZE BEFORE INSERTING FILLER", len(reaction_audio_data)/sr)
+
               reaction_audio_data = reaction_conf["reaction_audio_data"]
               insert_at, amount = reaction_conf.get('insert_filler')
               insert_at = int(insert_at * sr)
               amount = int(amount * sr)
               silence = [0] * amount
               print(f"INSERTING {len(silence) / sr} at {insert_at / sr}")
-              reaction_audio_data = np.insert(reaction_audio_data, insert_at, np.zeros(amount))
+              reaction_conf["reaction_audio_data"] = reaction_audio_data = np.insert(reaction_audio_data, insert_at, np.zeros(amount))
+              print("REACTION SIZE AFTER", len(reaction_audio_data)/sr)
 
           reaction_conf['reaction_audio_path'] = reaction_audio_path
 

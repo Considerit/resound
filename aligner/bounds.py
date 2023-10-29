@@ -1,6 +1,8 @@
 import os
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf, save_object_to_file, read_object_from_file
+import matplotlib.pyplot as plt
+from silence import is_silent
 
 # I have two audio files: a base audio file that contains something like a song and a reaction audio file that contains 
 # someone reacting to that base audio file. It includes the base audio, and more. 
@@ -29,142 +31,174 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     from aligner.path_painter import get_candidate_starts, get_signals
 
 
-    saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-bounds.pckl'
+    saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-intercept_bounds.pckl'
     if os.path.exists(saved_bounds):
         reaction['alignment_bounds'] = read_object_from_file(saved_bounds)
         print_alignment_bounds(reaction)        
         return reaction['alignment_bounds']
 
 
-
-
-
-    # profiler = cProfile.Profile()
-    # profiler.enable()
-
-    base_audio = conf.get('song_audio_data')
-    reaction_audio = reaction.get('reaction_audio_data')
-    hop_length = conf.get('hop_length')
-    reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
-    song_audio_mfcc = conf.get('song_audio_mfcc')
-
-    clip_length = int(2 * sr)
-    base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
-
-    n_timestamps = round(base_length_sec / seconds_per_checkpoint) 
-    
-    timestamps = [i * base_length_sec / (n_timestamps + 1) for i in range(1, n_timestamps + 1)]
-
-    if base_length_sec - timestamps[-1] > 15:
-        timestamps.append(base_length_sec - 10)
-
-
-    timestamps_samples = [int(t * sr) for t in timestamps]
     
     # Initialize the list of bounds
     bounds = []
 
-    print(f"Creating alignment bounds with tolerance {peak_tolerance} every {seconds_per_checkpoint} seconds at {timestamps} ")
     
-    # For each timestamp
-    working_timestamps_samples = []
+    clip_length = int(2 * sr)
+
+    reaction_audio = reaction.get('reaction_audio_data')
+    base_audio = conf.get('song_audio_data')
+
+    if not reaction.get('unreliable_bounds', False):
+
+        hop_length = conf.get('hop_length')
+        reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
+        song_audio_mfcc = conf.get('song_audio_mfcc')
+
+        reaction_span = reaction.get('end_reaction_search_at', len(reaction_audio))
+        start_reaction_search_at = reaction.get('start_reaction_search_at', 0)
 
 
-    reaction_span = reaction.get('end_reaction_search_at', len(reaction_audio))
-    start_reaction_search_at = reaction.get('start_reaction_search_at', 0)
+        base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
 
-    for i,ts in enumerate(timestamps_samples):
-        # Define the segments on either side of the timestamp
-
-        segment_times = [
-          (max(0, ts - clip_length), ts),
-          (max(0, ts - int(clip_length / 2)), min(len(base_audio), ts + int(clip_length / 2) )),
-          (ts, min(len(base_audio), ts + clip_length))
-        ]
-
-        segments = [  (s, e, base_audio[s:e], song_audio_mfcc[:, round(s / hop_length): round(e / hop_length)]) for s,e in segment_times  ]
-
-
-        # for j, segment in enumerate(segments):
-        #     filename = f"segment_{i}_{j}.wav"
-        #     sf.write(filename, segment, sr)
+        n_timestamps = round(base_length_sec / seconds_per_checkpoint) 
         
-        # Initialize the list of max indices for the segments
-        max_indices = []
-        
-        print(f"ts: {ts / sr}")
-        # For each segment
-        for start, end, chunk, chunk_mfcc in segments:
-            # Find the candidate indices for the start of the matching segment in the reaction audio
+        timestamps = [i * base_length_sec / (n_timestamps + 1) for i in range(1, n_timestamps + 1)]
 
-            reaction_start = start + start_reaction_search_at
-
-            signals = get_signals(reaction, start, reaction_start, clip_length)
-
-            candidates = get_candidate_starts(
-                reaction=reaction, 
-                signals=signals, 
-                peak_tolerance=peak_tolerance, 
-                open_start=reaction_start, 
-                closed_start=start, 
-                chunk_size=clip_length,
-                distance=first_n_samples, 
-                upper_bound=reaction_span - (len(base_audio) - start)
-            )
+        if base_length_sec - timestamps[-1] > 15:
+            timestamps.append(base_length_sec - 10)
 
 
-            if candidates is None: 
-                candidates = []
-            elif len(candidates) > 0:
-                print(f"\tCandidates: {[ int((1000 * (c+reaction_start))/sr)/1000 for c in candidates]}  {(max(candidates) + reaction_start) / sr:.1f}")
+        timestamps = [int(t * sr) for t in timestamps]
 
-            for c in candidates:
-                max_indices.append(ts + c + start_reaction_search_at + clip_length * 2)
-        
-        if len(max_indices) == 0:
-            print(f"COULD NOT FIND BOUND FOR {ts / sr}")
-        else: 
-            working_timestamps_samples.append(timestamps_samples[i] - clip_length)
-            bounds.append( max_indices )
+        print(f"Creating alignment bounds with tolerance {peak_tolerance} every {seconds_per_checkpoint} seconds at {timestamps} ")
+
+
+        for i,ts in enumerate(timestamps):
+            # Define the segments on either side of the timestamp
+
+            segment_times = [
+              (max(0, ts - clip_length), ts),
+              (max(0, ts - int(clip_length / 2)), min(len(base_audio), ts + int(clip_length / 2) )),
+              (ts, min(len(base_audio), ts + clip_length))
+            ]
+
+            segments = [  (s, e, base_audio[s:e], song_audio_mfcc[:, round(s / hop_length): round(e / hop_length)]) for s,e in segment_times  ]
+
+
+            # for j, segment in enumerate(segments):
+            #     filename = f"segment_{i}_{j}.wav"
+            #     sf.write(filename, segment, sr)
+            
+            # Initialize the list of max indices for the segments
+            max_indices = []
+            
+            print(f"ts: {ts / sr}")
+
+
+            predominantly_silent = is_silent(segments[0][2], threshold_db=-20) or is_silent(segments[2][2], threshold_db=-20)
+
+            if predominantly_silent:
+                print("\tNOT ADDING BOUND. Too silent.")
+                continue
+
+            # For each segment
+            for base_start, end, chunk, chunk_mfcc in segments:
+                # Find the candidate indices for the start of the matching segment in the reaction audio
+
+                reaction_start = base_start + start_reaction_search_at
+
+                signals = get_signals(reaction, base_start, reaction_start, clip_length)
+
+                candidates = get_candidate_starts(
+                    reaction=reaction, 
+                    signals=signals, 
+                    peak_tolerance=peak_tolerance, 
+                    open_start=reaction_start, 
+                    closed_start=base_start, 
+                    chunk_size=clip_length,
+                    distance=first_n_samples, 
+                    upper_bound=reaction_span - len(base_audio)
+                )
+
+
+                if candidates is None: 
+                    candidates = []
+                elif len(candidates) > 0:
+                    print(f"\tCandidates: {[ int((1000 * (c+reaction_start))/sr)/1000 for c in candidates]}  {(max(candidates) + reaction_start) / sr:.1f}")
+
+                for c in candidates:
+                    candidate_reaction_start = c + reaction_start
+                    intercept = candidate_reaction_start - base_start
+                    max_indices.append(ts + intercept)
+            
+            if len(max_indices) == 0:
+                print(f"COULD NOT FIND BOUND FOR {ts / sr}")
+            else: 
+                bounds.append( [ts, max_indices] )
+    else:
+        print("Skipping auto bounds. Deemed unreliable.")
     
+
+
+
+    # Factor in manually configured bounds    
+    manual_bounds = reaction.get('manual_bounds', False)
+    if manual_bounds:
+        for mbound in manual_bounds:
+            ts, upper = mbound
+            ts = int(ts*sr); upper = int(upper*sr)
+            bounds.append([ts, [upper]])
+            print(f"Inserted upper bound {upper/sr} for {ts/sr}")
+
+    if reaction.get('end_reaction_search_at', False):
+        bounds.append([len(base_audio), [reaction.get('end_reaction_search_at')]])
+
+    bounds.sort(key=lambda x: x[0], reverse=True)
+
+    for b in bounds:
+        b.append(max(b[1]))
+
+
 
     # Now, ensure the integrity of the bounds
-    smoothed_bounds = [max(b) for b in bounds]
-    print("smoothed_bounds", [ b/sr for b in smoothed_bounds  ])
-    print("timestamps_samples", [ t for t in timestamps])
-    for i in range(len(bounds) - 1, -1, -1):  # Start from the last element and go backward
-        
 
-        if i < len(bounds) - 1:
-            previous_bound = smoothed_bounds[i+1] - (working_timestamps_samples[i+1] - working_timestamps_samples[i]) + clip_length * 2 
+    last_intercept = 99999999999999999999999999999999
 
-            # # If the current bound doesn't satisfy the integrity condition
-            # if bounds[i] >= previous_bound:
-            #     # Update the current bound
-            #     bounds[i] = bounds[i+1] - (working_timestamps_samples[i+1] - working_timestamps_samples[i])
+    for i, (base_ts, all_candidates, current_candidate) in enumerate(bounds):
 
-        else: 
-            previous_bound = 99999999999999999999999999999999
+        grace = clip_length
 
+        if i > 0:
+            last_base_ts, _, last_reaction_ts = bounds[i-1]
+            last_intercept = last_reaction_ts - last_base_ts
+            
         # enforce integrity condition
         # find the latest match that happens before the next bound 
-        candidates = [ b for b in bounds[i] if b <= previous_bound ]
+        candidates = [ reaction_ts for reaction_ts in all_candidates if reaction_ts - base_ts <= last_intercept + grace ]
+
         if len(candidates) == 0:
             print ("**********")
-            print(f"Could not find bound with integrity!!!! Trying again with higher tolerance and shifted checkpoints. Happened at {len(bounds) - i}", timestamps_samples[i] / sr)
-            
-            print("adjusted smoothed_bounds", [ b/sr for b in smoothed_bounds  ])
+            print(f"Could not find bound with integrity!!!!")
+            print(f"\tTrying again with higher tolerance and shifted checkpoints.")
+            print(f"\tFor timestamp {base_ts/sr}. Needed value below {(last_intercept+base_ts+grace)/sr}, but had min of {min(all_candidates)/sr} (and max {max(all_candidates)/sr})")            
+            print("************")
+
             return create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=seconds_per_checkpoint+10, peak_tolerance=peak_tolerance * .9)
         else:
-            # print(f"New bound for {timestamps[i]} is {max(candidates)}", candidates, bounds[i])
+            if max(all_candidates) != max(candidates):
+                print(f"New bound for {base_ts/sr} is {max(candidates) / sr}, forced value below {(last_intercept+base_ts + grace)/sr}, cuts off {max(all_candidates)/sr}")
+            else: 
+                print(f"Bound of {max(all_candidates) / sr} maintained for {base_ts/sr}")
             new_bound = max( candidates  )
 
-        smoothed_bounds[i] = new_bound
-
-    alignment_bounds = list(zip(working_timestamps_samples, smoothed_bounds))
+        bounds[i][2] = new_bound
 
 
+    alignment_bounds = []
+    for base_ts, max_indices, reaction_upper_bound in bounds:
+        alignment_bounds.append( (base_ts, reaction_upper_bound - base_ts + grace)  )
 
+    alignment_bounds.sort(key=lambda x: x[1], reverse=False)
 
     # profiler.disable()
     # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
@@ -179,8 +213,8 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
 def print_alignment_bounds(reaction):
     alignment_bounds = reaction['alignment_bounds']
     print(f"The alignment bounds:")
-    for base_ts, last_reaction_match in alignment_bounds:
-        print(f"\t{base_ts / sr}  <=  {last_reaction_match / sr}")
+    for base_ts, intercept in alignment_bounds:
+        print(f"\t{base_ts / sr}  <=  {(base_ts + intercept) / sr}")
 
 
     gt = reaction.get('ground_truth')
@@ -195,14 +229,45 @@ def print_alignment_bounds(reaction):
                 print(f"\tIn bounds: {reaction_start/sr:.1f} for {current_start/sr:.1f}")
             current_start += reaction_end - reaction_start
 
+    if False: 
+        # Unzip the tuples to get separate lists of base_ts and reaction_ts
+        base_ts, intercepts = zip(*alignment_bounds)
+        base_ts = [bs/sr for bs in base_ts]
+        reaction_ts = [(b+i)/sr for b,i in alignment_bounds]
+
+        # Plot the points
+        plt.scatter(base_ts, reaction_ts)
+        
+        # Connect points with lines
+        plt.plot(base_ts, reaction_ts, '-o')  
+
+        # Find the min and max values of base_ts for the width of the chart
+        x_min = min(base_ts)
+
+        # Draw line with slope of 1 through each point
+        for x, c in alignment_bounds:
+            c /= sr  # Calculate the y-intercept
+            plt.plot([x_min, x/sr], [x_min + c, x/sr + c], 'r--', alpha=0.5)  # Plot the line using the y = mx + c equation
+
+        # Set labels and title
+        plt.xlabel("Base Timestamps")
+        plt.ylabel("Reaction Timestamps")
+        plt.title(f"Alignment Bounds Visualization for {reaction.get('channel')}")
+
+        plt.grid(True)
+        plt.show()
 
 
 
 def in_bounds(bound, base_start, reaction_start):
-    return reaction_start <= bound
+    return reaction_start <= bound + base_start
 
-def get_bound(alignment_bounds, base_start, reaction_end): 
-    for base_ts, last_reaction_match in alignment_bounds:
-        if base_start < base_ts:
-            return last_reaction_match
-    return reaction_end
+def get_bound(alignment_bounds, base_start, reaction_end, base_end=None): 
+    if base_end is None:
+        base_end = len(conf.get('song_audio_data'))
+
+    matching_intercepts = [intercept for base_ts,intercept in alignment_bounds if base_start < base_ts]
+    if len(matching_intercepts) > 0:
+        return min(matching_intercepts)
+
+    return reaction_end - base_end 

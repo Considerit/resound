@@ -668,9 +668,12 @@ def get_segment_mfcc_cosine_similarity_score(reaction, segment, reaction_audio_m
     return segment_mfcc_cosine_scores[key]
 
 def get_segment_raw_cosine_similarity_score(reaction, segment):
-    if len(segment) == 5:
+    if len(segment) == 4:
+        reaction_start, reaction_end, current_start, current_end = segment
+        is_filler = False
+    elif len(segment) == 5:
         reaction_start, reaction_end, current_start, current_end, is_filler = segment
-    else: 
+    elif len(segment) == 6: 
         reaction_start, reaction_end, current_start, current_end, is_filler, strokes = segment
 
     if is_filler:
@@ -710,7 +713,7 @@ def ground_truth_overlap(path, gt):
                 total_overlap += calculate_overlap(sequence, gt_sequence)
 
     # Calculate total duration of both paths
-    path_duration = sum(end - start for start, end, cstart, cend, filler in path)
+    path_duration = sum(s[1] - s[0] for s in path)
     gt_duration = sum(end - start for start, end in gt)
     
     # If the sum of both durations is zero, there's no meaningful percentage overlap to return

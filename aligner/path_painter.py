@@ -3,7 +3,7 @@ from utilities import conf, print_profiling, save_object_to_file, read_object_fr
 from aligner.bounds import get_bound, in_bounds, create_reaction_alignment_bounds
 from aligner.find_segment_start import find_segment_starts, initialize_segment_start_cache, score_start_candidates, correct_peak_index
 from aligner.find_segment_end import find_segment_end, initialize_segment_end_cache
-from aligner.scoring_and_similarity import find_best_path, initialize_path_score, initialize_segment_tracking, get_segment_mfcc_cosine_similarity_score, path_score, print_path, path_score_by_mfcc_cosine_similarity, truncate_path
+from aligner.scoring_and_similarity import find_best_path, initialize_path_score, initialize_segment_tracking, get_segment_mfcc_cosine_similarity_score, get_segment_mfcc_cosine_similarity_score, path_score, print_path, path_score_by_mfcc_cosine_similarity, truncate_path
 from aligner.cross_expander import compress_segments
 from aligner.pruning_search import is_path_quality_poor, initialize_path_pruning
 from silence import is_silent
@@ -16,21 +16,27 @@ import math
 
 
 
+attempts_progression = {
+    'chunk_size':      [3, 3, 5, 5, 8, 8, 10, 10, 12, 12,  3,  5,  8, 10, 12],
+    'allowed_spacing': [3, 6, 3, 6, 3, 6,  3,  6,  3,  6, 12, 12, 12, 12, 12]
+}
+
+
 def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=None, attempts=0):
 
     if chunk_size is None: 
-        chunk_size = reaction.get('chunk_size') * (1 + math.floor(  attempts / 3  ))
+        chunk_size = max(reaction.get('chunk_size', 0), attempts_progression['chunk_size'][attempts])
         chunk_size *= sr
 
 
     if allowed_spacing is None: 
-        allowed_spacing = 3 * (1 + attempts % 3 )
-        print(f"Attempts={attempts}   {attempts % 3}    {allowed_spacing}")
+        allowed_spacing = attempts_progression['allowed_spacing'][attempts]
+        # print(f"Attempts={attempts}   {attempts % 3}    {allowed_spacing}")
         allowed_spacing *= sr
         
 
     print(f"\n###############################\n# {conf.get('song_key')} / {reaction.get('channel')}")
-    print(f"Painting path with chunk size {chunk_size / sr} and {allowed_spacing * 2 / sr} spacing")
+    print(f"Painting path with chunk size {chunk_size / sr} and {allowed_spacing / sr} spacing")
 
     initialize_segment_end_cache()
     initialize_path_score()
@@ -47,7 +53,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     segments = find_segments(reaction, chunk_size, step, peak_tolerance)
 
-    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     pruned_segments, __ = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = False)
 
@@ -62,7 +68,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     pruned_segments, joinable_segment_map = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = True)
 
-    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print(f"Constructing paths from {len(pruned_segments)} viable segments")
 
@@ -74,7 +80,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     paths = finesse_paths(reaction, paths, segments_by_key)
 
-    if len(paths) == 0 and attempts < 4 * 3: 
+    if len(paths) == 0 and attempts < len(attempts_progression['chunk_size']) - 1: 
         print(f"No paths found.")
         splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
 
@@ -268,7 +274,8 @@ def merge_continuous_segments_separated_by_filler(reaction, path, strokes):
     new_path = []
     for idx, segment in enumerate(path):
         reaction_start, reaction_end, base_start, base_end, is_filler, strokes_key = segment
-        print(f"COLLAPSING FOR {base_start/sr}-{base_end/sr}")
+        # print(f"COLLAPSING FOR {base_start/sr}-{base_end/sr}")
+
         # if strokes_key is not None:
         #     my_strokes = strokes[strokes_key]
 
@@ -300,7 +307,7 @@ def merge_continuous_segments_separated_by_filler(reaction, path, strokes):
 
                     aaa = len(strokes[later_segment[5]])
                     strokes[later_segment[5]].extend(strokes[prior_segment[5]])
-                    print(f"EXTENDING!!!!! Strokes from {aaa} to {len(strokes[later_segment[5]])} by adding {len(strokes[prior_segment[5]])}", )
+                    # print(f"EXTENDING!!!!! Strokes from {aaa} to {len(strokes[later_segment[5]])} by adding {len(strokes[prior_segment[5]])}", )
 
                     extended = True
 
@@ -316,8 +323,8 @@ import matplotlib.cm as cm
 
 def micro_align_path(reaction, path, strokes):
 
-    print("Microaligning:")
-    print_path(path, reaction)
+    # print("Microaligning:")
+    # print_path(path, reaction)
 
 
 
@@ -338,18 +345,23 @@ def micro_align_path(reaction, path, strokes):
         min_intercept = None
         max_intercept = None
         for stroke in my_strokes['strokes']:
-            x = stroke[2]
-            b = stroke[0] - stroke[2]
-            scatter.append( (x,b,stroke)  )
+            if stroke[2] >= base_start - 3 * sr and stroke[3] <= base_end + 3 * sr:
+                x = stroke[2]
+                b = stroke[0] - stroke[2]
 
-            if min_intercept is None or min_intercept > b:
-                min_intercept = b
+                scatter.append( (x,b,stroke)  )
 
-            if max_intercept is None or max_intercept < b:
-                max_intercept = b
+                if min_intercept is None or min_intercept > b:
+                    min_intercept = b
+
+                if max_intercept is None or max_intercept < b:
+                    max_intercept = b
 
         scatter.sort(key=lambda x: x[0])
 
+        if min_intercept is None or max_intercept is None:
+            new_path.append(segment)
+            continue
 
         my_range = max_intercept - min_intercept
         if my_range < .05 * sr:
@@ -443,11 +455,12 @@ def micro_align_path(reaction, path, strokes):
             intercepts = [point[1] for point in subsegment]
 
             subsegment_start = subsegment[0][2][2]
-            subsegment_end = subsegment[-1][2][3]
+            subsegment_end   = subsegment[-1][2][3]
 
             subsegment_reaction_start = reaction_start + (subsegment_start - base_start)
-            subsegment_reaction_end = reaction_end + (subsegment_end - base_start)
+            subsegment_reaction_end   = reaction_end   + (subsegment_end   - base_end)
 
+            print(f"{base_start / sr}-{base_end / sr}  {subsegment_start / sr}-{subsegment_end / sr}  {subsegment_reaction_start / sr}-{subsegment_reaction_end / sr} {(subsegment_end - subsegment_start) / sr} {(max_intercept - min_intercept) / sr}")
             _, best_intercept = find_best_intercept(reaction, intercepts, subsegment_start, subsegment_end, include_cross_correlation=True, reaction_start=subsegment_reaction_start, reaction_end=subsegment_reaction_end)
                 
             lines.append( (best_intercept, subsegment, subsegment_start, subsegment_end)   )
@@ -471,7 +484,9 @@ def micro_align_path(reaction, path, strokes):
             min_x = max(min_x, previous_end, base_start)
 
             if min_x > previous_end + 1:
-                _, fill_intercept = find_best_intercept(reaction, [default_intercept], previous_end, min_x, include_cross_correlation=True, reaction_start=reaction_start + (previous_end - base_start), reaction_end=reaction_start + (previous_end - base_start) + (min_x - previous_end), print_intercepts=False)
+                my_reaction_start = reaction_start + (previous_end - base_start)
+                my_reaction_end   = my_reaction_start + (min_x - previous_end)
+                _, fill_intercept = find_best_intercept(reaction, [default_intercept], previous_end, min_x, include_cross_correlation=True, reaction_start=my_reaction_start, reaction_end=my_reaction_end, print_intercepts=False)
                 sub_path.append( [previous_end + fill_intercept, min_x + fill_intercept, previous_end, min_x, False ]        )
 
 
@@ -505,10 +520,12 @@ def micro_align_path(reaction, path, strokes):
 
 
             for stroke in my_strokes['strokes']:
-                b = stroke[0] - stroke[2]
-                # Collecting data for plotting
-                x_vals.append(stroke[2]/sr)
-                y_vals.append(b)
+                if stroke[2] >= base_start - 3 * sr and stroke[3] <= base_end + 3 * sr:
+
+                    b = stroke[0] - stroke[2]
+                    # Collecting data for plotting
+                    x_vals.append(stroke[2]/sr)
+                    y_vals.append(b)
 
             # Define a list of colors for each subsegment. Make sure there are enough colors for all subsegments.
             colors = cm.rainbow(np.linspace(0, 1, len(subsegments)))
@@ -534,8 +551,11 @@ def micro_align_path(reaction, path, strokes):
                 max_x = max( [p[0] for p in subsegment]  ) + stroke_length
                 # plt.plot([min_x / sr, max_x / sr], [intercept, intercept], color='red')
 
+            for rs,re,bs,be,filler in sub_path:
+                plt.plot([bs / sr, be / sr], [rs-bs, rs-bs], linewidth=3, color='orange', label='Best Line')
+
             for rs,re,bs,be,filler in sharpened_sub_path:
-                plt.plot([bs / sr, be / sr], [rs-bs, rs-bs], linewidth=3, color='purple', label='Best Line')
+                plt.plot([bs / sr, be / sr], [rs-bs, rs-bs], linewidth=3, color='purple', label='Sharpened Best Line')
 
             plt.title("Intercept vs. Start of Strokes")
             plt.xlabel("Start of Stroke")
@@ -560,15 +580,21 @@ def finesse_paths(reaction, paths, strokes):
 
 
 
-def sharpen_path_boundaries(reaction, path):
+def sharpen_path_boundaries(reaction, original_path):
     sharpener_width = 1 * sr
     step_width = .01 * sr
 
     edge = 3 * sr
 
+    path = copy.deepcopy(original_path)
+
+    path_reaction_start = path[0][0]
+    path_base_start = path[0][2]
+    path_reaction_end = path[-1][1]
+    path_base_end = path[-1][3]
 
     for i, segment1 in enumerate(path):
-        if i < len(path) - 1:   # TODO: deal with filler
+        if i < len(path) - 1:
             # Finding the best separator between the coarse segment1 and segment2 definition
             segment2 = path[i+1]
             (reaction_start1, reaction_end1, base_start1, base_end1, fill1) = segment1
@@ -598,6 +624,8 @@ def sharpen_path_boundaries(reaction, path):
 
                 start += step_width
 
+            if len(score1) == 0 or len(score2) == 0:
+                continue
 
             # Identify a segmentation point (a value in time_x) such that the scores at times less 
             # than the segmentation point are generally higher for segment1, and the scores at 
@@ -651,16 +679,23 @@ def sharpen_path_boundaries(reaction, path):
 
 
             # Now we'll sharpen up the path definition
-            print("CHANGING!")
-            print(segment1)
-            print(segment2)
             segmentation_point = int(segmentation_point)
-            segment1[1] = b1 + segmentation_point # new reaction_end
-            segment2[0] = b2 + segmentation_point # new reaction_start
-            segment1[3] = segmentation_point # new base_end
-            segment2[2] = segmentation_point # new base_start
-            print(segment1)
-            print(segment2)
+
+            assert(segmentation_point >= path_base_start, f"Segmentation point at {segmentation_point / sr} is less than than {path_base_start/sr}", i, segment1, segment2, path)
+            assert(segmentation_point <= path_base_end, f"Segmentation point at {segmentation_point / sr} is greater than {path_base_end/sr}", i, segment1, segment2, path)
+
+            # min(path_base_end, max(path_base_start, int(segmentation_point)))
+
+            segment1[1] = min(path_reaction_end, b1 + segmentation_point) # new reaction_end
+            segment2[0] = max(path_reaction_start, b2 + segmentation_point) # new reaction_start
+            segment1[3] = min(path_base_end, segmentation_point) # new base_end
+            segment2[2] = max(path_base_start, segmentation_point) # new base_start
+
+            # segment1[1] = b1 + segmentation_point # new reaction_end
+            # segment2[0] = b2 + segmentation_point # new reaction_start
+            # segment1[3] = segmentation_point # new base_end
+            # segment2[2] = segmentation_point # new base_start
+
 
     removed_segment = False
     completed_path = []
@@ -668,10 +703,11 @@ def sharpen_path_boundaries(reaction, path):
         if s[3] > s[2]:
             completed_path.append(s)
         else:
+            print(f"************\nREMOVED SEGMENT!!!!! {s[0]/sr} {s[1]/sr} {s[2]/sr} {s[3]/sr}")
             removed_segment = True
 
     if removed_segment:
-        print("************\nREMOVED SEGMENT!!!!!")
+        
         return sharpen_path_boundaries(reaction, completed_path)
 
     else: 
@@ -1191,6 +1227,8 @@ def find_best_intercept(reaction, intercepts, base_start, base_end, include_cros
     best_intercept = None
     for intercept in unique_intercepts.keys():
 
+        intercept = int(intercept)
+
         candidate_line_def = [intercept + base_start, intercept + base_end, base_start, base_end]
 
         score = get_segment_mfcc_cosine_similarity_score(reaction, candidate_line_def)
@@ -1205,9 +1243,36 @@ def find_best_intercept(reaction, intercepts, base_start, base_end, include_cros
             best_line_def = candidate_line_def
             best_intercept = intercept
 
+    if False and include_cross_correlation:
+        scores = []
+        for intercept in unique_intercepts.keys():
+            candidate_line_def = [intercept + base_start, intercept + base_end, base_start, base_end]
+            score = get_segment_mfcc_cosine_similarity_score(reaction, candidate_line_def)
+            scores.append(score)
+    
+        plot_scores_of_intercepts(list(unique_intercepts.keys()), scores, corr_intercept if include_cross_correlation else None, base_start, base_end)
+
+
+
     # print(f"\t{base_start / sr} - {base_end/sr}", best_intercept, len(intercepts) )
 
-    return best_line_def, best_intercept 
+    return best_line_def, int(best_intercept)
+
+def plot_scores_of_intercepts(intercepts, scores, corr_intercept, base_start, base_end):
+    plt.figure(figsize=(10, 6))
+
+    for intercept, score in zip(intercepts, scores):
+        if intercept == corr_intercept:
+            plt.scatter(intercept, score, c='red', marker='*', s=100)  # Mark the correlation-derived intercept in red
+        else:
+            plt.scatter(intercept, score, c='blue', marker='o')
+
+    plt.title(f"Scores of Intercepts (base_start: {base_start/sr}, base_end: {base_end/sr})")
+    plt.xlabel("Intercepts")
+    plt.ylabel("Scores")
+    plt.grid(True)
+    plt.show()
+
 
 
 def sharpen_segments(reaction, chunk_size, step, segments, allowed_spacing):
@@ -1458,6 +1523,20 @@ def get_candidate_starts(reaction, signals, peak_tolerance, open_start, closed_s
     return candidates
 
 
+def get_lower_bounds(reaction, chunk_size): 
+    manual_bounds = reaction.get('manual_bounds', None)
+    lower_bounds = []
+    if manual_bounds:
+        for mbound in manual_bounds:
+            ts, upper = mbound
+            lower = upper - 2 
+            ts = int(ts*sr)
+            lower = int(lower*sr) # + chunk_size / 2)
+            lower_bounds.append( (ts, lower)   )
+    lower_bounds.reverse()
+    return lower_bounds
+
+
 def find_segments(reaction, chunk_size, step, peak_tolerance):
 
     base_audio = conf.get('song_audio_data')
@@ -1466,23 +1545,37 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
     starting_points = range(0, len(base_audio) - chunk_size, step)
 
-    start_reaction_search_at = reaction.get('start_reaction_search_at')
+    start_reaction_search_at = int(reaction.get('start_reaction_search_at'))
 
     minimums = [start_reaction_search_at]
 
 
-    seg_cache_key = f"{minimums[0]}-{chunk_size}-{conf['first_n_samples']}-{reaction.get('unreliable_bounds','')}"
+    # Factor in manually configured bounds    
+    lower_bounds = get_lower_bounds(reaction, chunk_size)
+
+    seg_cache_key = f"{minimums[0]}-{chunk_size}-{conf['first_n_samples']}-{reaction.get('unreliable_bounds','')}-{len(lower_bounds)}"
 
     strokes = []
     active_strokes = []
 
-    candidate_cache_file = os.path.join( conf.get('song_directory'), f"{reaction.get('channel')}-start_cache-{seg_cache_key}.pckl"   )
+
+    cache_dir = os.path.join(conf.get('song_directory'), '_cache')
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    cache_file_name = f"{reaction.get('channel')}-start_cache-{seg_cache_key}.pckl"
+    candidate_cache_file = os.path.join( cache_dir, cache_file_name )    
+    candidate_cache_file_legacy = os.path.join( conf.get('song_directory'), cache_file_name )
+
+    if os.path.exists(candidate_cache_file_legacy):
+        import shutil
+        shutil.move(candidate_cache_file_legacy, candidate_cache_file)
 
     if os.path.exists(candidate_cache_file):
         candidate_cache = read_object_from_file(candidate_cache_file)
     else:
         candidate_cache = {}
-    
+
 
     alignment_bounds = create_reaction_alignment_bounds(reaction, conf['first_n_samples'])
 
@@ -1494,13 +1587,24 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
         print_profiling()
 
-        reaction_start = max( minimums[0] + start, min(minimums[-18:]))
+        latest_lower_bound = 0
+        for lower_bound_ts, lower_bound in lower_bounds:
+            if lower_bound_ts <= start:
+                latest_lower_bound = lower_bound + (start - lower_bound_ts)
+                break
+
+        candidate_lower_bound = max( min(minimums[-18:]), latest_lower_bound )
+
+        assert(candidate_lower_bound >= latest_lower_bound)
+
+        reaction_start = max( minimums[0] + start, candidate_lower_bound)
+
+        assert(reaction_start >= latest_lower_bound)
+
 
         if start not in candidate_cache:
             upper_bound = get_bound(alignment_bounds, start, reaction_span - (len(base_audio) - start))
 
-            if reaction.get('unreliable_bounds', False):
-                upper_bound *= 1.5
 
             signals = get_signals(reaction, start, reaction_start, chunk_size)
             candidates = get_candidate_starts(reaction, signals, peak_tolerance, reaction_start, start, chunk_size, 1 * sr, upper_bound)
@@ -1513,8 +1617,13 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
         else: 
             candidates = candidate_cache[start]
 
+        candidates = [c + reaction_start for c in candidates]
 
-        minimums.append( candidates[0] + reaction_start )
+        # for c in candidates:
+        #     assert(c >= latest_lower_bound)
+
+
+        minimums.append( candidates[0] )
 
         still_active_strokes = []
 
@@ -1525,12 +1634,11 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
             best_match = None  
             best_match_overlap = None        
 
-            for c in candidates:
-                y1 = reaction_start+c
+            for y1 in candidates:
                 if y1 in already_matched: 
                     continue
 
-                y2 = reaction_start+c+chunk_size
+                y2 = y1+chunk_size
 
                 x1 = start
                 x2 = start+chunk_size
@@ -1558,12 +1666,11 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
                 already_matched[new_stroke[0]] = True 
 
-        for c in candidates:
-            y1 = reaction_start+c
+        for y1 in candidates:
             if y1 in already_matched: 
                 continue
 
-            y2 = reaction_start+c+chunk_size
+            y2 = y1+chunk_size
 
             x1 = start
             x2 = start+chunk_size
@@ -1638,60 +1745,26 @@ def near_song_end(segment, allowed_spacing):
 #########################
 # Drawing
 
+
+
+
+
 def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, paths=None, chunk_size=None):
-    plt.figure(figsize=(10, 10))
+    plt.figure(figsize=(20, 10)) 
 
-    x = conf.get('song_audio_data')
-    y = reaction.get('reaction_audio_data')
+    
+    # Creating the first plot
+    plt.subplot(1, 2, 1)
 
-    if reaction.get('ground_truth'):
-        for rs,re,cs,ce,f in reaction.get('ground_truth_path'):
-            make_stroke((rs,re,cs,ce), alpha = 1, color='#aaa', linewidth=4)
+    plt.title(f"Path painting of {reaction.get('channel')} / {conf.get('song_key')}")
 
+    draw_strokes(reaction, chunk_size, strokes, stroke_alpha, paths=paths, intercept_based_figure=False)
 
-    # for segment in strokes:
-    #     for stroke in segment['strokes']:   
-    #         make_stroke(stroke, linewidth=2, alpha = stroke_alpha)
+    plt.subplot(1, 2, 2)
 
-
-    for segment in strokes:
-        # if not segment.get('pruned', False) and 'old_end_points' in segment:
-        if segment.get('pruned', False):
-            alpha = .25
-        else:
-            alpha = 1
-        make_stroke(segment.get('old_end_points', segment['end_points']), linewidth=2, color='orange', alpha = alpha)
-
-        make_stroke(segment.get('end_points', segment['end_points']), linewidth=2, color='blue', alpha = alpha)
-
-    # for segment in strokes:
-    #     if not segment.get('pruned', False):
-
-    #         for stroke in segment['strokes']:   
-    #             make_stroke(stroke, linewidth=4, alpha = stroke_alpha)
-
-    #         # make_stroke(segment['end_points'], linewidth=1, color='blue', alpha = 1)
-
-
-    if paths is not None:
-        for path in paths: 
-            visualize_candidate_path(path)      
-
-
-    segment_count = len([s for s in strokes if not segment.get('pruned', False)])
-
-    plt.ylabel("Time in React Audio [s]")
-    plt.xlabel("Time in Base Audio [s]")
-
-    plt.title(f"Path painting of {reaction.get('channel')} / {conf.get('song_key')}: {segment_count} viable found")
-
-    plt.xticks(np.arange(0, len(x) / sr + 30, 30))
-    plt.yticks(np.arange(0, len(y) / sr + 30, 30))
-
-    plt.grid(True)
+    draw_strokes(reaction, chunk_size, strokes, stroke_alpha, paths=paths, intercept_based_figure=True)
 
     plt.tight_layout()
-
 
     # Save the plot instead of displaying it
     filename = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-painting-{int(chunk_size/sr)}.png")
@@ -1703,18 +1776,101 @@ def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, pat
         plt.close()
 
 
-def make_stroke(stroke, color=None, linewidth=1, alpha=1):
+def draw_strokes(reaction, chunk_size, strokes, stroke_alpha, paths, intercept_based_figure=False):
+
+    alignment_bounds = reaction['alignment_bounds']
+    base_ts, intercepts = zip(*alignment_bounds)
+    base_ts = [bs/sr for bs in base_ts]
+
+
+    if reaction.get('ground_truth'):
+        for rs,re,cs,ce,f in reaction.get('ground_truth_path'):
+            make_stroke((rs,re,cs,ce), alpha = 1, color='#aaa', linewidth=4, intercept_based_figure=intercept_based_figure)
+
+
+    # for segment in strokes:
+    #     for stroke in segment['strokes']:   
+    #         make_stroke(stroke, linewidth=2, alpha = stroke_alpha, intercept_based_figure=intercept_based_figure)
+
+
+    for segment in strokes:
+        # if not segment.get('pruned', False) and 'old_end_points' in segment:
+        if segment.get('pruned', False):
+            alpha = .25
+        else:
+            alpha = 1
+        make_stroke(segment.get('old_end_points', segment['end_points']), linewidth=2, color='orange', alpha = alpha, intercept_based_figure=intercept_based_figure)
+
+        make_stroke(segment.get('end_points', segment['end_points']), linewidth=2, color='blue', alpha = alpha, intercept_based_figure=intercept_based_figure)
+
+    # for segment in strokes:
+    #     if not segment.get('pruned', False):
+
+    #         for stroke in segment['strokes']:   
+    #             make_stroke(stroke, linewidth=4, alpha = stroke_alpha, intercept_based_figure=intercept_based_figure)
+
+    #         # make_stroke(segment['end_points'], linewidth=1, color='blue', alpha = 1, intercept_based_figure=intercept_based_figure)
+
+
+    if paths is not None:
+        for path in paths: 
+            visualize_candidate_path(path, intercept_based_figure=intercept_based_figure)      
+
+
+    
+    # Find the min and max values of base_ts for the width of the chart
+    x_min = min(base_ts)
+    x_max = max(base_ts)
+    alignment_bound_linewidth=2
+    for xx, c in alignment_bounds:
+        c /= sr  # Calculate the y-intercept
+        if intercept_based_figure: 
+            plt.plot([x_min, xx/sr], [c, c], linewidth=alignment_bound_linewidth, alpha=1, color='black')  # Plot the line using the y = mx + c equation
+        else:
+            plt.plot([x_min, xx/sr], [x_min + c, xx/sr + c], linewidth=alignment_bound_linewidth, alpha=1, color='black')  # Plot the line using the y = mx + c equation
+
+    lower_bounds = get_lower_bounds(reaction, chunk_size)
+    for xx, c in lower_bounds:
+        c /= sr 
+        if intercept_based_figure: 
+            plt.plot([xx/sr, x_max], [c-xx/sr, c-xx/sr], linewidth=alignment_bound_linewidth, alpha=1, color='red')  # Plot the line using the y = mx + c equation
+        else:
+            plt.plot([xx/sr, x_max], [c, c+(x_max-xx/sr)], linewidth=alignment_bound_linewidth, alpha=1, color='red')  # Plot the line using the y = mx + c equation
+
+
+    x = conf.get('song_audio_data')
+    y = reaction.get('reaction_audio_data')
+
+    if intercept_based_figure: 
+        plt.ylabel("React Audio intercept [s]")        
+        plt.yticks(np.arange(0, max(intercepts) / sr + 30, 30))
+    else:
+        plt.ylabel("Time in React Audio [s]")
+        plt.yticks(np.arange(0, len(y) / sr + 30, 30))
+
+    plt.xlabel("Time in Base Audio [s]")
+    plt.xticks(np.arange(0, len(x) / sr + 30, 30))
+
+    plt.grid(True)
+
+
+
+
+def make_stroke(stroke, color=None, linewidth=1, alpha=1, intercept_based_figure=False):
 
     reaction_start, reaction_end, current_start, current_end = stroke
 
     if color is None:
         color = 'red'
 
-    plt.plot( [current_start/sr, current_end/sr], [reaction_start/sr, reaction_end/sr]  , color=color, linestyle='solid', linewidth=linewidth, alpha=alpha)
+    if intercept_based_figure:
+        plt.plot( [current_start/sr, current_end/sr], [(reaction_start-current_start)/sr, (reaction_start-current_start)/sr]  , color=color, linestyle='solid', linewidth=linewidth, alpha=alpha)
+    else:
+        plt.plot( [current_start/sr, current_end/sr], [reaction_start/sr, reaction_end/sr]  , color=color, linestyle='solid', linewidth=linewidth, alpha=alpha)
 
     
 
-def visualize_candidate_path(path, color=None, linewidth=1, alpha=1):
+def visualize_candidate_path(path, color=None, linewidth=1, alpha=1, intercept_based_figure=False):
     segment_color = color
     for i, segment in enumerate(path):
 
@@ -1735,10 +1891,15 @@ def visualize_candidate_path(path, color=None, linewidth=1, alpha=1):
             else:
                 last_reaction_start, last_reaction_end, last_current_start, last_current_end, last_filler, strokes = previous_segment
 
-            plt.plot( [last_current_end/sr, current_start/sr], [last_reaction_end/sr, reaction_start/sr], color=segment_color, linestyle='dashed', linewidth=linewidth, alpha=alpha)
+            if intercept_based_figure:
+                plt.plot( [last_current_end/sr, current_start/sr], [(reaction_start-current_start)/sr, (reaction_start-current_start)/sr], color=segment_color, linestyle='dashed', linewidth=linewidth, alpha=alpha)
+            else:
+                plt.plot( [last_current_end/sr, current_start/sr], [last_reaction_end/sr, reaction_start/sr], color=segment_color, linestyle='dashed', linewidth=linewidth, alpha=alpha)
 
-        plt.plot( [current_start/sr, current_end/sr], [reaction_start/sr, reaction_end/sr], color=segment_color, linestyle='solid', linewidth=linewidth, alpha=alpha)
-
+        if intercept_based_figure:
+            plt.plot( [current_start/sr, current_end/sr], [(reaction_start-current_start)/sr, (reaction_start-current_start)/sr], color=segment_color, linestyle='solid', linewidth=linewidth, alpha=alpha)
+        else: 
+            plt.plot( [current_start/sr, current_end/sr], [reaction_start/sr, reaction_end/sr], color=segment_color, linestyle='solid', linewidth=linewidth, alpha=alpha)
         previous_segment = segment
 
 
