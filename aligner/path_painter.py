@@ -53,7 +53,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     segments = find_segments(reaction, chunk_size, step, peak_tolerance)
 
-    splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
 
     pruned_segments, __ = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = False)
 
@@ -68,7 +68,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
 
     pruned_segments, joinable_segment_map = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = True)
 
-    splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
 
     print(f"Constructing paths from {len(pruned_segments)} viable segments")
 
@@ -327,7 +327,7 @@ def micro_align_path(reaction, path, strokes):
     # print_path(path, reaction)
 
 
-
+    reaction_len = len(reaction.get('reaction_audio_data'))
     new_path = []
     for idx, segment in enumerate(path):
         reaction_start, reaction_end, base_start, base_end, is_filler, strokes_key = segment
@@ -363,10 +363,10 @@ def micro_align_path(reaction, path, strokes):
             new_path.append(segment)
             continue
 
-        my_range = max_intercept - min_intercept
-        if my_range < .05 * sr:
-            new_path.append(segment)
-            continue
+        # my_range = max_intercept - min_intercept
+        # if my_range < .05 * sr:
+        #     new_path.append(segment)
+        #     continue
 
 
 
@@ -432,6 +432,32 @@ def micro_align_path(reaction, path, strokes):
             new_path.append(segment)
             continue
 
+        if len(subsegments) == 1:
+            subsegment = subsegments[0]
+            start_x, intercept, _ = subsegment[0]
+            end_x, _, _ = subsegment[-1]
+            new_subsegments = [
+                [],
+                [],
+                [],
+                [],
+            ]
+
+            for stroke in subsegment:
+                idx = min(3, math.floor(  4 * (stroke[0] - start_x) / (end_x - start_x)   ))
+
+                # stroke = list(stroke)
+                # import random
+                # variation = random.randint(-int(sr / 5), int(sr / 5) )
+                # stroke[0] += variation
+                # stroke[1] += variation
+
+                new_subsegments[idx].append(stroke)
+
+            subsegments = [s for s in new_subsegments if len(s) > 0]
+
+
+
         # Filter out clusters that don't span at least 3 seconds
         filtered_subsegments = []
         for subsegment in subsegments:
@@ -457,11 +483,12 @@ def micro_align_path(reaction, path, strokes):
             subsegment_start = subsegment[0][2][2]
             subsegment_end   = subsegment[-1][2][3]
 
-            subsegment_reaction_start = reaction_start + (subsegment_start - base_start)
-            subsegment_reaction_end   = reaction_end   + (subsegment_end   - base_end)
+
+            subsegment_reaction_start = max(0,            reaction_start + (subsegment_start - base_start) - int(sr/2))
+            subsegment_reaction_end   = min(reaction_len, reaction_end   + (subsegment_end   - base_end)   + int(sr/2))
 
             print(f"{base_start / sr}-{base_end / sr}  {subsegment_start / sr}-{subsegment_end / sr}  {subsegment_reaction_start / sr}-{subsegment_reaction_end / sr} {(subsegment_end - subsegment_start) / sr} {(max_intercept - min_intercept) / sr}")
-            _, best_intercept = find_best_intercept(reaction, intercepts, subsegment_start, subsegment_end, include_cross_correlation=True, reaction_start=subsegment_reaction_start, reaction_end=subsegment_reaction_end)
+            best_intercept = find_best_intercept(reaction, intercepts, subsegment_start, subsegment_end, include_cross_correlation=True, reaction_start=subsegment_reaction_start, reaction_end=subsegment_reaction_end)
                 
             lines.append( (best_intercept, subsegment, subsegment_start, subsegment_end)   )
 
@@ -486,7 +513,7 @@ def micro_align_path(reaction, path, strokes):
             if min_x > previous_end + 1:
                 my_reaction_start = reaction_start + (previous_end - base_start)
                 my_reaction_end   = my_reaction_start + (min_x - previous_end)
-                _, fill_intercept = find_best_intercept(reaction, [default_intercept], previous_end, min_x, include_cross_correlation=True, reaction_start=my_reaction_start, reaction_end=my_reaction_end, print_intercepts=False)
+                fill_intercept = find_best_intercept(reaction, [default_intercept], previous_end, min_x, include_cross_correlation=True, reaction_start=my_reaction_start, reaction_end=my_reaction_end, print_intercepts=False)
                 sub_path.append( [previous_end + fill_intercept, min_x + fill_intercept, previous_end, min_x, False ]        )
 
 
@@ -499,7 +526,7 @@ def micro_align_path(reaction, path, strokes):
 
 
             if i == len(lines) - 1 and max_x < base_end:
-                _, fill_intercept = find_best_intercept(reaction, [default_intercept], max_x, base_end, include_cross_correlation=True, reaction_start=reaction_start + (max_x - base_start), reaction_end=reaction_end, print_intercepts=False)
+                fill_intercept = find_best_intercept(reaction, [default_intercept], max_x, base_end, include_cross_correlation=True, reaction_start=reaction_start + (max_x - base_start), reaction_end=reaction_end, print_intercepts=False)
 
                 sub_path.append( [max_x + fill_intercept, base_end + fill_intercept, max_x, base_end, False ]        )
 
@@ -513,7 +540,7 @@ def micro_align_path(reaction, path, strokes):
         # commit the new path to the overall path
         new_path += sharpened_sub_path
 
-        if False: 
+        if True: 
 
             x_vals = []  # to store starts for plotting
             y_vals = []  # to store intercepts for plotting
@@ -1185,33 +1212,48 @@ def prune_poor_links(reaction, segment, links):
 
 from scipy.signal import correlate
 
-
 def find_best_intercept(reaction, intercepts, base_start, base_end, include_cross_correlation=False, reaction_start=None, reaction_end=None, print_intercepts=False):
     unique_intercepts = {} # y-intercepts as in y=ax+b, solving for b when a=1
 
     if include_cross_correlation:
         # intercept_range = (min(intercepts), max(intercepts))
 
-        # we'll also throw a cross-correlation into the mix
         song_data = conf.get('song_audio_data')
         reaction_data = reaction.get('reaction_audio_data')
         song_segment = song_data[base_start:base_end]
-        # reaction_start = base_start + intercept_range[0]
-        # reaction_end = base_start + intercept_range[1] + base_end - base_start
-        reaction_segment = reaction_data[reaction_start:reaction_end + base_end - base_start]
 
+        padding_left = (base_end - base_start)
+        padding_right = padding_left
+
+        search_start = max(0, reaction_start - padding_left)
+        search_end   = min(len(reaction_data), reaction_end + padding_right)
+        reaction_segment = reaction_data[search_start:search_end]
+
+        # Perform the correlation
         cross_corr = correlate(reaction_segment, song_segment, mode="valid")
-        offset = max(0, np.argmax(cross_corr) - len(song_segment) + 1)
-        corr_reaction_start = int(reaction_start + offset)
+
+        # Calculate the start and end index in cross_corr corresponding to reaction_start and reaction_end
+        corr_search_start = reaction_start - search_start
+        corr_search_end = corr_search_start + padding_left + padding_right
+
+        # Ensure the bounds are within the length of the cross_corr array
+        corr_search_start = max(0, corr_search_start)
+        corr_search_end = min(len(cross_corr), corr_search_end)
+
+        # Find the maximum correlation value within the constrained window
+        windowed_corr_max_index = np.argmax(cross_corr[corr_search_start:corr_search_end]) + corr_search_start
+
+        # Calculate the starting index of the best match within the original reaction_data
+        corr_reaction_start = search_start + windowed_corr_max_index
+
+        # Ensure that corr_reaction_start is within the desired range
+        # Since we are bounding our argmax, this should inherently be the case.
         corr_intercept = corr_reaction_start - base_start
-        
+
         # print('corr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, corr_reaction_start / sr, corr_intercept / sr, offset/sr, reaction_start <= corr_reaction_start <= reaction_end)        
         assert(  reaction_start <= corr_reaction_start <= reaction_end   )
 
-
         intercepts.append(corr_intercept)
-
-        # intercepts = [corr_intercept]
 
     for b in intercepts:
         if not include_cross_correlation or reaction_start - .05 * sr <= b + base_start <= reaction_end + .05 * sr:
@@ -1256,7 +1298,7 @@ def find_best_intercept(reaction, intercepts, base_start, base_end, include_cros
 
     # print(f"\t{base_start / sr} - {base_end/sr}", best_intercept, len(intercepts) )
 
-    return best_line_def, int(best_intercept)
+    return int(best_intercept)
 
 def plot_scores_of_intercepts(intercepts, scores, corr_intercept, base_start, base_end):
     plt.figure(figsize=(10, 6))
@@ -1278,17 +1320,30 @@ def plot_scores_of_intercepts(intercepts, scores, corr_intercept, base_start, ba
 def sharpen_segments(reaction, chunk_size, step, segments, allowed_spacing):
 
 
+    reaction_len = len(reaction.get('reaction_audio_data'))
 
     for segment in segments:
 
         ###################################
         # if we have an imprecise segment composed of strokes that weren't exactly aligned, 
         # we'll want to find the best line through them
-        if segment.get('imprecise', False):
-            # print("FINDING BEST INTERCEPT IN SHARPEN SEGMENTS")
-            best_line_def, intercept = find_best_intercept(reaction, [s[0]-s[2] for s in segment['strokes']], segment['end_points'][2], segment['end_points'][3])
+        # if segment.get('imprecise', False):
+        # print("FINDING BEST INTERCEPT IN SHARPEN SEGMENTS")
 
-            segment['end_points'] = best_line_def
+        padding = int(sr/2)
+        int_reaction_start = max(segment['end_points'][0] - padding, 0)
+        int_reaction_end   = min(segment['end_points'][1] + padding, reaction_len)
+        
+        stroke_intercepts = [s[0]-s[2] for s in segment['strokes']]
+        
+        intercept = find_best_intercept(reaction, stroke_intercepts, segment['end_points'][2], segment['end_points'][3], include_cross_correlation=True, reaction_start=int_reaction_start, reaction_end=int_reaction_end)
+
+        base_start = segment['end_points'][2]
+        base_end = segment['end_points'][3]
+
+        segment['end_points'] = [intercept + base_start, intercept + base_end, base_start, base_end]
+
+
         # else: 
         #     print(f"PRECISE ALIGNMENT {segment['end_points'][2]/sr}-{segment['end_points'][3]/sr}")
 
