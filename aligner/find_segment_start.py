@@ -138,6 +138,8 @@ def score_start_candidates(signals, open_chunk, closed_chunk, open_chunk_mfcc, c
     hop_length = conf.get('hop_length')
 
     for signal, (candidate_indicies, __, __) in peak_indices.items():
+
+
         max_correlation_score = 0
 
         for unadjusted_candidate_index, candidate_index in candidate_indicies:
@@ -210,12 +212,18 @@ def score_start_candidates(signals, open_chunk, closed_chunk, open_chunk_mfcc, c
             passes = passes or correlation_score >= max_correlation_score * threshold
 
         if passes:
-            candidates.append(candidate_index)
+            try:
+                candidates.append( (candidate_index, mfcc_cosine_score * signal_scores.get('standard', 1)) )
+            except Exception as e:
+                print('huh?', signal_scores.keys())
+                raise(e)
 
     # Helps us examine how the system is perceiving candidate starting locations
     plot_candidate_starting_locations(peak_indices, scores_at_index, candidates, thresholds, max_scores, open_start, closed_start)        
 
-    return candidates
+    candidates.sort(key=lambda x: x[1], reverse=True)
+
+    return [c[0] for c in candidates]
 
 
 

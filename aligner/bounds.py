@@ -27,7 +27,7 @@ from silence import is_silent
 #   accomplish the integrity checking, walk backwards from the last timestamp.
 
 
-def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=24, peak_tolerance=.5):
+def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=12, peak_tolerance=.5):
     from aligner.path_painter import get_candidate_starts, get_signals
 
 
@@ -43,7 +43,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     bounds = []
 
     
-    clip_length = int(2 * sr)
+    clip_length = int(3 * sr)
 
     reaction_audio = reaction.get('reaction_audio_data')
     base_audio = conf.get('song_audio_data')
@@ -102,12 +102,13 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
                 continue
 
             # For each segment
+            highest_bounds = []
             for base_start, end, chunk, chunk_mfcc in segments:
                 # Find the candidate indices for the start of the matching segment in the reaction audio
 
                 reaction_start = base_start + start_reaction_search_at
 
-                signals = get_signals(reaction, base_start, reaction_start, clip_length)
+                signals, evaluate_with = get_signals(reaction, base_start, reaction_start, clip_length)
 
                 candidates = get_candidate_starts(
                     reaction=reaction, 
@@ -117,29 +118,47 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
                     closed_start=base_start, 
                     chunk_size=clip_length,
                     distance=first_n_samples, 
-                    upper_bound=reaction_span - len(base_audio)
+                    upper_bound=reaction_span - len(base_audio),
+                    evaluate_with=evaluate_with
                 )
 
 
                 if candidates is None: 
                     candidates = []
                 elif len(candidates) > 0:
-                    print(f"\tCandidates: {[ int((1000 * (c+reaction_start))/sr)/1000 for c in candidates]}  {(max(candidates) + reaction_start) / sr:.1f}")
+                    print(f"\tCandidates: {[ int((1000 * (c+reaction_start))/sr)/1000 for c in candidates]}  {(max(candidates) + reaction_start) / sr:.1f} [{max(candidates)/sr:.1f}]")
 
+                this_ts = []
                 for c in candidates:
                     candidate_reaction_start = c + reaction_start
                     intercept = candidate_reaction_start - base_start
-                    max_indices.append(ts + intercept)
+                    max_indices.append(intercept)
+                    this_ts.append(intercept)
+                if len(this_ts) > 0:
+                    highest_bounds.append(max(this_ts))
             
-            if len(max_indices) == 0:
-                print(f"COULD NOT FIND BOUND FOR {ts / sr}")
+            if len(max_indices) < len(segment_times):
+                print(f"\tCOULD NOT FIND BOUND FOR {ts / sr}")
             else: 
-                bounds.append( [ts, max_indices] )
+                agrees = True
+                for i,m in enumerate(highest_bounds):
+                    if i > 0:
+                        agrees = agrees and abs(m - highest_bounds[i - 1]) < sr
+
+                if agrees:
+                    bounds.append( [ts, max_indices] )
+                else:
+                    print("\tNOT ADDING BOUND: max doesn't agree")
+                    for i,m in enumerate(highest_bounds):
+                        if i > 0:
+                            agrees = agrees and abs(m - highest_bounds[i - 1]) < sr
+                            # print(f"{agrees} {m/sr} {highest_bounds[i-1]/sr} {abs(m - highest_bounds[i - 1]) / sr}")
+
     else:
         print("Skipping auto bounds. Deemed unreliable.")
     
 
-
+    grace = clip_length * 2
 
     # Factor in manually configured bounds    
     manual_bounds = reaction.get('manual_bounds', False)
@@ -147,11 +166,14 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         for mbound in manual_bounds:
             ts, upper = mbound
             ts = int(ts*sr); upper = int(upper*sr)
-            bounds.append([ts, [upper]])
-            print(f"Inserted upper bound {upper/sr} for {ts/sr}")
+            bounds.append([ts, [upper - ts - grace + int(.5*sr)]])
+            print(f"Inserted upper bound {(upper - ts)/sr} for {ts/sr}")
 
     if reaction.get('end_reaction_search_at', False):
-        bounds.append([len(base_audio), [reaction.get('end_reaction_search_at')]])
+        bounds.append([len(base_audio), [reaction.get('end_reaction_search_at') - len(base_audio) - grace]])
+        print(f"Inserted upper bound at end ({len(base_audio)/sr}): {reaction.get('end_reaction_search_at') / sr} [{reaction.get('end_reaction_search_at') - len(base_audio) - grace}]!")
+    else: 
+        bounds.append([len(base_audio), [len(reaction_audio) - len(base_audio) - grace]])
 
     bounds.sort(key=lambda x: x[0], reverse=True)
 
@@ -166,39 +188,38 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
 
     for i, (base_ts, all_candidates, current_candidate) in enumerate(bounds):
 
-        grace = clip_length
+        
 
         if i > 0:
-            last_base_ts, _, last_reaction_ts = bounds[i-1]
-            last_intercept = last_reaction_ts - last_base_ts
+            last_base_ts, _, last_intercept = bounds[i-1]
+            last_reaction_ts = last_base_ts + last_intercept
             
         # enforce integrity condition
         # find the latest match that happens before the next bound 
-        candidates = [ reaction_ts for reaction_ts in all_candidates if reaction_ts - base_ts <= last_intercept + grace ]
+        candidates = [ intercept for intercept in all_candidates if intercept <= last_intercept + grace ]
 
         if len(candidates) == 0:
             print ("**********")
             print(f"Could not find bound with integrity!!!!")
             print(f"\tTrying again with higher tolerance and shifted checkpoints.")
-            print(f"\tFor timestamp {base_ts/sr}. Needed value below {(last_intercept+base_ts+grace)/sr}, but had min of {min(all_candidates)/sr} (and max {max(all_candidates)/sr})")            
+            print(f"\tFor timestamp {base_ts/sr}. Needed value below {(last_intercept+base_ts+grace)/sr}, but had min of {(min(all_candidates) + base_ts)/sr} (and max {(max(all_candidates)+base_ts)/sr})")            
             print("************")
 
             return create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_checkpoint=seconds_per_checkpoint+10, peak_tolerance=peak_tolerance * .9)
-        else:
-            if max(all_candidates) != max(candidates):
-                print(f"New bound for {base_ts/sr} is {max(candidates) / sr}, forced value below {(last_intercept+base_ts + grace)/sr}, cuts off {max(all_candidates)/sr}")
-            else: 
-                print(f"Bound of {max(all_candidates) / sr} maintained for {base_ts/sr}")
-            new_bound = max( candidates  )
+
+        if max(all_candidates) != max(candidates):
+            print(f"New bound for {base_ts/sr} is {(max(candidates) + base_ts) / sr}, forced value below {(last_intercept+base_ts + grace)/sr}, cuts off {(max(all_candidates)+base_ts)/sr}")
+        else: 
+            print(f"Bound of {max(all_candidates) / sr} maintained for {base_ts/sr}")
+        new_bound = max( candidates  )
 
         bounds[i][2] = new_bound
 
+    bounds.sort(key=lambda x: x[0], reverse=False)
 
     alignment_bounds = []
-    for base_ts, max_indices, reaction_upper_bound in bounds:
-        alignment_bounds.append( (base_ts, reaction_upper_bound - base_ts + grace)  )
-
-    alignment_bounds.sort(key=lambda x: x[1], reverse=False)
+    for base_ts, max_indices, bounding_intercept in bounds:
+        alignment_bounds.append( (base_ts, bounding_intercept + grace)  )
 
     # profiler.disable()
     # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
@@ -214,7 +235,7 @@ def print_alignment_bounds(reaction):
     alignment_bounds = reaction['alignment_bounds']
     print(f"The alignment bounds:")
     for base_ts, intercept in alignment_bounds:
-        print(f"\t{base_ts / sr}  <=  {(base_ts + intercept) / sr}")
+        print(f"\t{base_ts / sr}  <=  {(base_ts + intercept) / sr} (int={intercept})")
 
 
     gt = reaction.get('ground_truth')
@@ -269,5 +290,4 @@ def get_bound(alignment_bounds, base_start, reaction_end, base_end=None):
     matching_intercepts = [intercept for base_ts,intercept in alignment_bounds if base_start < base_ts]
     if len(matching_intercepts) > 0:
         return min(matching_intercepts)
-
     return reaction_end - base_end 

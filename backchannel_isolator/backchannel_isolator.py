@@ -295,7 +295,7 @@ def pad_segments(segments, length, pad_beginning=0.1, pad_ending=0.1):
     
     return padded_segments
 
-def apply_segments(audio, segments, audibility_threshold=0.01, suppresion_period=2): 
+def apply_segments(reaction, audio, segments, audibility_threshold=0.01, suppresion_period=2): 
     # Initialize a new audio array with zeros
     suppressed_audio = np.zeros_like(audio)
     suppresion_period *= sr
@@ -403,7 +403,7 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
     padded_segments = pad_segments(confirmed_segments, len(reaction_data), pad_beginning=0.75, pad_ending=0.25)
     merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
 
-    suppressed_reaction = apply_segments(reaction_data, merged_segments)
+    suppressed_reaction = apply_segments(reaction, reaction_data, merged_segments)
 
 
     if extra_reaction is not None:
@@ -492,6 +492,8 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
 
         print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
         mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)
+
+
 
     return backchannel_path
 

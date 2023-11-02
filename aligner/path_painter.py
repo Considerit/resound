@@ -22,13 +22,17 @@ attempts_progression = {
 }
 
 
-def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=None, attempts=0):
 
-    if chunk_size is None: 
-        chunk_size = max(reaction.get('chunk_size', 0), attempts_progression['chunk_size'][attempts])
-        chunk_size *= sr
+def get_chunk_size(reaction, attempts=0):
+    chunk_size = max(reaction.get('chunk_size', 0), attempts_progression['chunk_size'][attempts])
+    chunk_size *= sr    
+    chunk_size = int(chunk_size)
+    return chunk_size
+
+def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, attempts=0):
 
 
+    chunk_size = get_chunk_size(reaction, attempts=attempts)
     if allowed_spacing is None: 
         allowed_spacing = attempts_progression['allowed_spacing'][attempts]
         # print(f"Attempts={attempts}   {attempts % 3}    {allowed_spacing}")
@@ -45,44 +49,88 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
     initialize_path_pruning()
 
     
-    chunk_size = int(chunk_size)
     step = int(.5 * sr)
 
 
     start = time.perf_counter()
 
+    print("FIND SEGMENTS")
+
     segments = find_segments(reaction, chunk_size, step, peak_tolerance)
 
-    splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
+    splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
-    pruned_segments, __ = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = False)
+    print("ABSORB")
+    consolidated_segments = consolidate_segments(segments, bridge_gaps=True)
 
-    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
-    sharpen_segments(reaction, chunk_size, step, pruned_segments, allowed_spacing)
 
-    # pruned_segments = prune_low_quality_segments(reaction, pruned_segments, allowed_spacing)
-    
-    if attempts % 3 == 0:
-        pruned_segments = prune_neighbors(reaction, pruned_segments, allowed_spacing)
+    print("PRUNE UNREACHABLE")
 
-    pruned_segments, joinable_segment_map = prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links = True)
+    __ = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
 
-    splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
+    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
-    print(f"Constructing paths from {len(pruned_segments)} viable segments")
+    print("SHARPEN INTERCEPT")
+    sharpen_intercept(reaction, chunk_size, step, consolidated_segments, allowed_spacing)
 
-    paths = construct_all_paths(reaction, pruned_segments, joinable_segment_map, allowed_spacing)
+
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    print("ABSORB2")
+    consolidated_segments = consolidate_segments(consolidated_segments, bridge_gaps=True)
+
+    # for seg in consolidated_segments:
+    #     rs,re,bs,be = seg.get('end_points')
+    #     print(f"[{rs-bs}] {bs/sr}-{be/sr} / {rs/sr}-{re/sr}   [{seg.get('pruned')}]")
+
+    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    print("SHARPEN ENDPOINTS")
+
+    sharpen_endpoints(reaction, chunk_size, step, consolidated_segments, allowed_spacing)
+
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    print("SHARPEN INTERCEPT2")
+
+    sharpen_intercept(reaction, chunk_size, step, consolidated_segments, allowed_spacing)
+
+    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    print("THIN CLUSTERS")
+
+    prune_low_quality_segments(reaction, consolidated_segments)
+
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    # if attempts % 3 == 0:
+    print("PRUNE NEIGHBORS")
+
+    prune_neighbors(reaction, consolidated_segments, allowed_spacing)
+
+    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    print("PRUNE UNREACHABLE2")
+
+    joinable_segment_map = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
+
+    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    print(f"Constructing paths from {len(consolidated_segments)} viable segments")
+
+    paths = construct_all_paths(reaction, consolidated_segments, joinable_segment_map, allowed_spacing)
 
     segments_by_key = {}
-    for segment in segments:
+    for segment in consolidated_segments:
         segments_by_key[segment['key']] = segment
 
-    paths = finesse_paths(reaction, paths, segments_by_key)
+    # paths = finesse_paths(reaction, paths, segments_by_key)
 
     if len(paths) == 0 and attempts < len(attempts_progression['chunk_size']) - 1: 
         print(f"No paths found.")
-        splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
+        splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
 
         return paint_paths(reaction, peak_tolerance, attempts=attempts+1)
 
@@ -91,15 +139,237 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, chunk_size=No
     best_path = find_best_path(reaction, paths)
     # best_path = compress_segments(best_path)
 
-    best_path = micro_align_path(reaction, best_path, segments_by_key)
+    micro_aligned = micro_align_path(reaction, best_path, segments_by_key)
 
+    best_path = find_best_path(reaction, [best_path, micro_aligned])
     alignment_duration = (time.perf_counter() - start) / 60 # in minutes
 
     splay_paint(reaction, segments, stroke_alpha=.2, show_live=False, paths=[best_path], chunk_size=chunk_size)
 
     return best_path
 
+def consolidate_segments(all_segments, bridge_gaps=False):
+    intercepts = {}
+    seen = {}  
+    intercept_map = {}  
+    all_segments = [s for s in all_segments if not s.get('pruned', False)]
 
+    for s in all_segments: 
+
+        dup_key = f"{s['end_points'][2]}-{s['end_points'][3]}-{s['end_points'][0]}-{s['end_points'][1]}"
+        if dup_key in seen:
+            continue
+        seen[dup_key] = True
+
+        intercept = s['end_points'][0] - s['end_points'][2]
+        key = round(intercept / sr / 2)
+        if key not in intercepts:
+            intercepts[key] = []
+            intercept_map[key] = intercept
+
+        intercepts[key].append(s)
+
+        intercept_map[key] = min(intercept_map[key], intercept)
+
+
+
+    filtered_segments = []
+    for key, segments in intercepts.items():        
+        intercept = intercept_map[key]
+        if len(segments) == 1:
+            filtered_segments.append(segments[0])
+            continue
+
+        if len(segments) == 0:
+            raise(Exception("No segments!", key))
+
+        max_bs = 0
+        min_bs = 999999999999999999999999999999999
+        not_subsumed = []
+        for i, s in enumerate(segments):
+            bs = s['end_points'][2]
+            be = s['end_points'][3]
+            # print('ABSORB:', intercept, bs/sr, be/sr)
+
+
+            subsumed_by_other = False
+            for j, s2 in enumerate(segments):
+                if i==j:
+                    continue
+                bs2 = s2['end_points'][2]
+                be2 = s2['end_points'][3]
+
+                if bs2 <= bs and be2 >= be:
+                    subsumed_by_other = bs2 != bs or be2 != be
+                    break
+
+            if not subsumed_by_other:
+                not_subsumed.append(s)
+
+        if len(not_subsumed) == 0:
+            print(f"ERROR CASE: everything subsumed {intercept} {len(segments)}", segments)
+
+        filtered_segments += not_subsumed
+
+        if False: 
+            if len(not_subsumed) == 1 or not bridge_gaps:
+                filtered_segments += not_subsumed
+            else:
+
+                # yoyo = intercept < 79*sr and intercept > 77*sr
+
+                bridge_candidates = not_subsumed
+
+                bridge_occurred = True
+                while bridge_occurred:
+
+                    bridge_occurred = False
+
+                    bridged = {}
+
+                    bridge_candidates.sort(key=lambda x: x['end_points'][3] - x['end_points'][2], reverse=True) 
+                    evaluated_this_round = []
+
+                    while( len(bridge_candidates) > 0 ):
+
+
+                        super_segment = bridge_candidates.pop()
+                        if str(super_segment['end_points']) in bridged:
+                            continue
+
+                        bs = super_segment['end_points'][2]
+                        be = super_segment['end_points'][3]
+
+                        # if yoyo:
+                        #     print(f"SUPER: {bs/sr}-{be/sr}")
+
+                        def dist_from_super(seg):
+                            bs2 = s['end_points'][2]
+                            be2 = s['end_points'][3]
+                            d = min(abs(bs2 - be), abs(bs - be2))
+                            return d
+
+
+                        bridge_candidates.sort(key=dist_from_super)
+
+
+
+                        for s in bridge_candidates:
+                            if str(s['end_points']) in bridged: 
+                                continue
+
+                            bs = super_segment['end_points'][2]
+                            be = super_segment['end_points'][3]
+
+                            bs2 = s['end_points'][2]
+                            be2 = s['end_points'][3]
+
+                            if bs == bs2 and be2 == be: 
+                                continue
+
+                            d = min(abs(bs2 - be), abs(bs-be2))
+
+
+                            # if yoyo:
+                            #     print(f"\tSUB: {bs2/sr}-{be2/sr}")
+
+                            if d <= be - bs: # only subsume if the section to be subsumed is closer to the big segment than its width
+                                # if yoyo:
+                                #     print(f"\t\tBRIDGED!")
+
+                                bridge_occurred = True
+
+                                super_segment['end_points'] = [ min(bs,bs2) + intercept, max(be,be2) + intercept, min(bs,bs2), max(be,be2) ]
+                                # existing_strokes = {}
+                                # for stroke in super_segment['strokes']:
+                                #     existing_strokes[stroke[2]] = True
+                                for stroke in s['strokes']:
+                                    # if stroke[2] not in existing_strokes:
+                                    # existing_strokes[stroke[2]] = True
+                                    super_segment['strokes'].append(stroke)
+
+                                bridged[str(s['end_points'])] = True
+
+                        evaluated_this_round.append(super_segment)
+
+
+                    bridge_candidates = [s for s in evaluated_this_round if str(s['end_points']) not in bridged]
+
+                filtered_segments += bridge_candidates
+
+
+    
+    merge_thresh = int(sr / 2)
+    if bridge_gaps:
+        by_intercept = [(s['end_points'][0] - s['end_points'][2], s) for s in filtered_segments]
+        by_intercept.sort(  key=lambda x: x[0]  )
+        merged = {} # indicies of by_intercept that have already been merged into a different segment
+
+        merge_happened = True
+        iteration = 0
+        while merge_happened:
+            # print(f"Finding merges iteration {iteration}")
+            iteration += 1
+            merge_happened = False
+
+            for i, (intercept, segment) in enumerate(by_intercept):
+                if i in merged: 
+                    continue
+
+                for j in range(i+1, len(by_intercept)):
+                    if j in merged: 
+                        continue
+
+                    # we're done finding merge candidates if our current intercept is too far out of bounds
+                    candidate_intercept, candidate_segment = by_intercept[j]
+                    if candidate_intercept - intercept > merge_thresh:
+                        break
+
+                    # only subsume if the section to be subsumed is closer to the big segment than its width
+                    candidate_seg_length = candidate_segment['end_points'][3] - candidate_segment['end_points'][2]                    
+                    dx = min( abs(segment['end_points'][3] - candidate_segment['end_points'][2]), abs(candidate_segment['end_points'][3] - segment['end_points'][2]))
+                    dy = abs(candidate_intercept - intercept)
+                    dist_from_segment = (dx ** 2 + dy ** 2) ** 0.5
+                    if dist_from_segment > candidate_seg_length / 2: 
+                        continue
+
+                    # merge!
+                    merge_happened = True
+                    seg_length = segment['end_points'][3] - segment['end_points'][2]
+                    if seg_length > candidate_seg_length:
+                        src = candidate_segment
+                        dest = segment
+                        target_intercept = intercept
+                        merged[j] = True
+                        # print(f"\tMERGE! {target_intercept / sr}: {j} [{src['end_points'][2]/sr} - {src['end_points'][3]/sr}] => {i} [{dest['end_points'][2]/sr} - {dest['end_points'][3]/sr}]")
+
+                    else: 
+                        src = segment
+                        dest = candidate_segment
+                        target_intercept = candidate_intercept                        
+                        merged[i] = True
+                        # print(f"\tMERGE! {target_intercept / sr}: {i} [{src['end_points'][2]/sr} - {src['end_points'][3]/sr}] => {j} [{dest['end_points'][2]/sr} - {dest['end_points'][3]/sr}]")
+
+                    (src_rs, src_re, src_bs, src_be) = src['end_points']
+                    (dest_rs, dest_re, dest_bs, dest_be) = dest['end_points']
+
+                    dest['end_points'] = [ min(src_bs,dest_bs) + target_intercept, max(src_be,dest_be) + target_intercept, min(src_bs,dest_bs), max(src_be,dest_be) ]
+
+                    for stroke in src['strokes']:
+                        dest['strokes'].append(stroke)
+
+                    if src == segment:
+                        break # we've merged into this one, so stop merging more into it
+
+
+        consolidated_segments = [s for i, (b, s) in enumerate(by_intercept) if i not in merged]
+
+    else: 
+        consolidated_segments = filtered_segments
+
+
+    print(f'\t\tconsolidate_segments resulted in {len(consolidated_segments)} segments, down from {len(all_segments)}')
+    return consolidated_segments
 
 
 def get_neighborhoods(segments, neighborly_distance): 
@@ -186,6 +456,8 @@ def get_neighborhoods(segments, neighborly_distance):
 def prune_neighbors(reaction, segments, allowed_spacing):
     neighborly_distance = 4 * sr 
 
+    segments = [s for s in segments if not s.get('pruned', False)]
+
     neighborhoods = get_neighborhoods(segments, neighborly_distance)
 
 
@@ -235,7 +507,7 @@ def prune_neighbors(reaction, segments, allowed_spacing):
 
 
     to_keep = [s for s in segments if s not in to_eliminate]
-    print(f"Pruned {len(segments) - len(to_keep)} of {len(segments)} neighbor segments")
+    print(f"Pruned neighbors: kept {len(to_keep)} of {len(segments)} segments to start")
 
     prune_cache['neighbor'] += len(to_eliminate)
     # visualize_neighborhoods(segments, neighborhoods)
@@ -270,51 +542,51 @@ def visualize_neighborhoods(segments, neighborhoods):
 
 
 
-def merge_continuous_segments_separated_by_filler(reaction, path, strokes):
-    new_path = []
-    for idx, segment in enumerate(path):
-        reaction_start, reaction_end, base_start, base_end, is_filler, strokes_key = segment
-        # print(f"COLLAPSING FOR {base_start/sr}-{base_end/sr}")
+# def merge_continuous_segments_separated_by_filler(reaction, path, strokes):
+#     new_path = []
+#     for idx, segment in enumerate(path):
+#         reaction_start, reaction_end, base_start, base_end, is_filler, strokes_key = segment
+#         # print(f"COLLAPSING FOR {base_start/sr}-{base_end/sr}")
 
-        # if strokes_key is not None:
-        #     my_strokes = strokes[strokes_key]
+#         # if strokes_key is not None:
+#         #     my_strokes = strokes[strokes_key]
 
-        #     relevant_strokes = []
-        #     for stroke in my_strokes['strokes']:
-        #         if stroke[2] >= base_start and stroke[3] <= base_end:
-        #             relevant_strokes.append(stroke)
-        #         else: 
-        #             print(f"\tRemoving: {stroke[2]/sr}-{stroke[3]/sr}")
+#         #     relevant_strokes = []
+#         #     for stroke in my_strokes['strokes']:
+#         #         if stroke[2] >= base_start and stroke[3] <= base_end:
+#         #             relevant_strokes.append(stroke)
+#         #         else: 
+#         #             print(f"\tRemoving: {stroke[2]/sr}-{stroke[3]/sr}")
 
 
-        #     strokes[strokes_key]['strokes'] = relevant_strokes
+#         #     strokes[strokes_key]['strokes'] = relevant_strokes
 
-        extended = False
-        if idx > 0 and idx < len(path) - 1:
-            if is_filler and not path[idx-1][-1] and not path[idx+1][-1]: # if this segment is filler surrounded by non-filler...
-                # and prior segment and later segment are continuous with each other...
-                prior_segment = path[idx-1]
-                later_segment = path[idx+1]
-                intercept_prior = prior_segment[0] - prior_segment[2]
-                intercept_later = later_segment[0] - later_segment[2]
+#         extended = False
+#         if idx > 0 and idx < len(path) - 1:
+#             if is_filler and not path[idx-1][-1] and not path[idx+1][-1]: # if this segment is filler surrounded by non-filler...
+#                 # and prior segment and later segment are continuous with each other...
+#                 prior_segment = path[idx-1]
+#                 later_segment = path[idx+1]
+#                 intercept_prior = prior_segment[0] - prior_segment[2]
+#                 intercept_later = later_segment[0] - later_segment[2]
 
-                if abs( intercept_prior - intercept_later ) / sr < .1:
-                    # remove filler, merge prior into later
-                    new_path.pop()
-                    later_segment[0] = prior_segment[0]
-                    later_segment[2] = prior_segment[2]
-                    later_segment[1] = prior_segment[0] + later_segment[3] - later_segment[2]
+#                 if abs( intercept_prior - intercept_later ) / sr < .1:
+#                     # remove filler, merge prior into later
+#                     new_path.pop()
+#                     later_segment[0] = prior_segment[0]
+#                     later_segment[2] = prior_segment[2]
+#                     later_segment[1] = prior_segment[0] + later_segment[3] - later_segment[2]
 
-                    aaa = len(strokes[later_segment[5]])
-                    strokes[later_segment[5]].extend(strokes[prior_segment[5]])
-                    # print(f"EXTENDING!!!!! Strokes from {aaa} to {len(strokes[later_segment[5]])} by adding {len(strokes[prior_segment[5]])}", )
+#                     aaa = len(strokes[later_segment[5]])
+#                     strokes[later_segment[5]].extend(strokes[prior_segment[5]])
+#                     # print(f"EXTENDING!!!!! Strokes from {aaa} to {len(strokes[later_segment[5]])} by adding {len(strokes[prior_segment[5]])}", )
 
-                    extended = True
+#                     extended = True
 
-        if not extended:
-            new_path.append(segment)
+#         if not extended:
+#             new_path.append(segment)
 
-    return new_path
+#     return new_path
 
 
 from sklearn.cluster import DBSCAN
@@ -335,38 +607,79 @@ def micro_align_path(reaction, path, strokes):
             new_path.append(segment)
             continue
 
-        my_strokes = strokes[strokes_key]
 
-        if len(my_strokes['strokes']) == 0:
-            new_path.append(segment)
-            continue
+        if True:
 
-        scatter = []
-        min_intercept = None
-        max_intercept = None
-        for stroke in my_strokes['strokes']:
-            if stroke[2] >= base_start - 3 * sr and stroke[3] <= base_end + 3 * sr:
-                x = stroke[2]
-                b = stroke[0] - stroke[2]
+            my_strokes = strokes[strokes_key]
 
-                scatter.append( (x,b,stroke)  )
+            if len(my_strokes['strokes']) == 0:
+                new_path.append(segment)
+                continue
 
-                if min_intercept is None or min_intercept > b:
-                    min_intercept = b
+            scatter = []
+            min_intercept = None
+            max_intercept = None
+            for stroke in my_strokes['strokes']:
+                if stroke[2] >= base_start - 3 * sr and stroke[3] <= base_end + 3 * sr:
+                    x = stroke[2]
+                    b = stroke[0] - stroke[2]
 
-                if max_intercept is None or max_intercept < b:
-                    max_intercept = b
+                    scatter.append( (x,b,stroke)  )
 
-        scatter.sort(key=lambda x: x[0])
+                    if min_intercept is None or min_intercept > b:
+                        min_intercept = b
 
-        if min_intercept is None or max_intercept is None:
-            new_path.append(segment)
-            continue
+                    if max_intercept is None or max_intercept < b:
+                        max_intercept = b
 
-        # my_range = max_intercept - min_intercept
-        # if my_range < .05 * sr:
-        #     new_path.append(segment)
-        #     continue
+            scatter.sort(key=lambda x: x[0])
+
+            if min_intercept is None or max_intercept is None:
+                new_path.append(segment)
+                continue
+
+            # my_range = max_intercept - min_intercept
+            # if my_range < .05 * sr:
+            #     new_path.append(segment)
+            #     continue
+
+        else: 
+            scatter = []
+            my_strokes = {
+                'strokes': []
+            }
+            chunk_size = get_chunk_size(reaction)
+            step = int(.5 * sr)
+            padding = 2 * step
+
+            starting_points = range(base_start, base_end - chunk_size, step)
+            for i,start in enumerate(starting_points):
+                d = start - base_start
+                r_start = reaction_start + d - padding
+                r_end = r_start + 2 * padding
+
+            
+                signals, evaluate_with = get_signals(reaction, start, r_start, chunk_size)
+
+                candidates = get_candidate_starts(reaction, signals, peak_tolerance=.7, open_start=r_start, closed_start=start, chunk_size=chunk_size, distance=1 * sr, upper_bound=r_end, evaluate_with=evaluate_with)
+
+                candidates = [c + r_start + padding for c in candidates if c + r_start + padding >= reaction_start + d and c + r_start + padding + chunk_size <= reaction_end + d  ]
+
+                y1 = candidates[0] + r_start + padding
+
+                y2 = y1+chunk_size
+                x1 = start
+                x2 = start+chunk_size
+
+                new_stroke = (y1,y2,x1,x2)
+
+                b = y1 - x1
+                scatter.append( (x1, b, new_stroke)  )
+
+                scatter.sort(key=lambda x: x[0])
+
+                my_strokes['strokes'].append(new_stroke)
+
 
 
 
@@ -432,29 +745,29 @@ def micro_align_path(reaction, path, strokes):
             new_path.append(segment)
             continue
 
-        if len(subsegments) == 1:
-            subsegment = subsegments[0]
-            start_x, intercept, _ = subsegment[0]
-            end_x, _, _ = subsegment[-1]
-            new_subsegments = [
-                [],
-                [],
-                [],
-                [],
-            ]
+        # if len(subsegments) == 1:
+        #     subsegment = subsegments[0]
+        #     start_x, intercept, _ = subsegment[0]
+        #     end_x, _, _ = subsegment[-1]
+        #     new_subsegments = [
+        #         [],
+        #         [],
+        #         [],
+        #         [],
+        #     ]
 
-            for stroke in subsegment:
-                idx = min(3, math.floor(  4 * (stroke[0] - start_x) / (end_x - start_x)   ))
+        #     for stroke in subsegment:
+        #         idx = min(3, math.floor(  4 * (stroke[0] - start_x) / (end_x - start_x)   ))
 
-                # stroke = list(stroke)
-                # import random
-                # variation = random.randint(-int(sr / 5), int(sr / 5) )
-                # stroke[0] += variation
-                # stroke[1] += variation
+        #         # stroke = list(stroke)
+        #         # import random
+        #         # variation = random.randint(-int(sr / 5), int(sr / 5) )
+        #         # stroke[0] += variation
+        #         # stroke[1] += variation
 
-                new_subsegments[idx].append(stroke)
+        #         new_subsegments[idx].append(stroke)
 
-            subsegments = [s for s in new_subsegments if len(s) > 0]
+        #     subsegments = [s for s in new_subsegments if len(s) > 0]
 
 
 
@@ -475,6 +788,8 @@ def micro_align_path(reaction, path, strokes):
 
         # Fit lines to the clusters
         lines = []
+        intercept = reaction_start - base_start
+
         for i,subsegment in enumerate(subsegments):
             subsegment.sort(key=lambda x: x[0])
 
@@ -487,8 +802,9 @@ def micro_align_path(reaction, path, strokes):
             subsegment_reaction_start = max(0,            reaction_start + (subsegment_start - base_start) - int(sr/2))
             subsegment_reaction_end   = min(reaction_len, reaction_end   + (subsegment_end   - base_end)   + int(sr/2))
 
-            print(f"{base_start / sr}-{base_end / sr}  {subsegment_start / sr}-{subsegment_end / sr}  {subsegment_reaction_start / sr}-{subsegment_reaction_end / sr} {(subsegment_end - subsegment_start) / sr} {(max_intercept - min_intercept) / sr}")
-            best_intercept = find_best_intercept(reaction, intercepts, subsegment_start, subsegment_end, include_cross_correlation=True, reaction_start=subsegment_reaction_start, reaction_end=subsegment_reaction_end)
+            intercepts.append(intercept)
+            # print(f"{base_start / sr}-{base_end / sr}  {subsegment_start / sr}-{subsegment_end / sr}  {subsegment_reaction_start / sr}-{subsegment_reaction_end / sr} {(subsegment_end - subsegment_start) / sr} {(max_intercept - min_intercept) / sr}")
+            best_intercept = find_best_intercept(reaction, intercepts, subsegment_start, subsegment_end, include_cross_correlation=False, reaction_start=subsegment_reaction_start, reaction_end=subsegment_reaction_end)
                 
             lines.append( (best_intercept, subsegment, subsegment_start, subsegment_end)   )
 
@@ -540,7 +856,7 @@ def micro_align_path(reaction, path, strokes):
         # commit the new path to the overall path
         new_path += sharpened_sub_path
 
-        if True: 
+        if False: 
 
             x_vals = []  # to store starts for plotting
             y_vals = []  # to store intercepts for plotting
@@ -595,17 +911,127 @@ def micro_align_path(reaction, path, strokes):
     return new_path
 
 
-def finesse_paths(reaction, paths, strokes):
-    merged_paths = []
-    for path in paths:
-        merged_path = merge_continuous_segments_separated_by_filler(reaction, path, strokes)
-        merged_paths.append(merged_path)
+# def finesse_paths(reaction, paths, strokes):
+#     merged_paths = []
+#     for path in paths:
+#         merged_path = merge_continuous_segments_separated_by_filler(reaction, path, strokes)
+#         merged_paths.append(merged_path)
 
-    return merged_paths
-
-
+#     return merged_paths
 
 
+
+#########################################
+# Getting rid of clusters of bad segments
+# 1) Identify clusters of candidate segments where there are 5 or more segments such 
+# that each segment overlaps each other segment in the cluster by 80% or more in their 
+# position in the song (base_start, base_end)
+
+# 2) For each cluster, use get_segment_mfcc_cosine_similarity_score to score each 
+# candidate. Mark the ones that fall below 50% of the best cluster score as 
+# prunable.
+
+def get_overlap_percentage(segment1, segment2):
+    # Assuming segments are tuples/lists of (base_start, base_end)
+    overlap_start = max(segment1[0], segment2[0])
+    overlap_end = min(segment1[1], segment2[1])
+    overlap_duration = max(0, overlap_end - overlap_start)
+    segment1_duration = segment1[1] - segment1[0]
+    return (overlap_duration / segment1_duration) if segment1_duration > 0 else 0
+
+def find_clusters(segments):
+    clusters = []
+
+    overlap_threshold = .7
+    for current_segment in segments:
+        found_cluster = False
+        current_segment_range = (current_segment['end_points'][2], current_segment['end_points'][3])
+        for cluster in clusters:
+            if all(get_overlap_percentage(current_segment_range, (seg['end_points'][2], seg['end_points'][3])) >= overlap_threshold for seg in cluster) and \
+               all(get_overlap_percentage((seg['end_points'][2], seg['end_points'][3]), current_segment_range) >= overlap_threshold for seg in cluster):
+                cluster.append(current_segment)
+                found_cluster = True
+                break
+        if not found_cluster:
+            clusters.append([current_segment])
+    return [cluster for cluster in clusters if len(cluster) >= 5]
+
+def prune_low_quality_segments(reaction, segments):
+    # Step 1: Cluster Identification
+
+    segments = [s for s in segments if not s.get('pruned')]
+    clusters = find_clusters(segments)
+
+    # Step 2 and 3: Scoring and Pruning
+    for cluster in clusters:
+        for segment in cluster:
+            segment['score'] = get_segment_mfcc_cosine_similarity_score(reaction, segment['end_points'])
+            segment['pruned'] = False  # Assume not pruned initially
+
+        # Find the best score in the cluster
+        best_score = max(segment['score'] for segment in cluster)
+        
+        # Prune segments scoring less than 50% of the best score
+        for segment in cluster:
+            if segment['score'] < 0.5 * best_score:
+                segment['pruned'] = True
+
+    # Visualize the clusters
+    base_audio_len = len(conf['song_audio_data'])
+    reaction_audio_len = len(reaction['reaction_audio_data'])
+    # visualize_clusters(clusters, base_audio_len, reaction_audio_len)
+
+    # Filter out the pruned segments
+    final_segments = [segment for cluster in clusters for segment in cluster if not segment['pruned']]
+
+    print(f"Kept {len(final_segments)} of {len(segments)} segments after pruning")
+    return final_segments
+
+
+import matplotlib.colors as mcolors
+
+def visualize_clusters(clusters, base_audio_len, reaction_audio_len):
+    # Create a colormap from red (0) to green (1)
+    cmap = mcolors.LinearSegmentedColormap.from_list("", ["red", "green"])
+    
+    # Initialize the plot
+    plt.figure(figsize=(10, 6))
+    ax = plt.gca()
+
+    # Iterate over each cluster
+    for cluster in clusters:
+        # Get the best score within the cluster for color scaling
+        best_score = max(segment['score'] for segment in cluster)
+
+        # Plot each segment in the cluster
+        for segment in cluster:
+            base_start, base_end = segment['end_points'][2], segment['end_points'][3]
+            reaction_start, reaction_end = segment['end_points'][0], segment['end_points'][1]
+            score = segment['score']
+            is_pruned = segment.get('pruned', False)
+
+            # Scale the color by the score relative to the best score in the cluster
+            color = cmap(score / best_score)
+            line_style = "--" if is_pruned else "-"
+
+            # Draw the segment
+            ax.plot([base_start, base_end], [reaction_start, reaction_end], 
+                    linestyle=line_style, color=color, linewidth=2)
+
+    # Set plot limits and labels
+    ax.set_xlim([0, base_audio_len])
+    ax.set_ylim([0, reaction_audio_len])
+    ax.set_xlabel('Position in Base Audio')
+    ax.set_ylabel('Position in Reaction Audio')
+
+    # Show the plot
+    plt.show()
+
+
+
+
+
+#######
 
 def sharpen_path_boundaries(reaction, original_path):
     sharpener_width = 1 * sr
@@ -755,7 +1181,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
         fill_len = song_length - path[-1][3]
         if fill_len > 0:
 
-            if fill_len < sr: 
+            if True: # fill_len < sr: 
                 path[-1][3] += fill_len
                 path[-1][1] += fill_len
             else:
@@ -774,6 +1200,9 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
 
 
     for c in segments:
+        if c.get('pruned', False):
+            continue
+
         if near_song_beginning(c, allowed_spacing):
             reaction_start, reaction_end, base_start, base_end = c['end_points']
             start_path = [ [reaction_start, reaction_end, base_start, base_end, False, c['key']] ]
@@ -999,32 +1428,6 @@ def branch_from( reaction, partial_path, joinable_segments, allowed_spacing ):
     return branches
 
 
-def prune_low_quality_segments(reaction, segments, allowed_spacing):
-    if len(segments) == 0:
-        return segments
-
-    good_segments = []
-    score_total = 0
-    for segment in segments:
-        score = get_segment_mfcc_cosine_similarity_score
-
-        cosine_score = get_segment_mfcc_cosine_similarity_score(reaction, segment['end_points'])
-
-        good_segments.append([segment, cosine_score])
-        score_total += cosine_score
-    avg = score_total / len(segments)
-
-    final_segments = []
-    for segment, cosine_score in good_segments:
-        if cosine_score < .6 and cosine_score < .75 * avg: 
-            prune_cache['segment_quality'] += 1
-            continue 
-        else: 
-            final_segments.append(segment)
-
-    print(f"Kept {len(final_segments)} of {len(segments)} based on quality")
-    return final_segments
-
 
 
 
@@ -1033,6 +1436,7 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links 
 
     segments = [s for s in segments if not s.get('pruned', False)]
     
+    starting_segment_num = len(segments)
     segments.sort( key=lambda x: x['end_points'][1]  )  # sort by reaction_end
 
     joinable_segments = {}
@@ -1044,6 +1448,12 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links 
         at_end = segment['at_end'] = near_song_end(segment, allowed_spacing)
 
         if len(joins) == 0 and not at_end:
+            # if prune_links: 
+            #     print("PRUNING BECAUSE NO JOINS FOUND", segment_id)
+            #     song_length = len(conf.get('song_audio_data'))
+            #     print(song_length/sr, (song_length - segment['end_points'][3])/sr, allowed_spacing/sr)
+
+
             segment['pruned'] = True
             del joinable_segments[segment_id]
             prune_cache['unreachable'] += 1
@@ -1066,6 +1476,11 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links 
                     del joinable_segments[segment_id]
                     pruned_another = True
                     prune_cache['unreachable'] += 1
+
+
+                    # if prune_links: 
+                    #     print("PRUNING BECAUSE CANT REACH END", segment_id)
+
 
     # now clean up all segments that can't be reached from the start
     pruned_another = True
@@ -1091,12 +1506,18 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links 
                 prune_cache['unreachable'] += 1
 
 
+                # if prune_links: 
+                #     print("PRUNING BECAUSE CANT REACH FROM STARET", segment_id)
+
+
     segments = [s for s in segments if not s.get('pruned', False)]
 
     # for k,v in joinable_segments.items():
     #     print(k,v)
 
-    return segments, joinable_segments
+    print(f"Pruned unreachable segments: {len(segments)} remaining of {starting_segment_num} to start")
+
+    return joinable_segments
 
 
 
@@ -1119,7 +1540,7 @@ def get_joinable_segments(reaction, segment, all_segments, allowed_spacing, prun
         if ay==cy and by == dy and ax==cx and bx == dx:
             continue
 
-        on_top = cy - cx >= .999 * (ay - ax)  # solving for b in y=ax+b, where a=1
+        on_top = cy - cx > ay - ax  # solving for b in y=ax+b, where a=1
         over_each_other = bx + allowed_spacing >= cx -allowed_spacing and ax < dx
 
 
@@ -1222,23 +1643,26 @@ def find_best_intercept(reaction, intercepts, base_start, base_end, include_cros
         reaction_data = reaction.get('reaction_audio_data')
         song_segment = song_data[base_start:base_end]
 
-        padding_left = (base_end - base_start)
-        padding_right = padding_left
+        width = (base_end - base_start)
 
-        search_start = max(0, reaction_start - padding_left)
-        search_end   = min(len(reaction_data), reaction_end + padding_right)
+        search_start = max(0, reaction_start - width)
+        search_end   = min(len(reaction_data), reaction_end + width)
         reaction_segment = reaction_data[search_start:search_end]
 
         # Perform the correlation
         cross_corr = correlate(reaction_segment, song_segment, mode="valid")
 
+        search_window = int(sr/2)
+
         # Calculate the start and end index in cross_corr corresponding to reaction_start and reaction_end
-        corr_search_start = reaction_start - search_start
-        corr_search_end = corr_search_start + padding_left + padding_right
+        corr_search_start = min(reaction_start, width) - search_window
+        corr_search_end   = corr_search_start + 2 * search_window
 
         # Ensure the bounds are within the length of the cross_corr array
         corr_search_start = max(0, corr_search_start)
-        corr_search_end = min(len(cross_corr), corr_search_end)
+        corr_search_end = min(len(cross_corr) - 1, corr_search_end)
+
+        # print(f"{corr_search_start/sr}-{corr_search_end/sr} (prev={(corr_search_start + (base_end - base_start) + search_window)/sr}) ({len(cross_corr)/sr})")
 
         # Find the maximum correlation value within the constrained window
         windowed_corr_max_index = np.argmax(cross_corr[corr_search_start:corr_search_end]) + corr_search_start
@@ -1251,17 +1675,17 @@ def find_best_intercept(reaction, intercepts, base_start, base_end, include_cros
         corr_intercept = corr_reaction_start - base_start
 
         # print('corr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, corr_reaction_start / sr, corr_intercept / sr, offset/sr, reaction_start <= corr_reaction_start <= reaction_end)        
-        assert(  reaction_start <= corr_reaction_start <= reaction_end   )
+        assert(  reaction_start <= corr_reaction_start <= reaction_end,  f"{reaction_start/sr} <= {corr_reaction_start/sr} <= {reaction_end/sr}"  )
 
         intercepts.append(corr_intercept)
 
     for b in intercepts:
         if not include_cross_correlation or reaction_start - .05 * sr <= b + base_start <= reaction_end + .05 * sr:
             unique_intercepts[b] = True
-        else: 
-            print('intr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, (b + base_start) / sr, b/sr, reaction_start <= b + base_start <= reaction_end)
+        # else: 
+        #     print('intr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, (b + base_start) / sr, b/sr, reaction_start <= b + base_start <= reaction_end)
 
-            print("FILTERED!")
+        #     print("FILTERED!")
 
 
     best_line_def = None
@@ -1317,12 +1741,14 @@ def plot_scores_of_intercepts(intercepts, scores, corr_intercept, base_start, ba
 
 
 
-def sharpen_segments(reaction, chunk_size, step, segments, allowed_spacing):
+def sharpen_intercept(reaction, chunk_size, step, segments, allowed_spacing):
 
 
     reaction_len = len(reaction.get('reaction_audio_data'))
 
     for segment in segments:
+        if segment.get('pruned', False): 
+            continue
 
         ###################################
         # if we have an imprecise segment composed of strokes that weren't exactly aligned, 
@@ -1341,13 +1767,14 @@ def sharpen_segments(reaction, chunk_size, step, segments, allowed_spacing):
         base_start = segment['end_points'][2]
         base_end = segment['end_points'][3]
 
+        segment['old_end_points'] = segment['end_points']
+
         segment['end_points'] = [intercept + base_start, intercept + base_end, base_start, base_end]
 
 
         # else: 
         #     print(f"PRECISE ALIGNMENT {segment['end_points'][2]/sr}-{segment['end_points'][3]/sr}")
 
-        segment['old_end_points'] = segment['end_points']
 
         if near_song_end(segment, allowed_spacing):
             continue
@@ -1368,6 +1795,11 @@ def sharpen_segments(reaction, chunk_size, step, segments, allowed_spacing):
         #     segment['end_points'] = [new_reaction_start, new_reaction_start + base_end - base_start, base_start, base_end]
 
 
+def sharpen_endpoints(reaction, chunk_size, step, segments, allowed_spacing):
+
+    for segment in segments:
+        if segment.get('pruned', False): 
+            continue
 
         #########################################
         # Now we're going to try to sharpen up the endpoint
@@ -1481,11 +1913,6 @@ def get_signals(reaction, start, reaction_start, chunk_size):
     reaction_audio_mfcc = reaction.get('reaction_audio_mfcc')
     song_audio_mfcc = conf.get('song_audio_mfcc')
 
-    # base_audio_accompaniment = conf.get('song_audio_accompaniment_data')
-    # reaction_audio_accompaniment = reaction.get('reaction_audio_accompaniment_data')
-
-    # reaction_audio_accompaniment_mfcc = reaction.get('reaction_audio_accompaniment_mfcc')    
-    # base_audio_accompaniment_mfcc = conf.get('song_audio_accompaniment_mfcc')
 
     # base_audio_vocals = conf.get('song_audio_vocals_data')
     # reaction_audio_vocals = reaction.get('reaction_audio_vocals_data')
@@ -1497,7 +1924,7 @@ def get_signals(reaction, start, reaction_start, chunk_size):
     open_chunk = reaction_audio[reaction_start:]
     open_chunk_mfcc = reaction_audio_mfcc[:, round( reaction_start / hop_length):]
 
-    # predominantly_silent = is_silent(chunk, threshold_db=-30)
+    predominantly_silent = is_silent(chunk, threshold_db=-40)
     # vocal_dominated = 'vocal' == determine_dominance(base_audio_vocals[start:start+chunk_size], base_audio_accompaniment[start:start+chunk_size])
 
 
@@ -1507,14 +1934,26 @@ def get_signals(reaction, start, reaction_start, chunk_size):
     }
 
     # we'll also send the accompaniment if it isn't vocally dominated
-    # if not vocal_dominated or predominantly_silent:
-    #     chunk = base_audio_accompaniment[start:start+chunk_size]
-    #     open_chunk = reaction_audio_accompaniment[reaction_start:]
+    if False and predominantly_silent:
+        base_audio_accompaniment = conf.get('song_audio_accompaniment_data')
+        reaction_audio_accompaniment = reaction.get('reaction_audio_accompaniment_data')
 
-    #     chunk_mfcc = base_audio_accompaniment_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
-    #     open_chunk_mfcc = reaction_audio_accompaniment_mfcc[:, round( reaction_start / hop_length):]
+        reaction_audio_accompaniment_mfcc = reaction.get('reaction_audio_accompaniment_mfcc')    
+        base_audio_accompaniment_mfcc = conf.get('song_audio_accompaniment_mfcc')
 
-    #     signals['accompaniment'] = (hop_length, chunk_mfcc, open_chunk_mfcc)
+        print("SILENT!", start / sr)
+        chunk = base_audio_accompaniment[start:start+chunk_size]
+        open_chunk = reaction_audio_accompaniment[reaction_start:]
+
+        chunk_mfcc = base_audio_accompaniment_mfcc[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
+        open_chunk_mfcc = reaction_audio_accompaniment_mfcc[:, round( reaction_start / hop_length):]
+
+        signals['accompaniment'] = (hop_length, chunk_mfcc, open_chunk_mfcc)
+        signals['accompaniment mfcc'] = (hop_length, chunk_mfcc, open_chunk_mfcc)
+
+        evaluate_with = 'accompaniment'
+    else:
+        evaluate_with = 'standard'
 
     # elif vocal_dominated: 
     #     song_pitch_contour = conf.get('song_audio_vocals_pitch_contour')
@@ -1540,10 +1979,10 @@ def get_signals(reaction, start, reaction_start, chunk_size):
         chunk_mfcc = song_root_mean_square_energy[:,round(start/hop_length):round((start+chunk_size)/hop_length)]
         open_chunk_mfcc = reaction_root_mean_square_energy[:, round( reaction_start / hop_length):]
 
-    return signals
+    return signals, evaluate_with
 
 
-def get_candidate_starts(reaction, signals, peak_tolerance, open_start, closed_start, chunk_size, distance, upper_bound):
+def get_candidate_starts(reaction, signals, peak_tolerance, open_start, closed_start, chunk_size, distance, upper_bound, evaluate_with='standard'):
 
 
     peak_indices = {}
@@ -1567,10 +2006,10 @@ def get_candidate_starts(reaction, signals, peak_tolerance, open_start, closed_s
     candidates = score_start_candidates(
                                 signals = signals,
                                 peak_indices=peak_indices,
-                                open_chunk=signals['standard'][2], 
-                                closed_chunk=signals['standard'][1], 
-                                open_chunk_mfcc=signals['standard mfcc'][2],
-                                closed_chunk_mfcc=signals['standard mfcc'][1],
+                                open_chunk=signals[evaluate_with][2], 
+                                closed_chunk=signals[evaluate_with][1], 
+                                open_chunk_mfcc=signals[f"{evaluate_with} mfcc"][2],
+                                closed_chunk_mfcc=signals[f"{evaluate_with} mfcc"][1],
                                 current_chunk_size=chunk_size, 
                                 peak_tolerance=peak_tolerance, 
                                 open_start=open_start,
@@ -1608,7 +2047,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
     # Factor in manually configured bounds    
     lower_bounds = get_lower_bounds(reaction, chunk_size)
 
-    seg_cache_key = f"{minimums[0]}-{chunk_size}-{conf['first_n_samples']}-{reaction.get('unreliable_bounds','')}-{len(lower_bounds)}"
+    seg_cache_key = f"{minimums[0]}-{chunk_size}-{conf['first_n_samples']}-{reaction.get('unreliable_bounds','')}-{len(lower_bounds)}-{reaction.get('end_reaction_search_at',0)}-{reaction.get('start_reaction_search_at',0)}-{int(peak_tolerance*100)}"
 
     strokes = []
     active_strokes = []
@@ -1648,21 +2087,22 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
                 latest_lower_bound = lower_bound + (start - lower_bound_ts)
                 break
 
-        candidate_lower_bound = max( min(minimums[-18:]), latest_lower_bound )
+        candidate_lower_bound = max( min(minimums[-18:]), latest_lower_bound, chunk_size )
 
         assert(candidate_lower_bound >= latest_lower_bound)
 
-        reaction_start = max( minimums[0] + start, candidate_lower_bound)
+        reaction_start = max( minimums[0] + start, candidate_lower_bound - chunk_size)
 
-        assert(reaction_start >= latest_lower_bound)
-
-
+        upper_bound = len(reaction_audio) - len(base_audio)
         if start not in candidate_cache:
             upper_bound = get_bound(alignment_bounds, start, reaction_span - (len(base_audio) - start))
 
+            signals, evaluate_with = get_signals(reaction, start, reaction_start, chunk_size)
+            candidates = get_candidate_starts(reaction, signals, peak_tolerance, reaction_start, start, chunk_size, 1 * sr, upper_bound, evaluate_with=evaluate_with)
 
-            signals = get_signals(reaction, start, reaction_start, chunk_size)
-            candidates = get_candidate_starts(reaction, signals, peak_tolerance, reaction_start, start, chunk_size, 1 * sr, upper_bound)
+            candidates = [c + reaction_start for c in candidates if c + reaction_start >= latest_lower_bound]
+            candidates.sort()
+
 
             candidate_cache[start] = candidates
 
@@ -1672,14 +2112,16 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
         else: 
             candidates = candidate_cache[start]
 
-        candidates = [c + reaction_start for c in candidates]
+        
 
-        # for c in candidates:
-        #     assert(c >= latest_lower_bound)
+        for c in candidates:
+            assert(c >= latest_lower_bound, (c-start) / sr)
+            assert(c <= upper_bound, (c-start) / sr)
 
-
-        minimums.append( candidates[0] )
-
+        if len(candidates) > 0:
+            minimums.append( candidates[0] )
+        else: 
+            minimums.append( 0 )
         still_active_strokes = []
 
         already_matched = {}
@@ -1756,7 +2198,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
             segment['pruned'] = True
 
     # splay_paint(reaction, strokes, stroke_alpha=step/chunk_size, show_live=False, chunk_size=chunk_size)
-    return strokes
+    return [stroke for stroke in strokes if not stroke['pruned']]
 
 
 ####################
@@ -1792,7 +2234,7 @@ def near_song_beginning(segment, allowed_spacing):
 
 def near_song_end(segment, allowed_spacing):
     song_length = len(conf.get('song_audio_data'))
-    return song_length - segment['end_points'][3] < allowed_spacing
+    return song_length - segment['end_points'][3] < 3 * allowed_spacing  # because of weird ends of songs, let it be farther away
 
 
 
@@ -1834,8 +2276,11 @@ def splay_paint(reaction, strokes, stroke_alpha, done=False, show_live=True, pat
 def draw_strokes(reaction, chunk_size, strokes, stroke_alpha, paths, intercept_based_figure=False):
 
     alignment_bounds = reaction['alignment_bounds']
-    base_ts, intercepts = zip(*alignment_bounds)
-    base_ts = [bs/sr for bs in base_ts]
+    if len(alignment_bounds) > 0:
+        base_ts, intercepts = zip(*alignment_bounds)
+        base_ts = [bs/sr for bs in base_ts]
+    else: 
+        base_ts = [0, len(conf.get('song_audio_data'))]
 
 
     if reaction.get('ground_truth'):
@@ -1847,11 +2292,10 @@ def draw_strokes(reaction, chunk_size, strokes, stroke_alpha, paths, intercept_b
     #     for stroke in segment['strokes']:   
     #         make_stroke(stroke, linewidth=2, alpha = stroke_alpha, intercept_based_figure=intercept_based_figure)
 
-
     for segment in strokes:
         # if not segment.get('pruned', False) and 'old_end_points' in segment:
         if segment.get('pruned', False):
-            alpha = .25
+            alpha = .2
         else:
             alpha = 1
         make_stroke(segment.get('old_end_points', segment['end_points']), linewidth=2, color='orange', alpha = alpha, intercept_based_figure=intercept_based_figure)
@@ -1898,7 +2342,9 @@ def draw_strokes(reaction, chunk_size, strokes, stroke_alpha, paths, intercept_b
 
     if intercept_based_figure: 
         plt.ylabel("React Audio intercept [s]")        
-        plt.yticks(np.arange(0, max(intercepts) / sr + 30, 30))
+        # plt.yticks(np.arange(0, max(intercepts) / sr + 30, 30))
+        plt.yticks(np.arange(0, max(y) / sr + 30, 30))
+
     else:
         plt.ylabel("Time in React Audio [s]")
         plt.yticks(np.arange(0, len(y) / sr + 30, 30))
