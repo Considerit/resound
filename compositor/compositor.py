@@ -195,6 +195,9 @@ def dynamic_limit_without_combining(base_audio, all_clips, threshold=0.95):
     # Find out the max length amongst all audios
     max_len = max(len(base_audio), max([len(clip['audio']) for clip in all_clips]))
 
+    # Find the peak volume of the base (song) audio
+    base_peak_volume = np.max(np.abs(base_audio))
+
     # For padding purposes
     def pad_audio_chunk(chunk, size):
         if len(chunk) < size:
@@ -218,7 +221,11 @@ def dynamic_limit_without_combining(base_audio, all_clips, threshold=0.95):
             reactor_chunk = pad_audio_chunk(reactor_chunk, chunk_size)
             combined_chunk += reactor_chunk
 
-        scaling_factor = min(1, threshold / np.max(np.abs(combined_chunk)))
+        # Calculate the maximum allowable volume for the reactor audio in this chunk
+        max_allowable_volume = np.max(np.abs(base_chunk)) + 0.5 * base_peak_volume
+
+        # Determine scaling factor based on the new constraint and existing threshold
+        scaling_factor = min(1, threshold / np.max(np.abs(combined_chunk)), max_allowable_volume / np.max(np.abs(combined_chunk)))
 
         # Apply scaling factor back to the original chunks of reactor audios
         for clip in all_clips:
@@ -233,18 +240,24 @@ def dynamic_limit_without_combining(base_audio, all_clips, threshold=0.95):
 
 def pan_audio_stereo(audio_array, pan_position):
     """
-    Pan the audio in stereo field.
+    Pan the audio in stereo field with constraints.
     -1.0 is fully left
      1.0 is fully right
      0.0 is centered
+    
+    This function limits the panning to no greater than a 70/30 or 30/70 split.
     """
     # Ensure stereo audio
     if len(audio_array.shape) == 1:
         audio_array = np.array([audio_array, audio_array]).T
 
+    # Limit the pan_position to the range that enforces the 70/30 to 30/70 split
+    # Scaling pan_position to 0.4 will make the extreme values 0.7 and 0.3 after adding the offset
+    limited_pan_position = 0.4 * pan_position
+
     # Calculate gain for each channel
-    left_gain = np.clip(1 - pan_position, 0, 1)
-    right_gain = np.clip(1 + pan_position, 0, 1)
+    left_gain = np.clip(1 - limited_pan_position, 0.3, 0.7)
+    right_gain = np.clip(1 + limited_pan_position, 0.3, 0.7)
 
     # Apply the gain
     audio_array[:, 0] *= left_gain
@@ -274,9 +287,6 @@ def create_clips(base_video, cell_size, draft, output_size):
     base_audio_as_array = peak_normalize_with_headroom(base_audio_as_array, headroom=0.2)
     base_audio_rms = rms_level_excluding_silence(base_audio_as_array)
 
-
-    # Collect all reactor audios for dynamic limiting
-    reactor_audios = []
 
     print("\tCreating all clips")
     for name, reaction in conf.get('reactions').items():
