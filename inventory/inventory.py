@@ -22,7 +22,7 @@ def handle_rate_limiting():
 
 
 def process_reaction(song, artist, search, item, reactors, reactions, test):
-
+    # print(item['snippet'])
     reactor_name = item['snippet']['channelTitle']
     channel_id = item['snippet']['channelId']
     
@@ -30,13 +30,15 @@ def process_reaction(song, artist, search, item, reactors, reactions, test):
         # print(f"Bad result: {item['snippet']['title']}", item['snippet']['title'].lower())
         return
     
+    if isinstance(item['id'], str):
+        video_id = item['id']
+    else: 
+        if not 'videoId' in item['id']:
+            # print(f"{reactor_name} doesn't have a videoid")
+            return
+        video_id = item['id']['videoId'] 
+
     
-    if not 'videoId' in item['id']:
-        # print(f"{reactor_name} doesn't have a videoid")
-        return
-
-    video_id = item['id']['videoId']
-
     if video_id in reactions:
         # print(f"duplicate title {item['snippet']['title']}")
         return
@@ -53,6 +55,7 @@ def process_reaction(song, artist, search, item, reactors, reactions, test):
         'id': video_id,
         'download': False
     }
+
 
     print(f"*** ADDED: {reactor_name}  -- {item['snippet']['title']}")
     if reactor_name in reactors:
@@ -109,13 +112,16 @@ def search_for_song(artist, song, search):
             song_string = '({})'.format(' OR '.join(['"{}"'.format(s) for s in search]))
         
         params = {
-            'q': f'allintitle: {artist} {song_string}',
+            'q': f'allintitle: {search}',
             'key': api_key,
             'part': 'snippet',
-            'maxResults': 1
+            'maxResults': 10
         }
         search_results = client.search.list(**params, return_json=True)
         
+        for r in search_results['items']:
+            print(r)
+
         item = search_results['items'][0]
                         
         song = {
@@ -142,9 +148,16 @@ def search_for_song(artist, song, search):
 
 
 
+# pentatonix
+# reactors_to_include=["Roddy Rod", "OfficialDrizzy_Tayy", "Dynasty M&G", "Dian Feb", "BRYBRY", "riesha reacts", "ThatSingerReactions", "THA ANTHONY SHOW", "Dee Omar", "Hassan Ahmed", "JSwithMeeakz", "The dreadheaded oreo", "Zach Archer",  "Jerod M", "Zhen Yao Yin", "DWIDS-TV",  "Rob Reactor",   "Matts Reacts!", "It's me Barry", "The Tide Pool",  "RedTop Reactions", "The Br3ak Room", "G.O.T Games", "BROTHER", "Behind The Curve",   "Wolliofficial", "MAProductions", "Tea Time With Travis", "Reactions by D", "Jacob Restituto",  "Carmen Reacts", "Jimmy Reacts!",  "Meaningfullyvacant"]
 
-reactors_to_include=["Peter Barber", "Chris Liepe", "TrevReacts", 'Neurogal MD', 'Duane Reacts', 'Doug Helvering', 'DuaneTV', 'SheaWhatNow', 'Kso Big Dipper', 'Lee Reacts', 'redheadedneighbor', 'Black Pegasus', 'Knox Hill', 'Jamel_AKA_Jamal', 'ThatSingerReactions', "That\u2019s Not Acting Either", 'Dicodec', 'BrittReacts', "UNCLE MOMO", "RAP CATALOG by Anthony Ray", "Anthony Ray Reacts", "Kyker2Funny", "Ian Taylor Reacts", "Joe E Sparks", "Cliff Beats", "Rosalie Elliott", 'Ellierose Reacts', 'MrLboyd Reacts']
-def create_manifest(artist, song_title, manifest_file, search, test = None):
+# Robyn
+# reactors_to_include=["Anton Reacts", "Empress", "HBK Luke", "RedTop Reactions", "Produce At Home", "Jerod M", "PancakeMarshmellowDude"]
+
+reactors_to_include=["The Charismatic Voice", "BARS & BARBELLS", "Flawd TV", "H8TFUL JAY", "Peter Barber", "Chris Liepe", "TrevReacts", 'Neurogal MD', 'Duane Reacts', 'Doug Helvering', 'DuaneTV', 'SheaWhatNow', 'Kso Big Dipper', 'Lee Reacts', 'redheadedneighbor', 'Black Pegasus', 'Knox Hill', 'Jamel_AKA_Jamal', 'ThatSingerReactions', "That\u2019s Not Acting Either", 'Dicodec', 'BrittReacts', "UNCLE MOMO", "RAP CATALOG by Anthony Ray", "Anthony Ray Reacts", "Kyker2Funny", "Ian Taylor Reacts", "Joe E Sparks", "Cliff Beats", "Rosalie Elliott", 'Ellierose Reacts', 'MrLboyd Reacts']
+def create_manifest(song_def, artist, song_title, manifest_file, song_search, search, test = None):
+    
+    print("CREATING MANIFEST")
     global reactors_to_include
     reactors = {}
     reactions = {}
@@ -175,9 +188,8 @@ def create_manifest(artist, song_title, manifest_file, search, test = None):
     if isinstance(search, str):
         search = [search]
 
-    for search_term in search: 
-        if manifest['main_song'] is None:
-            manifest['main_song'] = search_for_song(artist, song_title, search_term)
+    if manifest['main_song'] is None:
+        manifest['main_song'] = search_for_song(artist, song_title, song_search)
 
 
     if test is None: 
@@ -199,6 +211,21 @@ def create_manifest(artist, song_title, manifest_file, search, test = None):
 
     search_reactions(artist, song_title, reactor_search_terms, manifest["reactors"], manifest["reactions"], test)
 
+    if song_def.get('include_videos', False):
+        def passes_muster(x):
+            return True
+
+        to_include = song_def.get('include_videos')
+        for videoid in to_include:
+            if videoid not in manifest['reactions']:
+                resp = client.videos.list(video_id=videoid)
+                if len(resp.items) > 0:
+                    item = resp.items[0].to_dict()
+                    process_reaction(song_title, artist, search, item, manifest["reactors"], manifest["reactions"], passes_muster)
+                else:
+                    raise(Exception(f"COULD NOT FIND {videoid}"))
+
+            manifest['reactions'][videoid]['download'] = True
 
     manifest_json = json.dumps(manifest, indent = 4) 
     jsonfile = open(manifest_file, "w")
@@ -218,7 +245,7 @@ def get_manifest_path(artist, song):
     return manifest_file
 
 
-def download_and_parse_reactions(artist, song, search, force=False):
+def download_and_parse_reactions(song_def, artist, song, song_search, search, force=False):
     song_directory = os.path.join('Media', f"{artist} - {song}")
     
     if not os.path.exists(song_directory):
@@ -227,7 +254,7 @@ def download_and_parse_reactions(artist, song, search, force=False):
 
     manifest_file = get_manifest_path(artist, song)
     if not os.path.exists(manifest_file) or force:
-        create_manifest(artist, song, manifest_file, search, conf.get('search_tester', None))
+        create_manifest(song_def, artist, song, manifest_file, song_search, search, conf.get('search_tester', None))
 
     song_data = json.load(open(manifest_file))
 
