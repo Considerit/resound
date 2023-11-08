@@ -220,7 +220,7 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
       if reactors is None:
         continue
       featured = reaction.get('featured')
-      in_group = len(reactors) > 1
+      in_group = len(reactors) == 2
 
       all_reactors.append({
           'featured': featured,
@@ -257,7 +257,7 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
     for reactor_group in all_reactors:
       reactors = reactor_group['reactors']
 
-      if reactor_group['in_group']:
+      if reactor_group['in_group']: 
         assert(len(reactors) < 3, "Only support pairs of reactors for now")
 
         p2_spot = assign_video(reactors[0], grid_cells, assignments, featured=reactor_group['featured'], in_group=reactor_group['in_group'])
@@ -280,10 +280,7 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
 
 
       if reaction.get('swap_grid_positions', False):
-        print("\n\n************\nSWAPPING GRID POSITIONS!\n**************************")
-        print(reactor_assignments)
         reactor_assignments.reverse()
-        print(reactor_assignments)
 
       for i, reactor in enumerate(reactors): 
         reactor['grid_assignment'] = reactor_assignments[i]
