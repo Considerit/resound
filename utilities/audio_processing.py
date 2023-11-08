@@ -1,5 +1,7 @@
 from scipy import signal
 from scipy.signal import correlate
+from scipy.interpolate import interp1d
+
 import numpy as np
 from utilities import conversion_audio_sample_rate as sr
 import librosa
@@ -421,7 +423,7 @@ def calculate_loudness(audio, window_size=100, hop_length=None):
 
 
 
-def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None, hop_length=1):
+def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None):
     if std_dev is None:
         std_dev = window_size / 3
 
@@ -436,35 +438,6 @@ def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None, hop_
     # Convolve audio with window using fftconvolve
     percent_of_max_loudness = signal.fftconvolve(percent_of_max_loudness, window, mode='same')
 
-    if hop_length > 1:
-        # Sub-sample the percent_of_max_loudness array using the hop_length
-        percent_of_max_loudness = percent_of_max_loudness[::hop_length]
-
-    return percent_of_max_loudness
-
-
-def calculate_percentile_loudness2(loudness, window_size=1000, std_dev=None, hop_length=1):
-    if std_dev is None:
-        std_dev = window_size / 3
-
-    # Find the maximum loudness value
-    max_loudness = np.max(loudness)
-    
-    # Calculate the percentage of the max for each loudness value
-    percent_of_max_loudness = (loudness / max_loudness) * 100
-    
-    # Define a Gaussian window
-    window = signal.windows.gaussian(window_size, std=std_dev)
-    
-    # Normalize the window to have sum 1
-    window /= window.sum()
-    
-    percent_of_max_loudness = np.convolve(percent_of_max_loudness, window, mode='same')  # Convolve audio with window
-
-    if hop_length > 1:
-        # Sub-sample the percent_of_max_loudness array using the hop_length
-        percent_of_max_loudness = percent_of_max_loudness[::hop_length]
-
     return percent_of_max_loudness
 
 
@@ -472,7 +445,7 @@ def audio_percentile_loudness(audio, loudness_window_size=100, percentile_window
 
     loudness = calculate_loudness(audio, window_size=loudness_window_size, hop_length=hop_length)
 
-    percentile_loudness = calculate_percentile_loudness(loudness, window_size=percentile_window_size, std_dev=std_dev_percentile, hop_length=hop_length)
+    percentile_loudness = calculate_percentile_loudness(loudness, window_size=percentile_window_size, std_dev=std_dev_percentile)
 
     return percentile_loudness
 
