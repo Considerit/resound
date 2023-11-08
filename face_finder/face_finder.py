@@ -76,6 +76,8 @@ import math
 import matplotlib.pyplot as plt
 import pickle
 
+from compositor.layout import distance
+
 from utilities import conf
 
 
@@ -111,7 +113,7 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
     i += 1
 
   # If no existing files found, proceed with face detection and cropping
-  if len(output_files) == 0:
+  if len(output_files) == 0 or conf.get('force_backchannel'):
       reactors = detect_faces(reaction, react_path, base_reaction_path, show_facial_recognition=show_facial_recognition, frames_per_capture=frames_per_capture)
       for i, reactor in enumerate(reactors): 
           (x,y,w,h,orientation) = reactor[0]
@@ -347,7 +349,7 @@ def detect_faces_in_frame(reaction, react_frame, show_facial_recognition, width,
           candidate_face = cv2.cvtColor(get_face_img(react_frame_converted, face), cv2.COLOR_BGR2GRAY )  
 
           for image_to_ignore in images_to_ignore:
-            fingerprint_found, distance = find_fingerprint_in_image(image_to_ignore, candidate_face)
+            fingerprint_found, __ = find_fingerprint_in_image(image_to_ignore, candidate_face)
             if fingerprint_found:
               should_ignore = True
               break
@@ -487,7 +489,13 @@ def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, 
       reactor = expand_face(reactor_captures, width, height) # (x,y,w,h,orientation)
       reactors.append( [reactor, reactor_captures] )
 
+
+    ##############
     # Fine-grained facial tracking
+
+
+
+
     for i, reactor in enumerate(reactors):
       
       if num_reactors is not None and i >= num_reactors:
@@ -502,7 +510,10 @@ def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, 
       #   - center is the (x,y) centroid
       #   - avg_size is the average (w,h) of candidate face matches in group
 
-      centroids = find_reactor_centroids(face_matches, group, center, avg_size, kernel, width, height, len(reactors))
+      other_kernels = [ r[1][2] for j,r in enumerate(reactors) if j != i ]
+
+
+      centroids = find_reactor_centroids(face_matches, group, center, avg_size, kernel, width, height, len(reactors), other_kernels)
 
       centroids = smooth_and_interpolate_centroids(centroids)
 
@@ -765,7 +776,7 @@ def calculate_center(group):
 #              coarse match.
 #    kernel:   The (x,y,w,h) bounding box of the coarse_match. 
 #    
-def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kernel, video_width, video_height, num_reactors):
+def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kernel, video_width, video_height, num_reactors, other_kernels):
   centroids = []
   print(f"Finding reactor centroids {len(face_matches)}")
 
@@ -781,18 +792,46 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
 
 
   moving_avg_centroid = None
-  for i, (sampled_frame, faces, ignored_faces) in enumerate(face_matches):
+  for i, (sampled_frame, all_faces, ignored_faces) in enumerate(face_matches):
     # print(f"\tmatch for frame {sampled_frame} {len(faces)} {center} {avg_size}")
 
     best_score = 0
     best_centroid = None 
     
 
+    if len(other_kernels) > 0:
+      faces = []
+      for face in all_faces:
+        (x,y,w,h,nose,hist) = face
+
+        face_centroid = (x + w/2, y + h/2)
+        my_centroid = (kernel[0] + kernel[2]/2, kernel[1] + kernel[3]/2)
+
+        other_face_is_closer = False
+        for kern in other_kernels:
+          other_centroid = (kern[0] + kern[2]/2, kern[1] + kern[3]/2)
+          if distance(other_centroid, face_centroid) < distance(my_centroid, face_centroid):
+            other_face_is_closer = True
+            break
+
+        if not other_face_is_closer:
+          faces.append(face)
+
+    else:
+      faces = all_faces
+
+
+
+
     if i == 0 or len(faces) >= num_reactors: # we get bogus results if we don't have enough faces to 
                                              # choose from in a given frame
 
       if len(faces) > 1:
         for (x,y,w,h,nose,hist) in faces:
+
+
+
+
           dx = center[0] - (x + w/2)
           dy = center[1] - (y + h/2)
           dist = math.sqrt( dx * dx + dy * dy )
