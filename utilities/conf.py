@@ -26,6 +26,9 @@ def make_conf(song_def, options, temp_directory):
   conf.update(options)
 
 
+
+
+
   song = f"{song_def['artist']} - {song_def['song']}"
 
   song_directory = os.path.join('Media', song)
@@ -79,7 +82,8 @@ def make_conf(song_def, options, temp_directory):
     'outro': outro_path,
 
     'search_tester': song_def.get('search_tester', None),
-    'background': background_path
+    'background': background_path,
+    'convert_videos': song_def.get('convert_videos', [])
   })
 
 
@@ -90,7 +94,7 @@ def make_conf(song_def, options, temp_directory):
       manifest = open(get_manifest_path(conf['artist'], conf['song_name']), "r")
     except:
       print(f"Manifest doesn't yet exist for {conf['song_name']}")
-    reaction_videos = prepare_reactions()
+    reaction_videos = prepare_reactions(conf.get('convert_videos'))
 
     temp_directory = conf.get('temp_directory')
 
@@ -229,18 +233,6 @@ def make_conf(song_def, options, temp_directory):
               else: 
                 reaction_conf["reaction_audio_data"] = reaction_audio_data
 
-          if reaction_conf.get('insert_filler', False):
-              print("REACTION SIZE BEFORE INSERTING FILLER", len(reaction_audio_data)/sr)
-
-              reaction_audio_data = reaction_conf["reaction_audio_data"]
-              insert_at, amount = reaction_conf.get('insert_filler')
-              insert_at = int(insert_at * sr)
-              amount = int(amount * sr)
-              silence = [0] * amount
-              print(f"INSERTING {len(silence) / sr} at {insert_at / sr}")
-              reaction_conf["reaction_audio_data"] = reaction_audio_data = np.insert(reaction_audio_data, insert_at, np.zeros(amount))
-              print("REACTION SIZE AFTER", len(reaction_audio_data)/sr)
-
           reaction_conf['reaction_audio_path'] = reaction_audio_path
 
           output_dir = conf.get('reaction_directory')
@@ -307,7 +299,8 @@ def unload_reaction(channel):
 
 
 
-def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio_data):
+def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio_data):    
+
     print_profiling()
 
     from backchannel_isolator.track_separation import separate_vocals
@@ -353,6 +346,10 @@ def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio
 
 
 def load_base_video():
+
+    if 'song_audio_data' in conf: 
+        return
+
     from silence import get_edge_silence
 
     song_directory = conf.get('song_directory')
@@ -403,8 +400,13 @@ def load_base_video():
     conf.update(base_data)
 
 
+from moviepy.editor import VideoFileClip
+from utilities import conversion_frame_rate
+import subprocess
 
-def prepare_reactions():
+
+
+def prepare_reactions(convert_videos=[]):
 
     reaction_dir = conf.get('reaction_directory')
 
@@ -430,38 +432,53 @@ def prepare_reactions():
         ffmpeg.input(mkv_video).output(output_file).run()
         os.remove(mkv_video)
 
+
+
+    # Process each reaction video
+
+    for channel in convert_videos:
+
+
+        webm_video = glob.glob(os.path.join(reaction_dir, f"{channel}.webm"))
+        # mp4_video = glob.glob(os.path.join(reaction_dir, f"{channel}.mp4"))
+        # react_video = (webm_video + mp4_video)[0]
+        if len(webm_video) == 0:
+            print(f"COULD NOT CONVERT {channel}")
+            continue
+
+        react_video = webm_video[0]
+
+        react_video_name, react_video_ext = os.path.splitext(react_video)
+        react_video_mp4 = react_video_name + '.mp4'
+        if not os.path.exists(react_video_mp4):
+            with VideoFileClip(react_video) as clip:
+                width, height = clip.size
+            resize_command = ""
+            if width > 1920 or height > 1080:
+                # Calculate aspect ratio
+                aspect_ratio = width / height
+                if width > height:
+                    new_width = 1920
+                    new_height = int(new_width / aspect_ratio)
+                else:
+                    new_height = 1080
+                    new_width = int(new_height * aspect_ratio)
+                
+                resize_command = f"-vf scale={new_width}:{new_height}"
+            # Generate the ffmpeg command
+            command = f'ffmpeg -y -i "{react_video}" {resize_command} -c:v libx264 -r {conversion_frame_rate} -ar {sr} -c:a aac "{react_video_mp4}"'
+            
+            print(command)
+            subprocess.run(command, shell=True, check=True)
+            if os.path.exists(react_video):
+                os.remove(react_video)
+
+
     webm_videos = glob.glob(os.path.join(reaction_dir, "*.webm"))
     mp4_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
     react_videos = webm_videos + mp4_videos + mkv_videos    
 
-    return react_videos
 
-    # # Process each reaction video
-    # for react_video in react_videos:
-    #     react_video_name, react_video_ext = os.path.splitext(react_video)
-    #     react_video_mp4 = react_video_name + '.mp4'
-    #     if not os.path.exists(react_video_mp4):
-    #         with VideoFileClip(react_video) as clip:
-    #             width, height = clip.size
-    #         resize_command = ""
-    #         if width > 1920 or height > 1080:
-    #             # Calculate aspect ratio
-    #             aspect_ratio = width / height
-    #             if width > height:
-    #                 new_width = 1920
-    #                 new_height = int(new_width / aspect_ratio)
-    #             else:
-    #                 new_height = 1080
-    #                 new_width = int(new_height * aspect_ratio)
-                
-    #             resize_command = f"-vf scale={new_width}:{new_height}"
-    #         # Generate the ffmpeg command
-    #         command = f'ffmpeg -y -i "{react_video}" {resize_command} -c:v libx264 -r {conversion_frame_rate} -ar {conversion_audio_sample_rate} -c:a aac "{react_video_mp4}"'
-            
-    #         print(command)
-    #         subprocess.run(command, shell=True, check=True)
-    #         if os.path.exists(react_video):
-    #             os.remove(react_video)
-    # react_videos = glob.glob(os.path.join(reaction_dir, "*.mp4"))
+    return react_videos
 
 
