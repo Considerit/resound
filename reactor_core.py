@@ -18,6 +18,7 @@ from aligner.path_painter import paint_paths
 import cProfile
 import pstats
 
+from utilities import print_profiling
 
 
 def clean_up(song_def: dict):
@@ -74,6 +75,8 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     if reaction['asides']:
         from moviepy.editor import VideoFileClip
         reaction["aside_clips"] = {}
+        print(f"Asides: {reaction.get('channel')} has {len(reaction['asides'])}")
+
         for i, aside in enumerate(reaction['asides']):
             start, end, insertion_point = aside
 
@@ -124,7 +127,7 @@ def free_lock(lock_str):
 
 def free_all_locks():
     global current_locks
-    locks = current_locks.keys()
+    locks = list(current_locks.keys())
     for lock in locks:
         free_lock(lock)
 
@@ -187,8 +190,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
             print("Processing directory", song_directory, "Outputting to", output_dir)
 
-            if not compilation_exists and (conf.get('download_and_parse', False) or conf.get('refresh_manifest', False)):
-                download_and_parse_reactions(song_def['artist'], song_def['song'], song_def['search'], force=conf.get('refresh_manifest', False))
+            if conf.get('refresh_manifest', False) or (not compilation_exists and (conf.get('download_and_parse', False))):
+                download_and_parse_reactions(song_def, song_def['artist'], song_def['song'], song_def.get('song_search', f"{song_def.get('artist')} {song_def.get('song')}"), song_def['search'], force=conf.get('refresh_manifest', False))
         else:
             print(f"...Skipping {song_def['song']} because another process is already working on this video")
             return []
@@ -202,14 +205,26 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             return []
 
 
+
+        constrain_to = [] 
+
+        # constrain_to = ['Crypt', 'Kyker2Funny', 'Resound']
+        # constrain_to = ["Explore with Kings003", "Ellierose Reacts", 'FTB REACTS','FavouriteIslandGirl','Fischtank Productions','IamKing','DaybombTV']
+        # constrain_to = ['DaybombTV']
+
         extend_by = 12
         for i, (channel, reaction) in enumerate(conf.get('reactions').items()):
+            print_profiling()
+
+            if len(constrain_to) > 0 and reaction.get('channel') not in constrain_to: 
+
+                continue
+
+
             if not request_lock(channel):
                 continue
 
 
-            # if reaction.get('channel') != "IamKing":
-            #     continue
 
 
 
@@ -229,6 +244,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
                 traceback_str = traceback.format_exc()
                 failed_reactions.append((reaction.get('channel'), e, traceback_str))
                 conf['remove_reaction'](reaction.get('channel'))
+                if conf.get('break_on_exception'):
+                    raise(e)
 
             log_progress(progress)
             print_progress(progress)
@@ -239,7 +256,12 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
         
         compilation_exists = os.path.exists(compilation_path)
         if not compilation_exists and conf['create_compilation'] and request_lock('compilation'):
+
+            # for channel, reaction in conf.get('reactions').items():
+            #     conf['load_reaction'](channel) # make sure all reactions are loaded
+
             compose_reactor_compilation(extend_by=extend_by)
+            free_lock('compilation')
     
 
     except KeyboardInterrupt as e:
@@ -250,6 +272,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
         free_all_locks()
         traceback.print_exc()
         print(e)
+        if conf.get('break_on_exception'):
+            raise(e)
         
 
     free_all_locks()
@@ -317,13 +341,16 @@ def print_progress(progress):
 
     for song_key, alignments in progress.items():
         for channel, reaction in alignments.items():
-            print(reaction.get('best_path_score'))
             if reaction.get('best_path'):
                 x.add_row([song_key, channel, f"{reaction.get('alignment_duration'):.1f}", f"{reaction.get('best_path_score')[0]:.3f}", reaction.get('target_score', None) or '-', reaction.get('ground_truth_overlap'), f"{reaction.get('best_local_ground_truth')}%" , f"{reaction.get('best_observed_ground_truth')}%"])
             else:
                 x.add_row([song_key, channel,'-', '-', '-', reaction.get('target_score', None) or '-'])
     print(x)
 
+
+
+
+results_output_dir = 'bounded'
 
 
 import traceback
@@ -334,7 +361,7 @@ if __name__ == '__main__':
 
     songs, drafts, manifest_only, finished = get_library()
 
-    output_dir = 'micro_aligned'
+    
 
     for song in finished:
         clean_up(song)
@@ -348,7 +375,7 @@ if __name__ == '__main__':
     failures = []
     for song in manifest_only: 
         print(f"Updating manifest for {song.get('song')}")
-        failed = create_reaction_compilation(song, progress, output_dir = output_dir, options=manifest_options)
+        failed = create_reaction_compilation(song, progress, output_dir = results_output_dir, options=manifest_options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
@@ -356,25 +383,27 @@ if __name__ == '__main__':
         "create_alignment": True,
         "save_alignment_metadata": True,
         "output_alignment_video": True,
-        "isolate_commentary": False,
-        "create_reactor_view": False,
-        "create_compilation": False,
+        "isolate_commentary": True,
+        "create_reactor_view": True,
+        "create_compilation": True,
         "download_and_parse": False,
         "alignment_test": False,
         "force_ground_truth_paths": False,
         "draft": True,
-        "paint_paths": True
+        "paint_paths": True,
+        "break_on_exception": False,
+        "force_backchannel": False,
     }
     failures = []
     for song in drafts: 
-        failed = create_reaction_compilation(song, progress, output_dir = output_dir, options=options)
+        failed = create_reaction_compilation(song, progress, output_dir = results_output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
     options['draft'] = False
     failures = []
     for song in songs: 
-        failed = create_reaction_compilation(song, progress, output_dir = output_dir, options=options)
+        failed = create_reaction_compilation(song, progress, output_dir = results_output_dir, options=options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
