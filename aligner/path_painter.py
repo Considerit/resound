@@ -58,19 +58,19 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, attempts=0):
 
     segments = find_segments(reaction, chunk_size, step, peak_tolerance)
 
-    splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print("ABSORB")
     consolidated_segments = consolidate_segments(segments, bridge_gaps=True)
 
-    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
 
     print("PRUNE UNREACHABLE")
 
     __ = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
 
-    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print("SHARPEN INTERCEPT")
     sharpen_intercept(reaction, chunk_size, step, consolidated_segments, allowed_spacing)
@@ -85,7 +85,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, attempts=0):
     #     rs,re,bs,be = seg.get('end_points')
     #     print(f"[{rs-bs}] {bs/sr}-{be/sr} / {rs/sr}-{re/sr}   [{seg.get('pruned')}]")
 
-    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print("SHARPEN ENDPOINTS")
 
@@ -97,7 +97,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, attempts=0):
 
     sharpen_intercept(reaction, chunk_size, step, consolidated_segments, allowed_spacing)
 
-    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print("THIN CLUSTERS")
 
@@ -110,13 +110,13 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, attempts=0):
 
     prune_neighbors(reaction, consolidated_segments, allowed_spacing)
 
-    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print("PRUNE UNREACHABLE2")
 
     joinable_segment_map = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
 
-    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
 
     print(f"Constructing paths from {len(consolidated_segments)} viable segments")
 
