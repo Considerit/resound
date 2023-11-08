@@ -8,6 +8,7 @@ import soundfile as sf
 
 import matplotlib.pyplot as plt
 from scipy import signal
+from scipy.stats import mode
 
 from backchannel_isolator.track_separation import separate_vocals
 
@@ -58,8 +59,7 @@ from utilities import conf
 
 
 
-# In particular, I'd like to 
-# address false positives in the identification of a meaningful backchannel activation. 
+# In particular, I'd like to address false positives in the identification of a meaningful backchannel activation. 
 
 
 
@@ -112,7 +112,7 @@ def plot_masks(song_percentile_loudness, reaction_percentile_loudness, diff, mas
     plt.legend()
     plt.ylabel('Mask Values')
 
-    plt.tight_layout()
+    plt.tight_layout()  
     plt.show()    
 
 
@@ -145,20 +145,54 @@ def create_mask_by_relative_perceptual_loudness_difference(song, reaction, thres
 
     if not 'song_percentile_loudness' in conf:
         print('calculating song percentile loudness')
-        conf['song_percentile_loudness'] = audio_percentile_loudness(song, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
+        conf['song_percentile_loudness'] = audio_percentile_loudness(song, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev, hop_length=4)
+    
     song_percentile_loudness = conf.get('song_percentile_loudness')
 
     print('calculating reaction percentile loudness')
-    reaction_percentile_loudness = audio_percentile_loudness(reaction, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev)
+    reaction_percentile_loudness = audio_percentile_loudness(reaction, loudness_window_size=100, percentile_window_size=window, std_dev_percentile=std_dev, hop_length=4)
 
     # Calculate the absolute difference between the percentile loudnesses
     diff = reaction_percentile_loudness - song_percentile_loudness
     # print("diff shape: ", diff.shape)
 
-    avg_diff = np.average(diff)
 
-    print(f"Average diff={avg_diff}")
-    diff = diff - avg_diff
+
+
+    print('Finding mode')
+    # Assuming 'diff' is your numpy array
+    # rounded_diff = np.round(diff, 1)
+
+    # # Now you can calculate the mode of the rounded differences
+    # mode_value, count = mode(rounded_diff)
+    # mode_value = mode_value[0]  # This is the modal value of the 'rounded_diff' data
+
+    # Assuming 'diff' is your numpy array with the differences for the audio signal
+    hoplength = 112
+    sampled_diff = diff[::hoplength]  # Take every 512th sample
+
+    # Round the sampled differences to the nearest tenth
+    rounded_sampled_diff = np.round(sampled_diff, 1)
+
+    # Now you can calculate the mode of the rounded, sampled differences
+    mode_value, count = mode(rounded_sampled_diff, axis=None, keepdims=False)
+    # mode_value = mode_value[0]  # This is the modal value of the 'rounded_sampled_diff' data
+
+    if abs(mode_value) > .1:
+        print(f"Mode diff={mode_value} [cnt={count}]")
+        diff = diff - mode_value
+    else: 
+        avg_diff = np.average(diff)
+
+        print(f"Average diff={avg_diff}")
+        if avg_diff > 0: # adjust to reduce sensitivity when the reaction is really out of whack
+            diff = diff - avg_diff
+            print('\tadjusted based on diff')
+
+
+
+
+
 
     dilated_mask = construct_mask(diff, threshold)
 
@@ -295,14 +329,55 @@ def pad_segments(segments, length, pad_beginning=0.1, pad_ending=0.1):
     
     return padded_segments
 
-def apply_segments(reaction, audio, segments, audibility_threshold=0.01, suppresion_period=2): 
+
+
+def apply_logarithmic_fade(segment_audio, fade_duration_samples):
+    # Guard against division by zero in case of very short segments
+    if fade_duration_samples > 0:
+        # Create a logarithmic fade in
+        fade_in = np.logspace(-6, 0, fade_duration_samples, base=10, endpoint=True)
+        fade_in = fade_in / np.max(fade_in)  # Normalize to a maximum of 1
+
+        # Create a logarithmic fade out
+        fade_out = np.logspace(0, -6, fade_duration_samples, base=10, endpoint=True)
+        fade_out = fade_out / np.max(fade_out)  # Normalize to start at 1
+
+        # Apply the fades
+        segment_audio[:fade_duration_samples] *= fade_in
+        segment_audio[-fade_duration_samples:] *= fade_out
+    
+    return segment_audio
+
+def apply_linear_fade(segment_audio, fade_duration_samples):
+    # Guard against division by zero in case of very short segments
+    if fade_duration_samples > 0:
+        # Create the fade in and fade out vectors
+        fade_in = np.linspace(0, 1, actual_fade_duration)
+        fade_out = np.linspace(1, 0, actual_fade_duration)
+
+        # Apply the fade in
+        segment_audio[:actual_fade_duration] *= fade_in
+
+        # Apply the fade out
+        segment_audio[-actual_fade_duration:] *= fade_out
+    
+    return segment_audio
+
+
+def apply_segments(reaction, audio, segments, audibility_threshold=0.01, suppresion_period=2, fade_duration=0.005): 
     # Initialize a new audio array with zeros
     suppressed_audio = np.zeros_like(audio)
     suppresion_period *= sr
+    fade_duration_samples = int(fade_duration * sr)
 
     # For each segment, check if it contains an audible sample and if so, copy it
     for (start, end) in segments:
         segment_audio = audio[start:end]
+
+        # Calculate the actual fade duration ensuring it's not longer than the segment
+        actual_fade_duration = min(fade_duration_samples, len(segment_audio) // 2)
+
+        segment_audio = apply_logarithmic_fade(segment_audio, actual_fade_duration)
         
         # Find the indices where the audio is above the threshold
         audible_indices = np.where(np.abs(segment_audio) > audibility_threshold)[0]
@@ -398,10 +473,15 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
 
     segments = process_mask(mask, min_segment_length / 1000)
 
-    confirmed_segments = confirm_via_correlation(reaction, segments)
+    loud_enough_segments = mute_quiet_segments(reaction, reaction_data, segments)
+
+
+    confirmed_segments = confirm_via_correlation(reaction, loud_enough_segments)
+
 
     padded_segments = pad_segments(confirmed_segments, len(reaction_data), pad_beginning=0.75, pad_ending=0.25)
     merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
+
 
     suppressed_reaction = apply_segments(reaction, reaction_data, merged_segments)
 
@@ -418,6 +498,30 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
         profiler.enable()
 
     return output_path
+
+
+def mute_quiet_segments(reaction, audio, segments, audibility_threshold=.2):
+    # Compute the RMS of the entire audio to find the max perceptible volume
+    max_vol = np.sqrt(np.mean(audio**2))
+
+    # For each segment, check if it contains at least one sample whose perceptible
+    # volume rises above max_vol * audibility_threshold. Return only the segments
+    # that do.
+    loud_enough_segments = []
+    for segment in segments:
+        (start, end) = segment
+        segment_audio = audio[start:end]
+
+        # Calculate the RMS for the segment
+        max_vol_segment = np.sqrt(np.mean(segment_audio**2))
+        
+        # Determine if the segment's RMS is loud enough
+        loud_enough = max_vol_segment >= max_vol * audibility_threshold
+
+        if loud_enough:
+            loud_enough_segments.append(segment)
+
+    return loud_enough_segments
 
 
 
@@ -488,7 +592,7 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
     if not os.path.exists( song_vocals_path ):
         separate_vocals(song_separation_path, base_audio, vocal_path_filename, duration=song_length)
 
-    if not os.path.exists(backchannel_path):
+    if not os.path.exists(backchannel_path) or conf.get('force_backchannel', False):
 
         print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
         mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)
