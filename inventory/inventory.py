@@ -10,7 +10,8 @@ import subprocess
 import copy
 from pyyoutube import Client, PyYouTubeException
 
-from utilities import conf
+from utilities import conf, conversion_audio_sample_rate as sr
+from utilities.utilities import extract_audio
 
 
 client = Client(api_key=api_key)
@@ -246,6 +247,9 @@ def get_manifest_path(artist, song):
 
 
 def download_and_parse_reactions(song_def, artist, song, song_search, search, force=False):
+
+    from backchannel_isolator.track_separation import separate_vocals
+
     song_directory = os.path.join('Media', f"{artist} - {song}")
     
     if not os.path.exists(song_directory):
@@ -279,6 +283,7 @@ def download_and_parse_reactions(song_def, artist, song, song_search, search, fo
 
     for channel, reaction in reaction_inventory.items():
         v_id = reaction["id"]
+
         output = os.path.join(full_reactions_path, channel + '.webm')
         extracted_output = os.path.join(full_reactions_path, channel + '.mp4')
 
@@ -291,12 +296,28 @@ def download_and_parse_reactions(song_def, artist, song, song_search, search, fo
             except:
                 print(f"Failed to download {output} {cmd}")
 
+        if os.path.exists(extracted_output):
+            reaction_file = extracted_output
+        else: 
+            reaction_file = output
 
-def get_selected_reactions(song_data):
+
+        vocal_path_filename = 'vocals-post-high-passed.wav'
+        separation_path = os.path.splitext(reaction_file)[0]
+        vocals_path = os.path.join(separation_path, vocal_path_filename)
+        if not os.path.exists( vocals_path ):
+            reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_file)
+            separate_vocals(separation_path, reaction_audio_path, vocal_path_filename, duration=len(reaction_audio_data)/float(sr))
+
+
+
+
+def get_selected_reactions(song_data, filter_by_downloaded=True):
     reaction_inventory = {}
     for _, reaction in song_data["reactions"].items():
-        if reaction.get("download"):    
-            key = reaction['reactor']
+        key = reaction['reactor']
+
+        if reaction.get("download") or (not filter_by_downloaded and key not in reaction_inventory):    
             if key in reaction_inventory:
                 key = reaction['reactor'] + '_' + reaction["id"] # handle multiple reactions for a single channel
             reaction_inventory[key] = reaction
@@ -316,4 +337,42 @@ def generate_description_text(artist, song):
 if __name__ == '__main__':
 
     generate_description_text("Ren", "Fire")
+
+
+
+    manifest_file = get_manifest_path("Ren", "Money Game Part 1")
+    song_data = json.load(open(manifest_file))
+
+    downloaded_m1 = get_selected_reactions(song_data, True)
+    available_m1 = get_selected_reactions(song_data, False)
+
+
+    manifest_file = get_manifest_path("Ren", "Money Game Part 2")
+    song_data = json.load(open(manifest_file))
+
+    downloaded_m2 = get_selected_reactions(song_data, True)
+    available_m2 = get_selected_reactions(song_data, False)
+
+
+    manifest_file = get_manifest_path("Ren", "Money Game Part 3")
+    song_data = json.load(open(manifest_file))
+
+    downloaded_m3 = get_selected_reactions(song_data, True)
+    available_m3 = get_selected_reactions(song_data, False)
+
+
+    reactors_used = {}
+    for inv in [downloaded_m1, downloaded_m2, downloaded_m3]:
+        for k,r in inv.items():
+            reactors_used[k] = True
+
+    for i, inv in enumerate([(downloaded_m1,available_m1), (downloaded_m2,available_m2), (downloaded_m3,available_m3)]):
+        (used, avail) = inv
+        print(f"Money Game Part {i+1} -- including {len(used.keys())} reactors of {len(avail.keys())} available")
+        for k in reactors_used.keys():
+            if k not in used and k in avail:
+                print(f"\tConsider including {k} / https://www.youtube.com/watch?v={avail[k]['id']}")
+
+
+
 

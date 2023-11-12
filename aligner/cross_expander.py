@@ -86,8 +86,6 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
 
             start = time.perf_counter()
 
-
-
             if conf.get('paint_paths'):
                 from aligner.path_painter import paint_paths
                 best_path = paint_paths(reaction)
@@ -112,6 +110,22 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
                 save_object_to_file(alignment_metadata_file, metadata)
         else: 
             metadata = read_object_from_file(alignment_metadata_file)
+
+
+
+        # Sort of a migration here. If there's a short filler at the beginning, instead merge it with 
+        # first path (and extend appropriately)
+        first_segment = metadata['best_path'][0]
+        if len(first_segment) == 6:
+            (rs,re,bs,be,filler,__) = first_segment
+        else: 
+            (rs,re,bs,be,filler) = first_segment
+        if filler and (re-rs) / sr < 4:
+            metadata['best_path'].pop(0)
+            metadata['best_path'][0][0] -= (re-rs)
+            metadata['best_path'][0][2] = bs
+
+
 
         reaction.update(metadata)
 

@@ -8,6 +8,7 @@ from typing import List, Tuple
 from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, CompositeVideoClip
 from moviepy.editor import ImageClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
+from moviepy.audio.AudioClip import AudioArrayClip, AudioClip
 
 from utilities import conversion_frame_rate, conversion_audio_sample_rate as sr
 
@@ -89,8 +90,8 @@ def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[
             end_frame = min(end_frame, reaction_video.duration)
             subclip = reaction_video.subclip(float(start), float(end))
             # replace audio with the source-separated vocal track
-            vocals_audio = reaction.get('reaction_audio_vocals_data')[int(start*sr):int(end*sr)]
-            subclip.set_audio(vocals_audio)
+            # vocals_audio = AudioArrayClip(reaction.get('reaction_audio_vocals_data')[int(start*sr):int(end*sr)])
+            # subclip = subclip.set_audio(vocals_audio)
             clips.append(subclip)
 
 
@@ -99,7 +100,7 @@ def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[
 
     # Concatenate the clips together
     final_clip = concatenate_videoclips(clips)
-    final_clip.set_fps(30)
+    final_clip = final_clip.set_fps(30)
 
     # Get the duration of each clip
     final_clip_duration = final_clip.duration

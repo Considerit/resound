@@ -1,7 +1,7 @@
 import noisereduce as nr
 import soundfile as sf
 import os
-import soundfile as sf
+from moviepy.editor import VideoFileClip
 
 
 from utilities.audio_processing import highpass_filter, convert_to_mono
@@ -21,7 +21,7 @@ def get_spleeter():
     return spleeter_separator
 
 
-def separate_vocals(output_dir, audio_path, output_filename, duration=600):
+def separate_vocals(output_dir, audio_path, output_filename, duration=None):
     # Create a separator with 2 stems (vocals and accompaniment)
 
     vocals_high_passed_path = os.path.join(output_dir, output_filename)
@@ -35,6 +35,14 @@ def separate_vocals(output_dir, audio_path, output_filename, duration=600):
         # Perform source separation
         if not os.path.exists(vocals_path):
             print("\tPerforming source separation")
+
+            if duration is None: 
+                with sf.SoundFile(audio_path) as f:
+                    frames = f.frames
+                    rate = f.samplerate
+                    duration = frames / float(rate)
+                    
+
             get_spleeter().separate_to_file(audio_path, output_dir, duration=duration)
             audio_file_prefix = os.path.splitext(audio_path)[0].split('/')[-1]
             weird_spleeter_outputpath = os.path.join(output_dir, audio_file_prefix)

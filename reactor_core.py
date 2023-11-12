@@ -205,20 +205,9 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             return []
 
 
-
-        constrain_to = [] 
-
-        # constrain_to = ['Crypt', 'Kyker2Funny', 'Resound']
-        # constrain_to = ["Explore with Kings003", "Ellierose Reacts", 'FTB REACTS','FavouriteIslandGirl','Fischtank Productions','IamKing','DaybombTV']
-        # constrain_to = ['DaybombTV']
-
         extend_by = 12
         for i, (channel, reaction) in enumerate(conf.get('reactions').items()):
             print_profiling()
-
-            if len(constrain_to) > 0 and reaction.get('channel') not in constrain_to: 
-
-                continue
 
 
             if not request_lock(channel):

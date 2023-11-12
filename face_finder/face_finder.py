@@ -75,6 +75,8 @@ from scipy.ndimage import convolve1d
 import math
 import matplotlib.pyplot as plt
 import pickle
+import glob
+import re 
 
 from compositor.layout import distance
 
@@ -95,22 +97,12 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
 
   base_reaction_path, base_video_ext = os.path.splitext(react_path)
 
-  output_files = []
-  i = 0
   
-  orientations = ["", "-center", "-left", "-right"]
+  pattern = f"{base_reaction_path}-cropped-*-*-*.mp4"
+  output_files = glob.glob(pattern)
 
-  # Check if files exist with naming convention
-  found = True    
-  while found:
-    found = False
-    for orientation in orientations:
-      f = f"{base_reaction_path}-cropped-{i}{orientation}{base_video_ext}"
-      if os.path.exists(f):
-        output_files.append(f)
-        found = True
+  orientations = ["center", "left", "right"]
 
-    i += 1
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0 or conf.get('force_backchannel'):
@@ -119,19 +111,26 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
           (x,y,w,h,orientation) = reactor[0]
           reactor_captures = reactor[1]
           centroids = reactor[2]
-          output_file = f"{base_reaction_path}-cropped-{i}-{orientation}{base_video_ext}"
+          output_file = f"{base_reaction_path}-cropped-{i}-{int(x+w/2)}-{orientation}.mp4"
           print("Going to crop the video now...")
           crop_video(react_path, output_file, replacement_audio, len(reactors), int(w), int(h), centroids)
           print("\t...Done cropping")
           output_files.append(output_file)
 
   cropped_reactors = []
+  escaped_base_reaction_path = re.escape(base_reaction_path)
+  regex_pattern = rf"{escaped_base_reaction_path}-cropped-(.*)-(.*)-(.*).mp4"
+
   for file in output_files:
+    match = re.match(regex_pattern, file)
+    i, x, orientation = match.groups()
+
     cropped_reactors.append({
       'key': file,
-      'priority': reaction.get('priority'), # circular reference      
+      'priority': reaction.get('priority'), 
       'clip': VideoFileClip(file),
-      'orientation': get_orientation(file),
+      'orientation': orientation,
+      'x': int(x)
     })
   return cropped_reactors
 
@@ -493,9 +492,6 @@ def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, 
     ##############
     # Fine-grained facial tracking
 
-
-
-
     for i, reactor in enumerate(reactors):
       
       if num_reactors is not None and i >= num_reactors:
@@ -795,8 +791,6 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
   for i, (sampled_frame, all_faces, ignored_faces) in enumerate(face_matches):
     # print(f"\tmatch for frame {sampled_frame} {len(faces)} {center} {avg_size}")
 
-    best_score = 0
-    best_centroid = None 
     
 
     if len(other_kernels) > 0:
@@ -821,16 +815,14 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
       faces = all_faces
 
 
-
+    best_score = 0
+    best_centroid = None 
 
     if i == 0 or len(faces) >= num_reactors: # we get bogus results if we don't have enough faces to 
                                              # choose from in a given frame
 
       if len(faces) > 1:
         for (x,y,w,h,nose,hist) in faces:
-
-
-
 
           dx = center[0] - (x + w/2)
           dy = center[1] - (y + h/2)
@@ -868,6 +860,9 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
       elif len(faces) == 1:
         (x,y,w,h,nose,hist) = faces[0]
         best_centroid = (x + w/2, y + h/2)
+
+      elif i == 0: 
+        best_centroid = (kernel[0] + kernel[2]/2, kernel[1] + kernel[3]/2)
 
       centroids.append( (sampled_frame, best_centroid ) )
       if moving_avg_centroid is None:

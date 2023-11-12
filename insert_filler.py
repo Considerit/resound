@@ -30,7 +30,7 @@ def insert_filler(video_path, insertion_point, filler_length, output_path):
 
         clip.resize(width=new_width, height=new_height)
 
-    clip.set_fps(conversion_frame_rate)
+    clip = clip.set_fps(conversion_frame_rate)
 
     
     # Split the clip at the insertion point

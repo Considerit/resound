@@ -77,7 +77,7 @@ def normalize_audio_manually(song_data, reaction_data, ref_tuple, search_window=
     normalized_reaction_data = reaction_data * normalization_factor
     print(f"\t\tDone! normalization_factor={normalization_factor}")
 
-    return song_data, normalized_reaction_data
+    return song_data, normalized_reaction_data, normalization_factor
 
 
 

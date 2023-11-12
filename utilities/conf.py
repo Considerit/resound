@@ -17,6 +17,8 @@ from utilities import print_profiling
 
 conf = {} # global conf
 
+constrain_to = ['Kso Big Dipper', 'Bruce Deeble', 'Office Bloke Dave', 'STUMPY', 'The Couple Crib', 'UglyAceEnt', 'Mr Network', 'Jamel_AKA_Jamal', 'DonVon_', 'ashlena', 'Dicodec', 'Bklyn_reau', 'MRLBOYD MUSIC', 'Rodney ', 'Cliff Beats', 'Shane Alan Gower']
+constrain_to = []
 
 def make_conf(song_def, options, temp_directory): 
   global conf
@@ -112,12 +114,20 @@ def make_conf(song_def, options, temp_directory):
     manual_normalization_point = song_def.get('manual_normalization_point', None)
     insert_filler = song_def.get('insert_filler', None)
     manual_bounds = song_def.get('manual_bounds', None)
+    foregrounded_backchannel = song_def.get('foregrounded_backchannel', None)
+    backgrounded_backchannel = song_def.get('backgrounded_backchannel', None)
 
     mute = song_def.get('mute', None)
+
+
+
 
     for reaction_video_path in reaction_videos:
       print_profiling()
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
+
+      if len(constrain_to) > 0 and channel not in constrain_to:
+        continue
 
       ground_truth = song_def.get('ground_truth', {}).get(channel, None)
       ground_truth_path = None
@@ -149,8 +159,14 @@ def make_conf(song_def, options, temp_directory):
         }
 
         if multiple_reactors is not None:
-          reactions[channel]['num_reactors'] = multiple_reactors.get(channel, 1)
+          reactions[channel]['num_reactors'] = multiple_reactors.get(channel, None)
+
+        if foregrounded_backchannel is not None and foregrounded_backchannel.get(channel, False):
+          reactions[channel]['foregrounded_backchannel'] = foregrounded_backchannel.get(channel)
         
+        if backgrounded_backchannel is not None and backgrounded_backchannel.get(channel, False):
+          reactions[channel]['backgrounded_backchannel'] = backgrounded_backchannel.get(channel)
+
         if fake_reactor_position is not None and fake_reactor_position.get(channel, False): 
           reactions[channel]['fake_reactor_position'] = fake_reactor_position.get(channel)
 
@@ -200,38 +216,17 @@ def make_conf(song_def, options, temp_directory):
           load_base_video()
 
       if not 'reaction_audio_path' in reaction_conf: 
+
           reaction_video_path = reaction_conf['video_path']
           reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_video_path)
+        
+          normalization_factor = get_normalization_factor(reaction_conf)
 
-          if reaction_conf.get('manual_normalization_point', False):
-              _, normalized_reaction_audio_data = normalize_audio_manually(conf.get('song_audio_data'), reaction_audio_data, reaction_conf.get('manual_normalization_point'))
+          if normalization_factor != 1: 
+            normalized_reaction_audio_data = reaction_audio_data * normalization_factor
+            reaction_conf["reaction_audio_data"] = normalized_reaction_audio_data
           else: 
-              song_mfcc = librosa.feature.mfcc(y=conf.get('song_audio_data'), sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
-              reaction_mfcc = librosa.feature.mfcc(y=reaction_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
-
-              normalization_dir = os.path.join(conf.get('song_directory'), '_normalization')
-              if not os.path.exists(normalization_dir):
-                  os.makedirs(normalization_dir)
-              normalization_file = os.path.join(normalization_dir, f"{reaction_conf.get('channel')}-normalization.pckl")
-
-              if os.path.exists(normalization_file):
-                  normalization_factor = read_object_from_file(normalization_file)
-              else: 
-                  normalization_factor = normalize_reaction_audio(reaction_conf, conf.get('song_audio_data'), reaction_audio_data, song_mfcc, reaction_mfcc)
-                  save_object_to_file(normalization_file, normalization_factor)
-
-              if normalization_factor != 1: 
-                normalized_reaction_audio_data = reaction_audio_data * normalization_factor
-
-                # Writing the normalized_reaction_audio_data to a file
-                root, ext = os.path.splitext(reaction_audio_path)
-                normalized_audio_path = f"{root}_normalized{ext}"
-                if not os.path.exists(normalized_audio_path):
-                  sf.write(normalized_audio_path, normalized_reaction_audio_data, sr)
-
-                reaction_conf["reaction_audio_data"] = normalized_reaction_audio_data
-              else: 
-                reaction_conf["reaction_audio_data"] = reaction_audio_data
+            reaction_conf["reaction_audio_data"] = reaction_audio_data
 
           reaction_conf['reaction_audio_path'] = reaction_audio_path
 
@@ -276,6 +271,47 @@ def make_conf(song_def, options, temp_directory):
   return False
 
 
+def get_normalization_factor(reaction):
+
+  normalization_dir = os.path.join(conf.get('song_directory'), '_normalization')
+  if not os.path.exists(normalization_dir):
+      os.makedirs(normalization_dir)
+
+  normalization_file = os.path.join(normalization_dir, f"{reaction.get('channel')}-normalization.pckl")
+
+  if os.path.exists(normalization_file):
+      normalization_factor = read_object_from_file(normalization_file)
+      reaction["normalization_factor"] = normalization_factor
+      return normalization_factor
+
+
+  reaction_video_path = reaction['video_path']
+  reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_video_path)
+
+  if reaction.get('manual_normalization_point', False):
+      _, normalized_reaction_audio_data, normalization_factor = normalize_audio_manually(conf.get('song_audio_data'), reaction_audio_data, reaction.get('manual_normalization_point'))
+  else: 
+      song_mfcc = librosa.feature.mfcc(y=conf.get('song_audio_data'), sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
+      reaction_mfcc = librosa.feature.mfcc(y=reaction_audio_data, sr=sr, n_mfcc=conf.get('n_mfcc'), hop_length=conf.get('hop_length'))
+
+      normalization_factor = normalize_reaction_audio(reaction, conf.get('song_audio_data'), reaction_audio_data, song_mfcc, reaction_mfcc)
+
+      # if normalization_factor != 1: 
+      #   normalized_reaction_audio_data = reaction_audio_data * normalization_factor
+
+      #   # Writing the normalized_reaction_audio_data to a file
+      #   root, ext = os.path.splitext(reaction_audio_path)
+      #   normalized_audio_path = f"{root}_normalized{ext}"
+      #   if not os.path.exists(normalized_audio_path):
+      #     sf.write(normalized_audio_path, normalized_reaction_audio_data, sr)
+
+      #   reaction["reaction_audio_data"] = normalized_reaction_audio_data
+      # else: 
+      #   reaction["reaction_audio_data"] = reaction_audio_data
+
+  reaction["normalization_factor"] = normalization_factor
+  save_object_to_file(normalization_file, normalization_factor)
+  return normalization_factor
 
 
 to_delete = ['aligned_reaction_data']
