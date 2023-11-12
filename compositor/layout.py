@@ -6,7 +6,7 @@ from itertools import groupby
 
 
 def create_layout_for_composition(base_video, width, height):
-
+    base_video_proportion = conf.get('base_video_proportion', .45)
     total_videos = 0
     for name, reaction in conf.get('reactions').items():
       total_videos += len(reaction.get('reactors', []))
@@ -14,7 +14,7 @@ def create_layout_for_composition(base_video, width, height):
     include_base_video = conf['include_base_video']
 
     if include_base_video:
-      base_size = int(width * .55)
+      base_size = int(width * base_video_proportion)
 
       base_video = base_video.resize(base_size / base_video.w)
       base_width, base_height = base_video.size
@@ -22,19 +22,23 @@ def create_layout_for_composition(base_video, width, height):
       if base_video.audio.fps != conversion_audio_sample_rate:
           base_video = base_video.set_audio(base_video.audio.set_fps(conversion_audio_sample_rate))
 
-      x,y = (base_width / 2, base_height / 2)
+      x,y = (base_width / 2, base_height / 2)          # left / top
+      x,y = (base_width / 2, height - base_height / 2) # left / bottom
+      x,y = (width / 2, height - base_height / 2)      # center / bottom
 
-      base_video = base_video.set_position((x - base_width / 2, y - base_height / 2))
+      print(f"SETTING POSITION TO {(x - base_width / 2, y - base_height / 2)}")
+      base_video_position = (x - base_width / 2, y - base_height / 2)      
 
       # upper left point of rectangle, lower right point of rectangle
       bounds = (x - base_width / 2, y - base_height / 2, x + base_width / 2, y + base_height / 2)
+
       center = None
       value_relative_to = [x,y]
     else: 
       bounds = [0,0,width,0]
       center = [width / 2, height / 2]
       value_relative_to = [width / 2, height / 2]
-
+      base_video_position = None
     hex_grid, cell_size = generate_hexagonal_grid(width, height, total_videos, bounds, center)
 
 
@@ -47,7 +51,7 @@ def create_layout_for_composition(base_video, width, height):
     assign_hex_cells_to_videos(width, height, hex_grid, cell_size, bounds, value_relative_to)
 
 
-    return (base_video, cell_size)
+    return (base_video, cell_size, base_video_position)
 
 
 
@@ -121,9 +125,10 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
 def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video, value_relative_to):
     # Assumes: grid_cells are sorted
     assignments = {}
+    assignments_by_cell = {}
 
     # Define a helper function to assign a video to a cell
-    def assign_video(video, cells, assignments, featured=False, in_group=False):
+    def assign_video(video, featured=False, in_group=False):
 
         # Iterate over the cells from closest to farthest
         best_score = -9999999999
@@ -187,10 +192,12 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
 
                 # Check if there is an open adjacent to the immediate left or right (y-difference is 0, x-difference~=cell_size)
                 # If there is, assign the spot and return the open cell
-                for adjacent_cell in cells:
-                  if not adjacent_cell in assignments.values():                
+                for adjacent_cell in grid_cells:
+                  key = str(adjacent_cell)
+                  if not adjacent_cell in assignments.values() and key not in assignments_by_cell:                
                     if abs(cell[1] - adjacent_cell[1]) <= 1 and abs(abs(cell[0] - adjacent_cell[0]) - cell_size) <= 1:
                       assignments[video['key']] = cell
+                      assignments_by_cell[str(cell)] = video['key']
                       return adjacent_cell
 
               best_score = score
@@ -198,6 +205,8 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
 
 
         assignments[video['key']] = best_spot
+        assignments_by_cell[str(best_spot)] = video['key']
+        
         return best_adjacent
 
 
@@ -260,14 +269,34 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
       if reactor_group['in_group']: 
         assert(len(reactors) < 3, "Only support pairs of reactors for now")
 
-        p2_spot = assign_video(reactors[0], grid_cells, assignments, featured=reactor_group['featured'], in_group=reactor_group['in_group'])
+        p2_spot = assign_video(reactors[0], featured=reactor_group['featured'], in_group=True)
         if p2_spot is not None:
           assignments[reactors[1]['key']] = p2_spot
+          assignments_by_cell[str(p2_spot)] = reactors[1]['key']
         else: # failed
-          assign_video(reactors[1], grid_cells, assignments, featured=reactor_group['featured'], in_group=reactor_group['in_group'])
+          assign_video(reactors[1], featured=reactor_group['featured'], in_group=True)
       else: 
         for reactor in reactors:
-          assign_video(reactor, grid_cells, assignments, featured=reactor_group['featured'], in_group=False)
+          assign_video(reactor, featured=reactor_group['featured'], in_group=False)
+
+
+
+    seen_cells = {}
+    for name, reaction in conf.get('reactions').items():
+      reactors = reaction.get('reactors')
+      if reactors is None:
+        continue
+
+      for i, reactor in enumerate(reactors): 
+        key = str(assignments[reactor['key']])
+        if key in seen_cells:
+          print(f"*********\nERROR!!!!!!!!!!!!!  {key} assigned to multiple reactors\n**********")
+          assign_video(reactor, featured=False, in_group=False)
+          key = str(assignments[reactor['key']])
+          if key in seen_cells:
+            raise Exception("COULD NOT REASSIGN A CELL")
+        seen_cells[key] = reactor
+
 
 
     # Save the grid assigments to the reactors
@@ -278,6 +307,8 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
 
       reactor_assignments = [assignments[reactor['key']] for reactor in reactors]
 
+      reactor_assignments.sort( key=lambda x: x[0] )
+      reactors.sort( key=lambda x: x['x'])
 
       if reaction.get('swap_grid_positions', False):
         reactor_assignments.reverse()
