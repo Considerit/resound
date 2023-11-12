@@ -80,19 +80,17 @@ import re
 
 from compositor.layout import distance
 
-from utilities import conf
+from utilities import conf, conversion_frame_rate
 
-
+import soundfile as sf
 
 def create_reactor_view(reaction, show_facial_recognition=False, aside_video=None): 
 
   if aside_video is not None:
     react_path = aside_video
-    replacement_audio = None
     frames_per_capture = 20
   else:
     react_path = reaction.get('aligned_path')
-    replacement_audio = reaction.get("backchannel_audio")
     frames_per_capture = 45
 
   base_reaction_path, base_video_ext = os.path.splitext(react_path)
@@ -113,7 +111,7 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
           centroids = reactor[2]
           output_file = f"{base_reaction_path}-cropped-{i}-{int(x+w/2)}-{orientation}.mp4"
           print("Going to crop the video now...")
-          crop_video(react_path, output_file, replacement_audio, len(reactors), int(w), int(h), centroids)
+          crop_video(react_path, output_file, len(reactors), int(w), int(h), centroids, remove_audio=(aside_video is None))
           print("\t...Done cropping")
           output_files.append(output_file)
 
@@ -131,30 +129,10 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
       'clip': VideoFileClip(file),
       'orientation': orientation,
       'x': int(x)
-    })
+    })  
+
   return cropped_reactors
 
-def get_orientation(input_file):
-    base_name, ext = os.path.splitext(input_file)
-    parts = base_name.split('-')
-    orientation = parts[-1] if len(parts) > 3 else 'center'
-    return orientation
-
-
-
-def replace_audio(video, audio_path, num_reactors):
-    audio = AudioFileClip(audio_path)
-
-    audio = audio.volumex(1.5) # so we hear the reactor backchannel better
-
-    if num_reactors > 1: 
-        # Divide the volume of the audio by the number of reactors
-        audio = audio.volumex(1.0 / num_reactors)
-
-    # Set the audio of the video clip
-    video = video.set_audio(audio)
-
-    return video
 
 
 #       There is a new argument to the below crop_video function, centroids, is an array of 
@@ -163,7 +141,7 @@ def replace_audio(video, audio_path, num_reactors):
 #       by function parameters x and y. The function needs to be modified such that
 #       at each frame f the frame is cropped to the centroid given at centroids[f]. 
 
-def crop_video2(video_file, output_file, replacement_audio, x, y, w, h, centroids):
+def crop_video2(video_file, output_file, x, y, w, h, centroids, remove_audio=False):
 
     # Load the video clip
     video = VideoFileClip(video_file)
@@ -194,13 +172,13 @@ def crop_video2(video_file, output_file, replacement_audio, x, y, w, h, centroid
       w = h = 450
       cropped_video = cropped_video.resize(width=w, height=h)
 
+    if remove_audio:
+      cropped_video = cropped_video.without_audio()
 
-    if replacement_audio:
-      cropped_video = replace_audio(cropped_video, replacement_audio)
 
     # Write the cropped video to a file
-    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=30,
-                                  ffmpeg_params=['-pix_fmt', 'yuv420p','-q:v', '40'])
+    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=conversion_frame_rate,
+                                  ffmpeg_params=['-q:v', '60'])
 
 
 
@@ -208,7 +186,7 @@ def crop_video2(video_file, output_file, replacement_audio, x, y, w, h, centroid
     video.close()
 
 
-def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, centroids):
+def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_audio=False):
     # Load the video clip
     print(f"\tloading the video {video_file}")
     video = VideoFileClip(video_file)
@@ -254,17 +232,14 @@ def crop_video(video_file, output_file, replacement_audio, num_reactors, w, h, c
     print("\tmaking video clip")
     cropped_video = VideoClip(make_frame, duration=video.duration)
 
-    if replacement_audio:
-        print("\treplacing audio")
-        cropped_video = replace_audio(cropped_video, replacement_audio, num_reactors)
-    else: 
-      cropped_video.audio = video.audio
+    if remove_audio:
+      cropped_video = cropped_video.without_audio()
 
     print("\twriting video")
 
     # Write the cropped video to a file
-    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=30,
-                                ffmpeg_params=['-pix_fmt', 'yuv420p', '-q:v', '40'])
+    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", fps=conversion_frame_rate,
+                                ffmpeg_params=['-q:v', '60'])
 
     # Close the video clip
     video.close()
