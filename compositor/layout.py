@@ -30,10 +30,11 @@ def create_layout_for_composition(base_video, width, height):
       base_video_position = (x - base_width / 2, y - base_height / 2)      
 
       # upper left point of rectangle, lower right point of rectangle
-      bounds = (x - base_width / 2, y - base_height / 2, x + base_width / 2, y + base_height / 2)
+      bounds = (x - base_width / 2, y - base_height / 2, 
+                x + base_width / 2, y + base_height / 2)
 
       center = None
-      value_relative_to = [x,y]
+      value_relative_to = [x,height - base_height]
     else: 
       bounds = [0,0,width,0]
       center = [width / 2, height / 2]
@@ -41,12 +42,8 @@ def create_layout_for_composition(base_video, width, height):
       base_video_position = None
     hex_grid, cell_size = generate_hexagonal_grid(width, height, total_videos, bounds, center)
 
-
-
     # hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
     hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
-
-
 
     assign_hex_cells_to_videos(width, height, hex_grid, cell_size, bounds, value_relative_to)
 
@@ -130,42 +127,88 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
     # Define a helper function to assign a video to a cell
     def assign_video(video, featured=False, in_group=False):
 
+        horizontal_orientation, vertical_orientation = video['orientation']
+
         # Iterate over the cells from closest to farthest
         best_score = -9999999999
         best_spot = None 
         best_adjacent = None
 
+        my_value = list(value_relative_to)
+
+        if horizontal_orientation == 'left':
+          my_value[0] += (base_video[2] - base_video[0]) / 2
+        elif horizontal_orientation == 'right':
+          my_value[0] -= (base_video[2] - base_video[0]) / 2
+
+        if vertical_orientation == 'middle':
+          my_value[0] += (base_video[3] - base_video[1]) / 2
+        elif vertical_orientation == 'up':
+          my_value[0] += (base_video[3] - base_video[1])
+
+
+
         max_distance = -1
         for cell in grid_cells:
-          dist = distance(cell, value_relative_to)
+          dist = distance(cell, my_value)
           if dist > max_distance:
             max_distance = dist
 
         best_cell = None
+
 
         for cell in grid_cells:
 
             if cell in assignments.values():
               continue
 
-            score = 1 + (max_distance - distance(cell, value_relative_to)) / max_distance
+            score = 1 + (max_distance - distance(cell, my_value)) / max_distance
 
             # Check the orientation constraint
-            if (video['orientation'] == 'center'):
-              if base_video[0] * .25 <= cell[0] and cell[0] <= base_video[0] * .75:
+            if (horizontal_orientation == 'center'):
+              if value_relative_to[0] * .35 <= cell[0] and cell[0] <= value_relative_to[0] * .65:
+                score *= 1.7
+              if value_relative_to[0] * .25 <= cell[0] and cell[0] <= value_relative_to[0] * .75:
+                score *= 1.2
+              else: 
+                score *= .9
+
+            elif (horizontal_orientation == 'right'):
+              if cell[0] <= value_relative_to[0] * .25:
+                score *= 1.7
+              elif cell[0] <= value_relative_to[0] * .5:
+                score *= 1.2
+              elif cell[0] <= value_relative_to[0] * .65:
+                score *= .9
+              elif cell[0] <= value_relative_to[0] * .75:
+                score *= .7
+              else: 
+                score *= .5
+
+            else:  # left
+              if cell[0] >= value_relative_to[0] * .75:
+                score *= 1.7
+              if cell[0] >= value_relative_to[0] * .5:
+                score *= 1.2
+              elif cell[0] >= value_relative_to[0] * .35:
+                score *= .9
+              elif cell[0] >= value_relative_to[0] * .25:
+                score *= .7
+              else: 
+                score *= .5
+
+
+            if (vertical_orientation == 'middle'):
+              if value_relative_to[1] * .25 <= cell[0] and cell[0] <= value_relative_to[1] * .75:
                 score *= 1.1
 
-            elif (video['orientation'] == 'right'):
-              if cell[0] <= base_video[0] * .5:
+            elif (vertical_orientation == 'down'):
+              if cell[1] <= value_relative_to[1] * .5:
                 score *= 1.1
-              elif cell[0] <= base_video[0] * .65:
-                score *= 1.01
 
-            else: 
-              if cell[0] >= base_video[0] * .5:
+            else:  # up
+              if cell[1] >= value_relative_to[1] * .5:
                 score *= 1.1
-              elif cell[0] >= base_video[0] * .35:
-                score *= 1.01
 
 
             if in_group:
@@ -257,8 +300,13 @@ def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video,
     def sort_reactors(r):
       first = r['reactors'][0]
       v = first.get('priority')
-      if first['orientation'] == 'center':
-        v -= 1
+      if first['orientation'][0] == 'center':
+        v -= 0
+      else:
+        if first['orientation'][1] == 'up':
+          v += 2
+        elif first['orientation'][1] == 'middle':
+          v += 1
       return v
 
 
