@@ -55,11 +55,10 @@ def insert_filler(video_path, insertion_point, filler_length, output_path):
 
 if __name__=="__main__":
     from utilities import conf, make_conf
-    from library import get_library
+    from library import songs, drafts, manifest_only, finished
     from reactor_core import results_output_dir
     import os 
 
-    songs, drafts, manifest_only, finished = get_library()
 
     all_defs = songs + drafts + manifest_only + finished
     options = {}

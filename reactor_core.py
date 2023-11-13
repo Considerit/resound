@@ -70,7 +70,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
         return []
 
     # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
-    reaction["reactors"] = create_reactor_view(reaction, show_facial_recognition=False)
+    reaction["reactors"], __ = create_reactor_view(reaction, show_facial_recognition=False)
 
     if reaction['asides']:
         from moviepy.editor import VideoFileClip
@@ -91,7 +91,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
                 react_video.close()
 
             # second, do face detection on it
-            reaction["aside_clips"][insertion_point] = create_reactor_view(reaction, show_facial_recognition=False, aside_video = aside_video_clip)
+            reaction["aside_clips"][insertion_point], __ = create_reactor_view(reaction, show_facial_recognition=False, aside_video = aside_video_clip)
 
 
 
@@ -343,12 +343,12 @@ results_output_dir = 'bounded'
 
 
 import traceback
-from library import get_library
+
 if __name__ == '__main__':
 
-    progress = {}
+    from library import songs, drafts, manifest_only, finished
 
-    songs, drafts, manifest_only, finished = get_library()
+    progress = {}
 
     
 
