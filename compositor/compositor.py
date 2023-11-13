@@ -7,8 +7,8 @@ from PIL import Image, ImageDraw, ImageChops
 import colorsys
 
 
-from moviepy.editor import ImageClip, CompositeVideoClip, CompositeAudioClip, concatenate_audioclips, concatenate_videoclips
-from moviepy.audio.AudioClip import AudioArrayClip, AudioClip
+from moviepy.editor import ImageClip, CompositeVideoClip, concatenate_videoclips
+from moviepy.audio.AudioClip import AudioClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
 from moviepy.editor import VideoFileClip
 from moviepy.video.fx.all import crop
@@ -16,7 +16,6 @@ from moviepy.audio.fx import all as audio_fx
 from moviepy.video.fx import fadeout
 
 import soundfile as sf
-
 
 from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate as sr
 
@@ -72,7 +71,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
 
     base_video, cell_size, base_video_position = create_layout_for_composition(base_video, width, height)
     print("\tLayout created")
-    all_clips, clip_length = create_clips(base_video, cell_size, draft, output_size)
+    all_clips, audio_clips, clip_length = create_clips(base_video, cell_size, draft, output_size)
     print("\tClips created")
 
     if base_video_position is not None:
@@ -81,9 +80,6 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
     clips = [c for c in all_clips if 'video' in c]
     clips.sort(key=lambda x: x['priority'])
     clips = [c['video'] for c in clips]
-    
-    audio_clips = [c['audio'] for c in all_clips ]
-
 
     final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
     print("\tClips composed")
@@ -134,6 +130,8 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
         final_clip = concatenate_videoclips(outerclips)
 
 
+    #TODO: can I unload a lot of the conf & reactions here to free memory?
+
     # Save the result
     if draft:
       output_path = output_path + "fast.mp4"
@@ -151,6 +149,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
                                  ffmpeg_params=['-q:v', '60']
                                 )
 
+
     command = [
         'ffmpeg',
         '-i', output_path,
@@ -158,11 +157,17 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
         '-c:v', 'copy',
         '-c:a', 'copy',
         '-shortest',
-        output_path
+        output_path + '.mp4'
     ]
 
     subprocess.run(command)
 
+    command = [
+        'mv',
+        output_path + '.mp4',
+        output_path
+    ]    
+    subprocess.run(command)
 
 def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size):
     duration = max(base_video.duration, clip_length)
@@ -170,13 +175,6 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
 
     final_clip = CompositeVideoClip(clips, size=output_size)
     final_clip = final_clip.set_duration(duration)
-
-    # final_audio = CompositeAudioClip(audio_clips)
-    # final_audio.fps = sr
-    # final_audio = final_audio.set_duration(duration)        
-
-    # final_audio_as_array = final_audio.to_soundarray()
-    # sf.write(os.path.join( conf.get('temp_directory'),  f"MAIN-full.wav"   ), final_audio_as_array, sr) # very good audio quality
 
     # Determine the maximum length among all audio clips
     max_len = max([track.shape[0] for track in audio_clips])
@@ -201,6 +199,10 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
 
     audio_output = os.path.join( conf.get('temp_directory'),  f"MAIN-full-mixed-directly.wav"   )
     sf.write(audio_output, mixed_track, sr)
+
+    audio_output = os.path.join(conf.get('temp_directory'), "MAIN-full-mixed-directly.flac")
+    sf.write(audio_output, mixed_track, sr, format='FLAC')
+    
     print(f"MIXED {len(audio_clips)} audio clips together!")
 
 
@@ -275,6 +277,7 @@ def create_clips(base_video, cell_size, draft, output_size):
     all_clips = []
 
     print("\tCreating all clips")
+    audio_clips = []
     for name, reaction in conf.get('reactions').items():
         print(f"\t\tCreating clip for {name}")
         reactors = reaction.get('reactors')
@@ -282,6 +285,10 @@ def create_clips(base_video, cell_size, draft, output_size):
             continue
 
         reaction_color = reactor_colors.pop()
+
+        audio = reaction.get('mixed_audio')
+        audio_clips.append(audio)
+        audio_volume = get_audio_volume(audio)
 
         for idx, reactor in enumerate(reactors): 
             print(f"\t\t\tReactor {idx}")
@@ -297,7 +304,7 @@ def create_clips(base_video, cell_size, draft, output_size):
                 print('\t\t\t\t...masking')
                 clip = create_masked_video(channel=name,
                                            clip=clip, 
-                                           audio=reactor['audio'],
+                                           audio_volume=audio_volume,
                                            border_color=reaction_color, 
                                            audio_scaling_factor=audio_scaling_factors[name], 
                                            border_thickness=min(30, max(5, size / 15)), 
@@ -322,7 +329,6 @@ def create_clips(base_video, cell_size, draft, output_size):
               'reaction': reaction,
               'priority': priority,
               'video': clip,
-              'audio': reactor['audio'],
               'position': position,
               'reactor_idx': idx
             }
@@ -332,9 +338,8 @@ def create_clips(base_video, cell_size, draft, output_size):
 
 
 
-
+    audio_clips.append(base_audio_clip)
     base_clip = {
-      'audio': base_audio_clip, 
       'base': True,
       'priority': 0,
       'video': base_video
@@ -348,7 +353,7 @@ def create_clips(base_video, cell_size, draft, output_size):
 
 
 
-    return all_clips, clip_length
+    return all_clips, audio_clips, clip_length
 
 
 
@@ -401,7 +406,7 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
         return new_clip
 
     def extend_for_audio_aside(audio, insertion_point, duration, channel=None, aside=None):
-        if audio.duration < insertion_point:
+        if duration < insertion_point:
             return audio
 
         if aside is None:
@@ -412,15 +417,9 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             # Use the provided aside audio clip
             silent_aside = aside
 
+        insertion_point = int(insertion_point * sr)
+
         new_audio = np.concatenate([audio[0:insertion_point, :], silent_aside, audio[insertion_point:, :]])
-
-        # # Splice the aside into the current audio
-        # before = audio.subclip(0, insertion_point)
-        # after = audio.subclip(insertion_point)
-
-        # # Concatenate the audio clips
-        # new_audio = concatenate_audioclips([before, silent_aside, after])
-
 
         return new_audio
 
@@ -439,22 +438,22 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             if reactors is None:
                 continue
 
+
             for idx, reactor in enumerate(reactors): 
                 # print(reactor, reactor['clip'])
 
                 if channel == name:
                     extended_clip = aside_clips[idx].get('clip')
                     reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration, aside=extended_clip)
-                    reactor['audio'] = extend_for_audio_aside(reactor['audio'], insertion_point, duration, aside=extended_clip.audio.to_soundarray())
                 else:                     
                     reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration)
-                    reactor['audio'] = extend_for_audio_aside(reactor['audio'], insertion_point, duration)
 
-            audio = reactors[0]['audio']
-            
             if channel != name:
+                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration)                
                 middle = np.zeros(int(sr * duration))
             else: 
+                extended_clip = aside_clips[idx].get('clip')
+                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration, aside=extended_clip.audio.to_soundarray())                
                 middle = np.ones( int(sr * duration))
 
             split = int(sr * insertion_point)
@@ -469,7 +468,7 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
 # I’m using the following function to mask a video to a hexagon or circular shape, with 
 # a border that pulses with color when there is audio from the reactor. 
 
-def create_masked_video(channel, clip, audio, width, height, audio_scaling_factor, border_color, border_thickness=10, as_circle=False):
+def create_masked_video(channel, clip, audio_volume, width, height, audio_scaling_factor, border_color, border_thickness=10, as_circle=False):
 
 
     # Create new PIL images with the same size as the clip, fill with black color
@@ -518,8 +517,6 @@ def create_masked_video(channel, clip, audio, width, height, audio_scaling_facto
     border_mask_np = np.array(border_mask)
     mask_img_small_np = np.array(mask_img_small)
 
-
-    audio_volume = get_audio_volume(audio)
 
     # I’d like to make the border dynamic. Specifically:
     #   - Each reaction video should have its own bright saturated HSV color assigned to it
@@ -587,9 +584,13 @@ def create_masked_video(channel, clip, audio, width, height, audio_scaling_facto
 
     def make_mask(t):
         mask = np.zeros((height, width))
+        idx = int(t * sr)
 
         # Get the volume at current time
-        volume = audio_volume[int(t * sr)]
+        if (idx < len(audio_volume)):
+            volume = audio_volume[idx]
+        else: 
+            volume = 0
 
         if volume > 0:
             mask[border_mask_np > 0] = 1  # Border visible

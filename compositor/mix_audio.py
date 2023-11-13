@@ -4,19 +4,12 @@ import os
 import math
 import soundfile as sf
 
-from moviepy.editor import CompositeAudioClip, concatenate_audioclips
-from moviepy.audio.AudioClip import AudioArrayClip, AudioClip
-from moviepy.audio.fx import all as audio_fx
-from moviepy.video.fx import fadeout
+from moviepy.editor import AudioFileClip
 
-from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate as sr
+from utilities import conf, conversion_audio_sample_rate as sr
 
 from utilities.audio_processing import calculate_perceptual_loudness
 from utilities import print_profiling
-
-
-from utilities.conf import get_normalization_factor
-
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -45,56 +38,21 @@ def mix_audio(base_video, output_size):
     base_audio_rms = rms_level_excluding_silence(base_audio_as_array)
 
 
-    ####################
-    # Convert to sound array
-    print("\tConverting audio clips to sound array")    
     for channel, reaction in conf.get('reactions').items():
-        print(f"\t\tConverting {channel} to sound array")
+        print(f"\t\tLoading and volume matching audio for {channel}")
         reactors = reaction.get('reactors')
         if reactors is None:
             continue
 
-        for idx, reactor in enumerate(reactors): 
-            clip = reactor['clip']
+        audio_path = reaction.get("backchannel_audio")
+        isolated_backchannel = AudioFileClip(audio_path).to_soundarray() 
 
-            clip.audio.fps = sr 
+        isolated_backchannel = adjust_gain_for_rms_match(isolated_backchannel, base_audio_rms)
+        # write_audio_to_file(reaction, isolated_backchannel, 'adjusted_for_gain')
 
-            def inspect_clip(clip):
-                try:
-                    # Try to convert the clip's audio to a sound array
-                    _ = clip.audio.to_soundarray()
-                except Exception as e:
-                    # If an error occurs, print or log relevant details about the clip
-                    print(f"Error with clip: {clip}; {clip.duration}")  # Adapt this based on how you want to identify the clip
-                        
-                    path_to_save = os.path.join(conf.get('temp_directory'), 'problem_clip.wav')
-                    # Check if it's a VideoClip, then get its audio to save
-                    if isinstance(clip, VideoClip) and clip.audio:
-                        clip.audio.write_audiofile(path_to_save)
-                        path_to_save = os.path.join(conf.get('temp_directory'), 'problem_clip.mp4')
-                        clip.write_videofile(path_to_save)
-                    elif isinstance(clip, (AudioClip, CompositeAudioClip)):
-                        clip.write_audiofile(path_to_save)
+        reaction['mixed_audio'] = isolated_backchannel
 
 
-                    print(e)
-
-                # Check if the current clip is a CompositeAudioClip
-                if isinstance(clip, CompositeAudioClip):
-                    # If it is, recursively inspect its subclips
-                    for subclip in clip.clips:
-                        inspect_clip(subclip)
-
-            # inspect_clip(clip)
-
-            reactor['audio'] = clip.audio.to_soundarray() 
-
-            # reactor['audio'] = clip.audio.to_soundarray() * reaction.get("normalization_factor", get_normalization_factor(reaction))
-            # write_audio_to_file(reaction, reactor['audio'], 'normalization_factor')
-
-    ####################
-    # Mix audio
-    
     audio_scaling_factors = foreground_background_backchannel_segments(base_audio_as_array, foreground_scaler, background_scaler)
 
     all_reactor_audios = []
@@ -103,61 +61,25 @@ def mix_audio(base_video, output_size):
 
     for channel, reaction in conf.get('reactions').items():
         print(f"\t\tMixing audio for {channel}")
-        reactors = reaction.get('reactors')
-        if reactors is None:
-            continue
 
-        for idx, reactor in enumerate(reactors): 
-            reactor_audio_array = reactor['audio']
+        audio_scaling_factor = audio_scaling_factors[channel]
+        audio_scaling_factor_reshaped = audio_scaling_factor[:, np.newaxis]
 
-            adjusted_reactor_audio = adjust_gain_for_rms_match(reactor_audio_array, base_audio_rms)
-            # write_audio_to_file(reaction, adjusted_reactor_audio, 'adjusted_for_gain')
+        reaction['mixed_audio'] *= audio_scaling_factor_reshaped
+        # write_audio_to_file(reaction, reaction['mixed_audio'], 'adjusted_for_foreground')
 
-            audio_scaling_factor = audio_scaling_factors[channel]
-            audio_scaling_factor_reshaped = audio_scaling_factor[:, np.newaxis]
-            adjusted_reactor_audio = adjusted_reactor_audio * audio_scaling_factor_reshaped * 20
-            # write_audio_to_file(reaction, adjusted_reactor_audio, 'adjusted_for_foreground')
+        position = reaction.get('reactors')[0]['position']
 
-            position = reactor['position']
-
-            # Calculate pan position based on grid assignment
-            pan_position = (2 * position[0] / output_size[0]) - 1
-
-            # Pan the reactor's audio
-            adjusted_reactor_audio = pan_audio_stereo(adjusted_reactor_audio, pan_position, max_pan=stereo_pan_max)
-
-            reactor['audio'] = adjusted_reactor_audio
-            all_reactor_audios.append(adjusted_reactor_audio)
+        # Pan the reactor's audio based on grid assignment
+        pan_position = (2 * position[0] / output_size[0]) - 1            
+        reaction['mixed_audio'] = pan_audio_stereo(reaction['mixed_audio'], pan_position, max_pan=stereo_pan_max)
+        # write_audio_to_file(reaction, reaction['mixed_audio'], 'after_panning')
 
 
     # Apply dynamic limiting on the collected reactor audios
-    dynamic_limit_without_combining(base_audio_as_array, all_reactor_audios)
-    # for channel, reaction in conf.get('reactions').items():
-    #     reactors = reaction.get('reactors')
-    #     if reactors is None:
-    #         continue
+    dynamic_limit_without_combining(base_audio_as_array)
 
-    #     for idx, reactor in enumerate(reactors): 
-    #         # reactor_audio_array = reactor['audio']
-    #         # write_audio_to_file(reaction, reactor_audio_array, 'dynamically_limited')
-    #         soundfile_output = os.path.join( conf.get('temp_directory'),  f"MAIN-{channel}.wav"   )
-    #         sf.write(soundfile_output, reactor['audio'], sr) # very good audio quality
-
-
-    # for name, reaction in conf.get('reactions').items():
-    #     reactors = reaction.get('reactors')
-    #     if reactors is None:
-    #         continue
-    #     for idx, reactor in enumerate(reactors): 
-    #         reactor['audio'] = AudioArrayClip(reactor['audio'], fps=sr)
-
-
-
-    base_audio_clip = base_audio_as_array #AudioArrayClip(base_audio_as_array, fps=sr)
-    return base_audio_clip, audio_scaling_factors
-
-
-
+    return base_audio_as_array, audio_scaling_factors
 
 
 
@@ -214,9 +136,6 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
     backgrounded_backchannel_segments = []
     for channel, reaction in conf.get('reactions').items():
         print(f"\t\tForeground/background audio for {channel}")
-        reactors = reaction.get('reactors')
-        if reactors is None:
-            continue
 
         foregrounded_backchannel = reaction.get('foregrounded_backchannel', [])
         backgrounded_backchannel = reaction.get('backgrounded_backchannel', [])
@@ -224,7 +143,7 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
         # 1) Identify contiguous backchannel channel_segments in each reaction audio. A segment 
         #      can have at most 2 seconds of consecutive silence while still being treated 
         #      as contiguous. 
-        reaction_audio = reactors[0]['audio']
+        reaction_audio = reaction.get('mixed_audio')
         contiguous_backchannel_segments = find_contiguous_backchannel_segments(reaction_audio) 
 
         scaling_factors[channel] = np.zeros(len(reaction_audio)) 
@@ -402,10 +321,6 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
 
     # Any audio past the end of the base audio should be set to one
     for channel, reaction in conf.get('reactions').items():
-        reactors = reaction.get('reactors')
-        if reactors is None:
-            continue
-
         audio_mask = scaling_factors[channel]
         diff = len(audio_mask) - len(base_audio_as_array)
         if diff > 0:
@@ -521,12 +436,14 @@ def peak_normalize_with_headroom(audio_array, headroom=0.025):
     scale_factor = (1 - headroom) / peak
     return audio_array * scale_factor
 
-def dynamic_limit_without_combining(base_audio, all_clips, sum_reaction_audio_threshold=0.99):
+def dynamic_limit_without_combining(base_audio, sum_reaction_audio_threshold=0.99):
     '''Dynamically limit the reactor audios in chunks to avoid exceeding the threshold.'''
     chunk_size = int(sr * 0.5)  # Using half-second chunks
+
+    all_reaction_audio = [r.get('mixed_audio') for r in conf.get('reactions').values()]
     
     # Find out the max length amongst all audios
-    max_len = max(len(base_audio), max([len(reactor_audio) for reactor_audio in all_clips]))
+    max_len = max(len(base_audio), max([len(reactor_audio) for reactor_audio in all_reaction_audio]))
 
     # Find the peak volume of the base (song) audio
     base_peak_volume = np.max(np.abs(base_audio))
@@ -548,7 +465,7 @@ def dynamic_limit_without_combining(base_audio, all_clips, sum_reaction_audio_th
         combined_chunk = base_chunk.copy()
 
         # Fetching reactor audios chunk-by-chunk and summing them up
-        for reactor_audio in all_clips:
+        for reactor_audio in all_reaction_audio:
             reactor_chunk = reactor_audio[i:chunk_end] if i < len(reactor_audio) else np.zeros_like(base_chunk)
             reactor_chunk = pad_audio_chunk(reactor_chunk, chunk_size)
             combined_chunk += reactor_chunk
@@ -563,7 +480,7 @@ def dynamic_limit_without_combining(base_audio, all_clips, sum_reaction_audio_th
         scaling_factor = min(1, sum_reaction_audio_threshold / np.max(np.abs(combined_chunk)), max_allowable_volume / np.max(np.abs(combined_chunk)))
 
         # Apply scaling factor back to the original chunks of reactor audios
-        for reactor_audio in all_clips:
+        for reactor_audio in all_reaction_audio:
             if i < len(reactor_audio):
                 reactor_chunk = reactor_audio[i:chunk_end]
                 reactor_audio[i:chunk_end] = reactor_chunk * scaling_factor
