@@ -95,21 +95,31 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
 
   base_reaction_path, base_video_ext = os.path.splitext(react_path)
 
-  
+  face_match_output_file = f"{base_reaction_path}-coarse_face_position_metadata.pckl"
   pattern = f"{base_reaction_path}-cropped-*-*-*.mp4"
   output_files = glob.glob(pattern)
 
-  orientations = ["center", "left", "right"]
+  print('Getting face matches')
+  face_matches, width, height = detect_faces(reaction, react_path, face_match_output_file, show_facial_recognition=show_facial_recognition, frames_per_capture=frames_per_capture)
 
+  if width is None:
+    video = cv2.VideoCapture(react_path)
+    width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    video.release()
+  
+  print('Processing faces')
+  reactors = process_faces(reaction, face_matches, width, height)
+
+  sophisticated_orientation = find_face_orientation(reactors)
 
   # If no existing files found, proceed with face detection and cropping
-  if len(output_files) == 0 or conf.get('force_backchannel'):
-      reactors = detect_faces(reaction, react_path, base_reaction_path, show_facial_recognition=show_facial_recognition, frames_per_capture=frames_per_capture)
+  if len(output_files) == 0:
       for i, reactor in enumerate(reactors): 
           (x,y,w,h,orientation) = reactor[0]
           reactor_captures = reactor[1]
           centroids = reactor[2]
-          output_file = f"{base_reaction_path}-cropped-{i}-{int(x+w/2)}-{orientation}.mp4"
+          output_file = f"{base_reaction_path}-cropped-{i}-{int(x+w/2)}-{sophisticated_orientation}.mp4"
           print("Going to crop the video now...")
           crop_video(react_path, output_file, len(reactors), int(w), int(h), centroids, remove_audio=(aside_video is None))
           print("\t...Done cropping")
@@ -127,12 +137,89 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
       'key': file,
       'priority': reaction.get('priority'), 
       'clip': VideoFileClip(file),
-      'orientation': orientation,
+      'orientation': sophisticated_orientation,
       'x': int(x)
     })  
 
-  return cropped_reactors
+  return cropped_reactors, reactors
 
+
+
+def classify_vertical_orientation(keypoints):
+    left_eye = keypoints['left_eye']
+    right_eye = keypoints['right_eye']
+    nose = keypoints['nose']
+    mouth_left = keypoints['mouth_left']
+    mouth_right = keypoints['mouth_right']
+
+    # Calculate average levels for eyes and mouth
+    average_eye_level = (left_eye[1] + right_eye[1]) / 2
+    average_mouth_level = (mouth_left[1] + mouth_right[1]) / 2
+
+    # Calculate distances
+    eye_nose_distance = abs(average_eye_level - nose[1])
+    nose_mouth_distance = abs(nose[1] - average_mouth_level)
+
+    # Determine vertical direction based on relative distances
+    if eye_nose_distance > nose_mouth_distance:
+        return 'down'
+    elif eye_nose_distance < nose_mouth_distance:
+        return 'up'
+    else:
+        return 'middle'
+
+
+def find_face_orientation(reactors):
+    dominant_verticals = []
+    dominant_horizontals = []
+    all_verticals = []
+    all_horizontals = []
+
+    for ((xx,yy,ww,hh,oorientation), (faces, total_area, kernel, center, avg_size), centroids ) in reactors:
+        horizontal_orientations = []
+        vertical_orientations = []
+
+        for x,y,w,h,nose,all_data,hist in faces:
+            keypoints = all_data['keypoints']
+            left_eye = keypoints['left_eye']
+            right_eye = keypoints['right_eye']
+            nose = keypoints['nose']
+
+            # print(keypoints)
+
+            # Calculate the horizontal direction
+            eye_line = right_eye[0] - left_eye[0]
+            nose_eye_line = (left_eye[0] + right_eye[0]) / 2 - nose[0]
+            horizontal_threshold = eye_line * 0.1  # 10% of the eye line length as the threshold
+
+            if abs(nose_eye_line) < horizontal_threshold:
+                horizontal_orientations.append('center')
+            elif nose_eye_line > 0:
+                horizontal_orientations.append('left')
+            else:
+                horizontal_orientations.append('right')
+
+            vertical_orientations.append(classify_vertical_orientation(keypoints)) 
+
+        dominant_horizontal = max(set(horizontal_orientations), key=horizontal_orientations.count)
+        dominant_vertical = max(set(vertical_orientations), key=vertical_orientations.count)
+
+        dominant_verticals.append(dominant_vertical)
+        dominant_horizontals.append(dominant_horizontal)
+
+        all_horizontals += horizontal_orientations
+        all_verticals += vertical_orientations
+
+    if 'left' in dominant_horizontals and 'right' in dominant_horizontals:
+        dominant_horizontal = 'center'
+    else: 
+        dominant_horizontal = dominant_horizontals[0]
+        dominant_horizontal = max(set(all_horizontals), key=all_horizontals.count)
+
+    dominant_vertical = max(set(all_verticals), key=all_verticals.count)
+
+
+    return dominant_horizontal, dominant_vertical
 
 
 #       There is a new argument to the below crop_video function, centroids, is an array of 
@@ -141,49 +228,49 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
 #       by function parameters x and y. The function needs to be modified such that
 #       at each frame f the frame is cropped to the centroid given at centroids[f]. 
 
-def crop_video2(video_file, output_file, x, y, w, h, centroids, remove_audio=False):
+# def crop_video2(video_file, output_file, x, y, w, h, centroids, remove_audio=False):
 
-    # Load the video clip
-    video = VideoFileClip(video_file)
+#     # Load the video clip
+#     video = VideoFileClip(video_file)
 
-    if w != h:
-      w = h = min(w,h)
+#     if w != h:
+#       w = h = min(w,h)
 
-    if w % 2 > 0:
-      w -= 1
-      h -= 1
+#     if w % 2 > 0:
+#       w -= 1
+#       h -= 1
 
-    if x < 0:
-      x = 0
+#     if x < 0:
+#       x = 0
 
-    if x + w > video.w:
-      x -= x + w - video.w
+#     if x + w > video.w:
+#       x -= x + w - video.w
 
-    if y < 0: 
-      y = 0
+#     if y < 0: 
+#       y = 0
 
-    if y + h > video.h:
-      y -= y + h - video.h
+#     if y + h > video.h:
+#       y -= y + h - video.h
 
-    # Crop the video clip
-    cropped_video = video.crop(x1=x, y1=y, x2=x+w, y2=y+h)
+#     # Crop the video clip
+#     cropped_video = video.crop(x1=x, y1=y, x2=x+w, y2=y+h)
 
-    if w > 450: 
-      w = h = 450
-      cropped_video = cropped_video.resize(width=w, height=h)
+#     if w > 450: 
+#       w = h = 450
+#       cropped_video = cropped_video.resize(width=w, height=h)
 
-    if remove_audio:
-      cropped_video = cropped_video.without_audio()
-
-
-    # Write the cropped video to a file
-    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=conversion_frame_rate,
-                                  ffmpeg_params=['-q:v', '60'])
+#     if remove_audio:
+#       cropped_video = cropped_video.without_audio()
 
 
+#     # Write the cropped video to a file
+#     cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=conversion_frame_rate,
+#                                   ffmpeg_params=['-q:v', '40'])
 
-    # Close the video clip
-    video.close()
+
+
+#     # Close the video clip
+#     video.close()
 
 
 def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_audio=False):
@@ -239,7 +326,7 @@ def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_au
 
     # Write the cropped video to a file
     cropped_video.write_videofile(output_file, codec="h264_videotoolbox", fps=conversion_frame_rate,
-                                ffmpeg_params=['-q:v', '60'])
+                                ffmpeg_params=['-q:v', '40'])
 
     # Close the video clip
     video.close()
@@ -281,7 +368,7 @@ def get_faces_from(img):
 
   faces = detector.detect_faces(img)
 
-  ret = [ (face['box'], face['keypoints']['nose']) for face in faces ]
+  ret = [ (face['box'], face['keypoints']['nose'], face) for face in faces ]
   return ret
 
 
@@ -299,18 +386,18 @@ def detect_faces_in_frame(reaction, react_frame, show_facial_recognition, width,
     # Scale the detected bounding boxes and keypoints back to original size
     scaled_faces = [((int(x/reduction_factor), int(y/reduction_factor), 
                       int(w/reduction_factor), int(h/reduction_factor)), 
-                     (int(nose[0]/reduction_factor), int(nose[1]/reduction_factor))) for (x, y, w, h), nose in faces]
+                     (int(nose[0]/reduction_factor), int(nose[1]/reduction_factor)), all_data) for (x, y, w, h), nose, all_data in faces]
 
     # Draw rectangles around the detected faces
     faces_this_frame = []
-    for ((x, y, w, h), nose) in scaled_faces:
+    for ((x, y, w, h), nose, all_data) in scaled_faces:
         if w > .05 * width:
             if reaction.get('fake_reactor_position', False):
                 bad_x, bad_y = reaction.get('fake_reactor_position')
                 if (x / width < bad_x < (x+w) / width and y / height < bad_y < (y + h) / height):
                   continue
 
-            faces_this_frame.append([x, y, w, h, nose])
+            faces_this_frame.append([x, y, w, h, nose, all_data])
 
     # compute histogram of grays for later fine-grained matching
     filtered_faces_this_frame = []
@@ -335,12 +422,12 @@ def detect_faces_in_frame(reaction, react_frame, show_facial_recognition, width,
           filtered_faces_this_frame.append(face)
 
           if show_facial_recognition:
-              x, y, w, h, nose, hist = face
+              x, y, w, h, nose, all_data, hist = face
               cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
         else:
           if show_facial_recognition:
-              x, y, w, h, nose = face
+              x, y, w, h, nose, all_data = face
               cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 40, 190), 2)
           ignored_faces_this_frame.append(face)
           print("IGNORING FACE!!!")
@@ -413,39 +500,46 @@ def detect_faces_in_frames(reaction, video, frames_to_read, show_facial_recognit
     return face_matches
 
 
-def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, frames_per_capture=45, show_facial_recognition=False):
+def detect_faces(reaction, react_path, output_file, frames_to_read=None, frames_per_capture=45, show_facial_recognition=False):
 
-    # Open the video file
-    video = cv2.VideoCapture(react_path)
-    print(f'\nDetecting faces for {react_path}')
 
-    width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    if frames_to_read is None:
-      frames_to_read = []
-
-      total_frames = video.get(cv2.CAP_PROP_FRAME_COUNT)
-      ts = 0
-      while ts < total_frames - 1:
-        frames_to_read.append(ts)
-        ts += frames_per_capture
-      frames_to_read.append(total_frames - 1)
-
-    coarse_face_metadata = f"{base_reaction_path}-coarse_face_position_metadata.pckl"
-    if os.path.exists(coarse_face_metadata):
-      face_matches = read_coarse_face_metadata(coarse_face_metadata)
+    
+    if os.path.exists(output_file):
+        face_matches = read_coarse_face_metadata(output_file)
+        width = height = None
     else:
 
-      base_dir = os.path.dirname(os.path.dirname(react_path))
-      images_to_ignore = [ 
-          cv2.imread(os.path.join(base_dir, f), cv2.IMREAD_GRAYSCALE)   
-          for f in os.listdir(base_dir)
-          if f.startswith("face-to-ignore")
-      ]
+        video = cv2.VideoCapture(react_path)
+        print(f'\nDetecting faces for {react_path}')
+        width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-      face_matches = detect_faces_in_frames(reaction, video, frames_to_read, show_facial_recognition=show_facial_recognition, images_to_ignore=images_to_ignore)
-      output_coarse_face_metadata(coarse_face_metadata, face_matches)
+        if frames_to_read is None:
+          frames_to_read = []
+
+          total_frames = video.get(cv2.CAP_PROP_FRAME_COUNT)
+          ts = 0
+          while ts < total_frames - 1:
+            frames_to_read.append(ts)
+            ts += frames_per_capture
+          frames_to_read.append(total_frames - 1)
+
+        base_dir = os.path.dirname(os.path.dirname(react_path))
+        images_to_ignore = [ 
+            cv2.imread(os.path.join(base_dir, f), cv2.IMREAD_GRAYSCALE)   
+            for f in os.listdir(base_dir)
+            if f.startswith("face-to-ignore")
+        ]
+
+        face_matches = detect_faces_in_frames(reaction, video, frames_to_read, show_facial_recognition=show_facial_recognition, images_to_ignore=images_to_ignore)
+        output_coarse_face_metadata(output_file, face_matches)
+        cv2.destroyAllWindows()
+        video.release()
+
+    return face_matches, width, height
+
+
+def process_faces(reaction, face_matches, width, height):
 
     # print('facematches:', [(frame, x,y,w,h) for frame, (x,y,w,nose,hist) in face_matches])
 
@@ -491,9 +585,6 @@ def detect_faces(reaction, react_path, base_reaction_path, frames_to_read=None, 
       reactor.append(centroids)
 
     print(f"done detecting faces, found {len(reactors)}")
-
-    video.release()
-    cv2.destroyAllWindows()
 
     return reactors
 
@@ -594,7 +685,7 @@ def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_ar
       # Iterate over the matches and update the heat map
       for faces in faces_over_time:
         for face in faces:
-          x, y, width, height, nose, hist = face
+          x, y, width, height, nose, all_data, hist = face
 
 
           # Don't add to the heat map any entries that overlap with best_ignored_area
@@ -698,7 +789,7 @@ def calculate_center(group):
     total_width = 0 
     total_height = 0 
     for face in group:
-        x, y, w, h, center, hist = face
+        x, y, w, h, center, all_data, hist = face
         total_x += center[0] + w / 2
         total_y += center[1] + h / 2
         total_width += w
@@ -741,7 +832,7 @@ def calculate_center(group):
 # The find_reaction_centroids function is passed the following data: 
 #    face_matches: An array of sampled frames with face-detection performed on them. Each 
 #                  entry is a tuple (frame_number, faces), where faces is a list of 
-#                  candidate faces (x,y,w,h,nose) }
+#                  candidate faces (x,y,w,h,nose,all_data) }
 #    center: The coarse-match centroid (x,y) for this reactor's face.
 #    avg_size: The average size (width, height) of the facial matches that comprise the
 #              coarse match.
@@ -757,9 +848,9 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
 
   if len(coarse_matches) > 3:
     coarse_samples = [0, int(len(coarse_matches)/2), len(coarse_matches) - 1 ]
-    rep_histos = [coarse_matches[i][5] for i in coarse_samples]
+    rep_histos = [coarse_matches[i][6] for i in coarse_samples]
   else:
-    rep_histos = [match[5] for match in coarse_matches]
+    rep_histos = [match[6] for match in coarse_matches]
 
 
   moving_avg_centroid = None
@@ -771,7 +862,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
     if len(other_kernels) > 0:
       faces = []
       for face in all_faces:
-        (x,y,w,h,nose,hist) = face
+        (x,y,w,h,nose,all_data,hist) = face
 
         face_centroid = (x + w/2, y + h/2)
         my_centroid = (kernel[0] + kernel[2]/2, kernel[1] + kernel[3]/2)
@@ -797,7 +888,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
                                              # choose from in a given frame
 
       if len(faces) > 1:
-        for (x,y,w,h,nose,hist) in faces:
+        for (x,y,w,h,nose,all_data,hist) in faces:
 
           dx = center[0] - (x + w/2)
           dy = center[1] - (y + h/2)
@@ -833,7 +924,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
             best_centroid = (x + w/2, y + h/2)
 
       elif len(faces) == 1:
-        (x,y,w,h,nose,hist) = faces[0]
+        (x,y,w,h,nose,all_data,hist) = faces[0]
         best_centroid = (x + w/2, y + h/2)
 
       elif i == 0: 
@@ -860,7 +951,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
 
 def get_face_img(image, bbox):
   # Get the face image from the bounding box
-  x, y, w, h, nose = bbox
+  x, y, w, h, nose, all_data = bbox
   face_img = image[y:y+h, x:x+w]
   return face_img
 
@@ -879,7 +970,7 @@ def compute_histogram(face):
 
 def get_face_histogram(image=None, face=None, face_img=None):
   if face:
-    (x,y,w,h,nose) = face
+    (x,y,w,h,nose,all_data) = face
     face_img = get_face_img(image, face)
   elif face_img is None:
     raise Exception("No face or face_img given")
@@ -1038,4 +1129,59 @@ def find_fingerprint_in_image(fingerprint_image, target_image, scales=None, thre
             break
     
     return contains_fingerprint, 100
+
+
+
+if __name__=='__main__':
+
+    from utilities import conf, make_conf
+    from library import money_game3
+    from reactor_core import results_output_dir
+
+    make_conf(money_game3, {}, results_output_dir)
+    conf.get('load_reactions')()
+
+    ground_truth = {
+        'Akonzip Zippy TV':         ('left',    'up'),
+        '1OF1 FRESHY':              ('center','down'),
+        'Anthony Ray Reacts':       ('left',    'middle'),
+        'ashlena':                  ('left',    'up'),
+        'BARS & BARBELLS':          ('center','down'),
+        'Chris Liepe':              ('left',    'middle'),
+        'Crypt':                    ('right',    'down'),
+        'DaybombTV':                ('right',    'down'),
+        'Dicodec':                  ('right',    'down'),
+        'Fischtank Productions':    ('right',    'middle'),
+        'iamsickflowz':             ('straight', 'middle'),
+        'JK Bros':                  ('straight', 'up'),
+        'Joe-Unlimited':            ('straight', 'middle'),
+        'Justin D':                 ('left',     'down'),
+        'McFly JP':                 ('left',     'down'),
+    }
+
+    from prettytable import PrettyTable
+    x = PrettyTable()
+    x.field_names = ["Channel", "Hori", "GT Hori", "old", "Vert", "GT Vert"]
+    x.align = "r"
+
+    for channel, reaction in conf.get('reactions').items():
+        if channel not in ground_truth:
+            continue
+
+        # if ground_truth[channel][1] != 'down':
+        #     continue
+
+        conf['load_reaction'](reaction['channel'])
+        cropped_reactors, reactors = create_reactor_view(reaction)
+
+        hori, vert, old = find_face_orientation(reactors)
+        gt = ground_truth[channel]
+
+        x.add_row([channel, hori, gt[0], old, vert, gt[1]])
+
+        print(x)
+
+
+
+
 
