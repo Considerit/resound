@@ -84,7 +84,7 @@ from utilities import conf, conversion_frame_rate
 
 import soundfile as sf
 
-def create_reactor_view(reaction, show_facial_recognition=False, aside_video=None): 
+def create_reactor_view(reaction, show_facial_recognition=True, aside_video=None): 
 
   if aside_video is not None:
     react_path = aside_video
@@ -111,7 +111,10 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
   print('Processing faces')
   reactors = process_faces(reaction, face_matches, width, height)
 
-  sophisticated_orientation = find_face_orientation(reactors)
+  if not reaction.get('face_orientation', False):
+    reaction['face_orientation'] = find_face_orientation(reactors)
+
+  sophisticated_orientation = reaction.get('face_orientation')
 
   # If no existing files found, proceed with face detection and cropping
   if len(output_files) == 0:
@@ -119,7 +122,7 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
           (x,y,w,h,orientation) = reactor[0]
           reactor_captures = reactor[1]
           centroids = reactor[2]
-          output_file = f"{base_reaction_path}-cropped-{i}-{int(x+w/2)}-{sophisticated_orientation}.mp4"
+          output_file = f"{base_reaction_path}-cropped-{i}-{int(x+w/2)}-{sophisticated_orientation[0]}-{sophisticated_orientation[1]}.mp4"
           print("Going to crop the video now...")
           crop_video(react_path, output_file, len(reactors), int(w), int(h), centroids, remove_audio=(aside_video is None))
           print("\t...Done cropping")
@@ -127,11 +130,11 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
 
   cropped_reactors = []
   escaped_base_reaction_path = re.escape(base_reaction_path)
-  regex_pattern = rf"{escaped_base_reaction_path}-cropped-(.*)-(.*)-(.*).mp4"
+  regex_pattern = rf"{escaped_base_reaction_path}-cropped-(.*)-(.*)-(.*)-(.*).mp4"
 
   for file in output_files:
     match = re.match(regex_pattern, file)
-    i, x, orientation = match.groups()
+    i, x, orientation_x, orientation_y = match.groups()
 
     cropped_reactors.append({
       'key': file,
@@ -1142,26 +1145,56 @@ if __name__=='__main__':
     conf.get('load_reactions')()
 
     ground_truth = {
-        'Akonzip Zippy TV':         ('left',    'up'),
-        '1OF1 FRESHY':              ('center','down'),
-        'Anthony Ray Reacts':       ('left',    'middle'),
-        'ashlena':                  ('left',    'up'),
-        'BARS & BARBELLS':          ('center','down'),
-        'Chris Liepe':              ('left',    'middle'),
-        'Crypt':                    ('right',    'down'),
-        'DaybombTV':                ('right',    'down'),
-        'Dicodec':                  ('right',    'down'),
-        'Fischtank Productions':    ('right',    'middle'),
-        'iamsickflowz':             ('straight', 'middle'),
-        'JK Bros':                  ('straight', 'up'),
-        'Joe-Unlimited':            ('straight', 'middle'),
-        'Justin D':                 ('left',     'down'),
-        'McFly JP':                 ('left',     'down'),
+        # 'Akonzip Zippy TV':         ('left',    'up'),
+        # '1OF1 FRESHY':              ('center','down'),
+        # 'ashlena':                  ('left',    'up'),
+        # 'BARS & BARBELLS':          ('center','down'),
+        # 'DaybombTV':                ('right',    'down'),
+        # 'Dicodec':                  ('right',    'down'),
+        # 'JK Bros':                  ('center', 'up'),
+        # 'Joe-Unlimited':            ('center', 'middle'),
+        # 'Justin D':                 ('left',     'down'),
+        # 'McFly JP':                 ('left',     'down'),
+        # 'Michael Goyette':          ('left', 'up'),
+        # 'ThatRoni Reacts':           ('center', 'down'),
+        # 'Youngblood Poetry':        ('right', 'down'),
+        # 'The Charlie Smith Channel': ('right',    'down'),
+        # 'Jordan & Amanda React':    ('right',    'up'),
+        # 'Black Pegasus_oWJkyMbJ3oM': ('left',    'up'),
+        # 'Elliot Quinn':              ('left', 'down'),
+        # 'Peter Barber':             ('center',    'down'),
+
+
+
+        # Have some wrong vert classifications:
+
+        # 'Bruce Deeble':             ('left',     'middle'),
+        # 'Shon':                     ('center',   'down'),
+        # 'Real Reactions':           ('right',     'up'),
+        # 'muSiK (by Jeremy H.)':      ('left', 'down'),
+        # 'MiddleAgedWhiteGuy Reacts': ('center', 'middle'),
+        # 'Chris Liepe':              ('left',    'middle'),
+        # 'Play It Again with Mike and Ginger': ('center', 'middle'),
+        # 'iamsickflowz':             ('center', 'middle'),
+        # 'Fischtank Productions':    ('right',    'middle'),
+        # 'The Wolf HunterZ':         ('center', 'middle'),
+        # 'redheadedneighbor':        ('center', 'middle'),
+        # 'Anthony Ray Reacts':       ('left',    'middle'),
+        # 'xFayze':                   ('left', 'middle'),
+        # 'Duane Reacts':             ('left', 'middle'),
+
+
+        # Have some wrong horiz classifications:
+
+        # 'Crypt':                    ('right',    'down'),
+        # 'Youngblood Poetry':        ('right',    'down'),
+
+
     }
 
     from prettytable import PrettyTable
     x = PrettyTable()
-    x.field_names = ["Channel", "Hori", "GT Hori", "old", "Vert", "GT Vert"]
+    x.field_names = ["Channel", "Hori", "GT Hori", "Vert", "GT Vert"]
     x.align = "r"
 
     for channel, reaction in conf.get('reactions').items():
@@ -1174,10 +1207,10 @@ if __name__=='__main__':
         conf['load_reaction'](reaction['channel'])
         cropped_reactors, reactors = create_reactor_view(reaction)
 
-        hori, vert, old = find_face_orientation(reactors)
+        hori, vert = find_face_orientation(reactors)
         gt = ground_truth[channel]
 
-        x.add_row([channel, hori, gt[0], old, vert, gt[1]])
+        x.add_row([channel, hori, gt[0], vert, gt[1]])
 
         print(x)
 
