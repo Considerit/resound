@@ -17,7 +17,7 @@ from moviepy.video.fx import fadeout
 
 import soundfile as sf
 
-from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate as sr
+from utilities import unload_reaction, conf, conversion_frame_rate, conversion_audio_sample_rate as sr
 
 from compositor.layout import create_layout_for_composition
 from compositor.mix_audio import mix_audio
@@ -83,6 +83,11 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
 
     final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
     print("\tClips composed")
+
+    # clear up memory from the audio clips, as they've now been written to file
+    audio_clips = []
+    for channel, reaction in conf.get('reactions').items():
+        unload_reaction(channel)
 
 
 
@@ -202,7 +207,7 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
 
     audio_output = os.path.join(conf.get('temp_directory'), "MAIN-full-mixed-directly.flac")
     sf.write(audio_output, mixed_track, sr, format='FLAC')
-    
+
     print(f"MIXED {len(audio_clips)} audio clips together!")
 
 
@@ -288,6 +293,7 @@ def create_clips(base_video, cell_size, draft, output_size):
 
         audio = reaction.get('mixed_audio')
         audio_clips.append(audio)
+        # print(f"MIXED AUDIO LEN {name}={len(audio) / sr}")
         audio_volume = get_audio_volume(audio)
 
         for idx, reactor in enumerate(reactors): 
@@ -406,7 +412,9 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
         return new_clip
 
     def extend_for_audio_aside(audio, insertion_point, duration, channel=None, aside=None):
-        if duration < insertion_point:
+        insertion_point = int(insertion_point * sr)
+
+        if audio.shape[0] < insertion_point:
             return audio
 
         if aside is None:
@@ -417,7 +425,6 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             # Use the provided aside audio clip
             silent_aside = aside
 
-        insertion_point = int(insertion_point * sr)
 
         new_audio = np.concatenate([audio[0:insertion_point, :], silent_aside, audio[insertion_point:, :]])
 
@@ -448,6 +455,8 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
                 else:                     
                     reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration)
 
+            len_audio_before = reaction['mixed_audio'].shape[0]
+
             if channel != name:
                 reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration)                
                 middle = np.zeros(int(sr * duration))
@@ -457,9 +466,11 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
                 middle = np.ones( int(sr * duration))
 
             split = int(sr * insertion_point)
-            len_before = len(audio_scaling_factors[name])
+            # len_before = len(audio_scaling_factors[name])
             audio_scaling_factors[name] = np.concatenate([audio_scaling_factors[name][0:split], middle, audio_scaling_factors[name][split:]])
-
+            
+            # print(f"LEN AFTER INSERTING ASIDE={len(audio_scaling_factors[name]) / sr} (before={len_before / sr})")
+            # print(f"LEN AUDIO AFTER INSERTING ASIDE={reaction['mixed_audio'].shape[0] / sr} (before={len_audio_before / sr})")
 
     return (base_video, base_audio_clip)
 
