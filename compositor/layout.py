@@ -34,7 +34,7 @@ def create_layout_for_composition(base_video, width, height):
                 x + base_width / 2, y + base_height / 2)
 
       center = None
-      value_relative_to = [x,height - base_height]
+      value_relative_to = [x, height - base_height]
     else: 
       bounds = [0,0,width,0]
       center = [width / 2, height / 2]
@@ -45,8 +45,12 @@ def create_layout_for_composition(base_video, width, height):
     # hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
     hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
 
-    assign_hex_cells_to_videos(width, height, hex_grid, cell_size, bounds, value_relative_to)
-
+    assign_seats_to_reactors(  seats=hex_grid, 
+                               grid_centroid=value_relative_to,
+                               seat_size=cell_size,
+                               base_video_width=base_width, 
+                               base_video_height=base_height,
+                               grid_size=(width, height))
 
     return (base_video, cell_size, base_video_position)
 
@@ -82,10 +86,6 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
       dx = 2 * a
       dy = math.ceil(.75 * 2 * a) - 1 #np.sqrt(3) * a
 
-
-      
-
-
       # Calculate the number of hexagons that can fit in the width and height
       nx = int(np.ceil(width / dx))
       ny = int(np.ceil(height / dy))
@@ -119,268 +119,255 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
     return coords, cell_size  # return 2 * a (diameter) to match with the circle representation
 
 
-def assign_hex_cells_to_videos(width, height, grid_cells, cell_size, base_video, value_relative_to):
-    # Assumes: grid_cells are sorted
-    assignments = {}
-    assignments_by_cell = {}
 
-    # Define a helper function to assign a video to a cell
-    def assign_video(video, featured=False, in_group=False):
+seat_preferences = {}
+def get_seat_preferences(reaction, grid_centroid, all_seats, base_video_width, base_video_height):
+    global seat_preferences
 
-        horizontal_orientation, vertical_orientation = video['orientation']
+    key = f"{conf.get('song_key')}-{reaction.get('channel')}"
+    if key not in seat_preferences:
+        horizontal_orientation, vertical_orientation = reaction.get('face_orientation')
 
-        # Iterate over the cells from closest to farthest
-        best_score = -9999999999
-        best_spot = None 
-        best_adjacent = None
-
-        my_value = list(value_relative_to)
+        my_value = list(grid_centroid)
 
         if horizontal_orientation == 'left':
-          my_value[0] += (base_video[2] - base_video[0]) / 2
+          my_value[0] += base_video_width / 2
         elif horizontal_orientation == 'right':
-          my_value[0] -= (base_video[2] - base_video[0]) / 2
+          my_value[0] -= base_video_width / 2
 
-        if vertical_orientation == 'middle':
-          my_value[0] += (base_video[3] - base_video[1]) / 2
-        elif vertical_orientation == 'up':
-          my_value[0] += (base_video[3] - base_video[1])
+        if horizontal_orientation != 'center':
+            if vertical_orientation == 'middle':
+              my_value[1] += base_video_height / 2
+            elif vertical_orientation == 'up':
+              my_value[1] += base_video_height
 
+        seat_preferences[key] = my_value
 
-
-        max_distance = -1
-        for cell in grid_cells:
-          dist = distance(cell, my_value)
-          if dist > max_distance:
-            max_distance = dist
-
-        best_cell = None
+    return seat_preferences[key]
 
 
-        for cell in grid_cells:
+def position_score(orientation, seat, grid_target, base_size):
 
-            if cell in assignments.values():
-              continue
+    seat_x, seat_y = seat
+    grid_center, grid_middle = grid_target
+    (base_video_width, base_video_height) = base_size
 
-            score = 1 + (max_distance - distance(cell, my_value)) / max_distance
+    horizontal_orientation, vertical_orientation = orientation
 
-            # Check the orientation constraint
-            if (horizontal_orientation == 'center'):
-              if value_relative_to[0] * .35 <= cell[0] and cell[0] <= value_relative_to[0] * .65:
-                score *= 1.7
-              if value_relative_to[0] * .25 <= cell[0] and cell[0] <= value_relative_to[0] * .75:
-                score *= 1.2
-              else: 
-                score *= .9
+    vscore = hscore = 1
 
-            elif (horizontal_orientation == 'right'):
-              if cell[0] <= value_relative_to[0] * .25:
-                score *= 1.7
-              elif cell[0] <= value_relative_to[0] * .5:
-                score *= 1.2
-              elif cell[0] <= value_relative_to[0] * .65:
-                score *= .9
-              elif cell[0] <= value_relative_to[0] * .75:
-                score *= .7
-              else: 
-                score *= .5
-
-            else:  # left
-              if cell[0] >= value_relative_to[0] * .75:
-                score *= 1.7
-              if cell[0] >= value_relative_to[0] * .5:
-                score *= 1.2
-              elif cell[0] >= value_relative_to[0] * .35:
-                score *= .9
-              elif cell[0] >= value_relative_to[0] * .25:
-                score *= .7
-              else: 
-                score *= .5
-
-
-            if (vertical_orientation == 'middle'):
-              if value_relative_to[1] * .25 <= cell[0] and cell[0] <= value_relative_to[1] * .75:
-                score *= 1.1
-
-            elif (vertical_orientation == 'down'):
-              if cell[1] <= value_relative_to[1] * .5:
-                score *= 1.1
-
-            else:  # up
-              if cell[1] >= value_relative_to[1] * .5:
-                score *= 1.1
-
-
-            if in_group:
-                nearest_open_cell = max_distance
-                for c in grid_cells:
-                    if c != cell and c in assignments.values():
-                        dist = distance(cell, c)
-                        if dist < nearest_open_cell:
-                            nearest_open_cell = dist
-                            best_adjacent = c
-
-                score *= 1 + (max_distance - nearest_open_cell) / max_distance
-
-            # If the video is featured, ensure it is not on the edge and not adjacent to other featured videos
-            if featured:
-                # Check if cell is adjacent to another featured video
-                for assigned_key in assignments.keys():
-                    if featured_by_key.get(assigned_key, False) and distance(cell, assignments[assigned_key]) <= 1.1*cell_size:
-                        score *= .01
-
-            if score > best_score: 
-
-              if in_group:
-
-                # Check if there is an open adjacent to the immediate left or right (y-difference is 0, x-difference~=cell_size)
-                # If there is, assign the spot and return the open cell
-                for adjacent_cell in grid_cells:
-                  key = str(adjacent_cell)
-                  if not adjacent_cell in assignments.values() and key not in assignments_by_cell:                
-                    if abs(cell[1] - adjacent_cell[1]) <= 1 and abs(abs(cell[0] - adjacent_cell[0]) - cell_size) <= 1:
-                      assignments[video['key']] = cell
-                      assignments_by_cell[str(cell)] = video['key']
-                      return adjacent_cell
-
-              best_score = score
-              best_spot = cell
-
-
-        assignments[video['key']] = best_spot
-        assignments_by_cell[str(best_spot)] = video['key']
-        
-        return best_adjacent
-
-
-    all_reactions = list(conf.get('reactions').items())
-    all_reactions.sort(key=lambda x: x[1].get('priority'), reverse=True)
-
-
-    all_reactors = []
-
-
-    featured_videos = 0
-    connected_videos = 0
-    other_videos = 0
-
-    featured_by_key = {}
-
-
-    for name, reaction in all_reactions:
-      reactors = reaction.get('reactors')
-      if reactors is None:
-        continue
-      featured = reaction.get('featured')
-      in_group = len(reactors) == 2
-
-      all_reactors.append({
-          'featured': featured,
-          'in_group': in_group,
-          'reactors': reactors
-        })
-
-      if featured:
-        for reactor in reactors:
-          featured_videos += 1
-          featured_by_key[reactor['key']] = True
-
-      if in_group:
-        connected_videos += len(reactors)
-
-        if reactors[0]['priority'] == 50:
-          reactors[0]['priority'] = 60
-
-      if not featured and not in_group:
-        other_videos += len(reactors)
-
-        
-    print(f"\tLayout: featured={featured_videos}  grouped={connected_videos}   singular={other_videos}")
-
-    def sort_reactors(r):
-      first = r['reactors'][0]
-      v = first.get('priority')
-      if first['orientation'][0] == 'center':
-        v -= 0
-      else:
-        if first['orientation'][1] == 'up':
-          v += 2
-        elif first['orientation'][1] == 'middle':
-          v += 1
-      return v
-
-
-    all_reactors.sort(key=sort_reactors, reverse=True)
-    for reactor_group in all_reactors:
-      reactors = reactor_group['reactors']
-
-      if reactor_group['in_group']: 
-        assert(len(reactors) < 3, "Only support pairs of reactors for now")
-
-        p2_spot = assign_video(reactors[0], featured=reactor_group['featured'], in_group=True)
-        if p2_spot is not None:
-          assignments[reactors[1]['key']] = p2_spot
-          assignments_by_cell[str(p2_spot)] = reactors[1]['key']
-        else: # failed
-          assign_video(reactors[1], featured=reactor_group['featured'], in_group=True)
+    if (horizontal_orientation == 'center'):
+      if grid_center - base_video_width / 4 <= seat_x and seat_x <= grid_center + base_video_width / 4:
+        hscore = 1.7
+      elif grid_center - base_video_width / 2 <= seat_x and seat_x <= grid_center + base_video_width / 2:
+        hscore = 1.2
       else: 
-        for reactor in reactors:
-          assign_video(reactor, featured=reactor_group['featured'], in_group=False)
+        hscore = .9
+
+    elif (horizontal_orientation == 'right'):
+      if seat_x <= grid_center * .25 or seat_x <= grid_center:
+        hscore = 1.7
+      elif seat_x <= grid_center * .5:
+        hscore = 1.2
+      elif seat_x <= grid_center * .65:
+        hscore = .9
+      elif seat_x <= grid_center * .75:
+        hscore = .7
+      else: 
+        hscore = .5
+
+    else:  # left
+      if seat_x >= grid_center * .75 or seat_x >= grid_center:
+        hscore = 1.7
+      elif seat_x >= grid_center * .5:
+        hscore = 1.2
+      elif seat_x >= grid_center * .35:
+        hscore = .9
+      elif seat_x >= grid_center * .25:
+        hscore = .7
+      else: 
+        hscore = .5
+
+
+    if (vertical_orientation == 'middle'):
+      if grid_middle * .25 <= seat_y and seat_y <= grid_middle * .75:
+        vscore = 1.1
+
+    elif (vertical_orientation == 'down'):
+      if seat_y <= grid_middle * .5:
+        vscore = 1.1
+
+    else:  # up
+      if seat_y >= grid_middle * .5:
+        vscore = 1.1
+
+    return hscore, vscore
+
+
+def seat_score(reaction, seat, grid_centroid, my_value, max_distance, base_size):
+
+    closeness_score = 1 + (max_distance - distance(seat, my_value)) / max_distance
+
+    horizontal_pos_score, vertical_pos_score = position_score(reaction.get('face_orientation'), seat, grid_centroid, base_size)   
+
+    return horizontal_pos_score * vertical_pos_score * closeness_score
 
 
 
-    seen_cells = {}
-    for name, reaction in conf.get('reactions').items():
-      reactors = reaction.get('reactors')
-      if reactors is None:
-        continue
+def construct_seating(seats, seat_size):
+    seats_with_adjacents = []
 
-      for i, reactor in enumerate(reactors): 
-        key = str(assignments[reactor['key']])
-        if key in seen_cells:
-          print(f"*********\nERROR!!!!!!!!!!!!!  {key} assigned to multiple reactors\n**********")
-          assign_video(reactor, featured=False, in_group=False)
-          key = str(assignments[reactor['key']])
-          if key in seen_cells:
-            raise Exception("COULD NOT REASSIGN A CELL")
-        seen_cells[key] = reactor
+    for seat in seats:
 
+        surrounding = []
 
+        for t in seats:
+            if t == seat:
+                continue
 
-    # Save the grid assigments to the reactors
-    for name, reaction in conf.get('reactions').items():
-      reactors = reaction.get('reactors')
-      if reactors is None:
-        continue
+            dist = distance(seat, t)
+            if dist < 1.25 * seat_size: 
+                surrounding.append(t)
 
-      reactor_assignments = [assignments[reactor['key']] for reactor in reactors]
-
-      reactor_assignments.sort( key=lambda x: x[0] )
-      reactors.sort( key=lambda x: x['x'])
-
-      if reaction.get('swap_grid_positions', False):
-        reactor_assignments.reverse()
-
-      for i, reactor in enumerate(reactors): 
-        reactor['grid_assignment'] = reactor_assignments[i]
+        same_row = [s for s in surrounding if seat[1] == s[1]]
+        seats_with_adjacents.append( (seat, same_row, surrounding) )
 
 
+    return seats_with_adjacents
 
 
-def is_in_center(cell, width):
-  x = cell[0]
-  return x > width * .25 and x < width * .75
+def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, base_video_height, grid_size):
 
-def is_in_right_half(cell, width):
-  x = cell[0]
-  return x > width * .5
+    print(f"\tAssigning seats to reactors. Grid Centroid = {grid_centroid}")
+    seats_with_adjacents = construct_seating(seats, seat_size)
 
-def is_in_left_half(cell, width):
-  x = cell[0]
-  return x < width * .5
+    ###############################
+    # get reaction seat preferences
+    reaction_preferences = {}
+    total_reactors = 0
+    for channel, reaction in conf.get('reactions').items():
+        reaction_preferences[channel] = get_seat_preferences(reaction, grid_centroid, seats, base_video_width, base_video_height)
+        total_reactors += len(reaction.get('reactors'))
 
-def is_bordering(cell, cell_size, bounds):
-  return distance_from_region(cell, bounds) <= np.sqrt(3) * cell_size
+    ########################
+    # initialize seat scores
+    seat_scores = {}
+    max_distance = math.sqrt(  grid_size[0] ** 2 + grid_size[1] ** 2  )
+
+    for seat, same_row, adjacents in seats_with_adjacents:
+        seat_key = str(seat)
+        seat_scores[seat_key] = {}
+        for channel, reaction in conf.get('reactions').items():
+            my_value = reaction_preferences[channel]
+            seat_scores[seat_key][channel] = seat_score(reaction, seat, grid_centroid, my_value, max_distance, (base_video_width, base_video_height))
+
+
+    ##############
+    # assign seats
+    seating_by_reactor = {} # maps from reactor => seat
+    seating_by_seat = {}    # maps from seat key => (reaction, reactor)
+
+
+    def assign_seats(chosen_seats, chosen_channel):
+
+        reaction = conf.get('reactions')[chosen_channel]
+        reactors = reaction['reactors']
+
+        if len(reactors) > len(chosen_seats):
+            print("AGG! HAVE TO SPLIT GROUP TO DIFFERENT SEATS!")
+            while( len(chosen_seats) < len(reactors) ):
+                for seat in seats:
+                    seat_key = str(seat)
+                    if seat_key not in seating_by_seat and seat_key not in [str(t) for t in chosen_seats]:
+                        chosen_seats.append(seat)
+
+        assert( len(reactors) == len(chosen_seats) )
+
+        # align seats and reactors by their x-position
+        chosen_seats.sort( key=lambda seat: seat[0] )
+        reactors.sort( key=lambda r: r['x'])
+
+        if reaction.get('swap_grid_positions', False):
+            chosen_seats.reverse()
+
+        # make assignments
+        for i, reactor in enumerate(reactors):
+            chosen_seat = chosen_seats[i]
+            seating_by_reactor[reactor['key']] = chosen_seat  
+            seating_by_seat[str(chosen_seat)] = (reaction, reactor)
+            reactor['grid_assignment'] = chosen_seat
+
+            print(f"\t\tASSIGNED {chosen_seat} to {chosen_channel} / {i}. Target position={reaction_preferences[chosen_channel]}")
+
+        # remove choice from consideration
+        for chosen_seat in chosen_seats:
+            del seat_scores[str(chosen_seat)]
+        for seat in list(seat_scores.keys()):
+            del seat_scores[str(seat)][chosen_channel]
+
+
+    i = 0
+    while( len(seating_by_reactor.keys()) < total_reactors ):
+        i += 1
+
+        # find next assignment
+        chosen_channel = None
+        chosen_seats = []
+        highest_score = 0
+        highest_priority = 0
+
+        for seat, same_row, adjacents in seats_with_adjacents:
+            seat_key = str(seat)
+            if seat_key not in seat_scores:
+                continue
+
+            for channel, score in seat_scores[seat_key].items():
+                reaction = conf.get('reactions')[channel]
+
+                # Make sure groups are seated next to each other
+                num_reactors = len(reaction.get('reactors'))                
+                if num_reactors > 1:
+                    if num_reactors <= 3:  # place side-by-side
+                        surrounding_seats = same_row
+                    else:                  # place in group
+                        surrounding_seats = adjacents
+
+                    group_seats = [seat]
+
+                    for adjacent_seat in surrounding_seats:
+                        if str(adjacent_seat) not in seating_by_seat:
+                            group_seats.append(adjacent_seat)
+                            score += seat_scores[str(adjacent_seat)][channel]
+                            if len(group_seats) == num_reactors:
+                                break
+
+                    if len(group_seats) < num_reactors:
+                        score *= .5 * num_reactors / len(group_seats)
+
+                # Make sure featured reactions are spaced out
+                if reaction.get('featured', False):
+                    # Check if cell is adjacent to another featured video
+                    for surrounding_seat in adjacents:
+                        if str(surrounding_seat) in seating_by_seat:
+                            score *= .1
+
+                priority = reaction.get('priority')
+                if score > highest_score or (score == highest_score and priority > highest_priority):
+
+                    chosen_channel = channel
+                    if num_reactors > 1:
+                        chosen_seats = group_seats
+                    else:
+                        chosen_seats = [seat]
+                    highest_score = score
+                    highest_priority = priority
+
+        assign_seats(chosen_seats, chosen_channel)
+
+    return seating_by_reactor
+
+
+
 
 
 def distance_from_region(point, bounds):
@@ -418,34 +405,4 @@ def distance(point, point2):
     dy = y2 - y
 
     return (dx ** 2 + dy ** 2) ** 0.5
-
-
-
-
-def overlap_percentage(smaller, larger):
-    # Unpack rectangle coordinates
-    smaller_left, smaller_top, smaller_right, smaller_bottom = smaller
-    larger_left, larger_top, larger_right, larger_bottom = larger
-
-    # Calculate the overlapping rectangle coordinates
-    overlap_left = max(smaller_left, larger_left)
-    overlap_top = max(smaller_top, larger_top)
-    overlap_right = min(smaller_right, larger_right)
-    overlap_bottom = min(smaller_bottom, larger_bottom)
-
-    # Calculate the area of the overlapping rectangle
-    overlap_width = max(0, overlap_right - overlap_left)
-    overlap_height = max(0, overlap_bottom - overlap_top)
-    overlap_area = overlap_width * overlap_height
-
-    # Calculate the area of the smaller rectangle
-    smaller_width = smaller_right - smaller_left
-    smaller_height = smaller_bottom - smaller_top
-    smaller_area = smaller_width * smaller_height
-
-    # Calculate the overlap percentage
-    overlap_percentage = (overlap_area / smaller_area) * 100 if smaller_area != 0 else 0
-
-    return overlap_percentage
-
 
