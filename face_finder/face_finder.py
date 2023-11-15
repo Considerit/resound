@@ -84,7 +84,7 @@ from utilities import conf, conversion_frame_rate
 
 import soundfile as sf
 
-def create_reactor_view(reaction, show_facial_recognition=True, aside_video=None): 
+def create_reactor_view(reaction, show_facial_recognition=False, aside_video=None): 
 
   if aside_video is not None:
     react_path = aside_video
@@ -468,32 +468,35 @@ def detect_faces_in_frames(reaction, video, frames_to_read, show_facial_recognit
         # print("matches:", face_matches)
 
         if show_facial_recognition and len(face_matches[-1][1]) > 0:
-          top, heat_map_color = find_top_candidates(face_matches, width, height, None)
-          for tc in top:
+          try:
+            top, heat_map_color = find_top_candidates(face_matches, width, height, None)
+            for tc in top:
 
-            try: 
-              (x,y,w,h,o) = expand_face(tc, width, height)
+              try: 
+                (x,y,w,h,o) = expand_face(tc, width, height)
 
-              rect = tc[2]
-              center = tc[3]
-              cv2.rectangle(react_frame, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), (0, 0, 255), 2)
-              cv2.circle(react_frame,(int(center[0]), int(center[1])), 5, (0, 0, 255), 2)
-              cv2.rectangle(react_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-            except: 
-              print(f"Failed to plot {tc}")
+                rect = tc[2]
+                center = tc[3]
+                cv2.rectangle(react_frame, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), (0, 0, 255), 2)
+                cv2.circle(react_frame,(int(center[0]), int(center[1])), 5, (0, 0, 255), 2)
+                cv2.rectangle(react_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+              except: 
+                print(f"Failed to plot {tc}")
 
-          # Display the resulting frame
-          cv2.resize(react_frame, (960, 540))        
-          cv2.imshow('Face Detection', react_frame)
+            # Display the resulting frame
+            cv2.resize(react_frame, (960, 540))        
+            cv2.imshow('Face Detection', react_frame)
 
-          cv2.resize(heat_map_color, (960, 540))
+            cv2.resize(heat_map_color, (960, 540))
 
-          cv2.imshow('Heat map', heat_map_color)
-          cv2.moveWindow('Heat map', 0, int(540) ) 
+            cv2.imshow('Heat map', heat_map_color)
+            cv2.moveWindow('Heat map', 0, int(540) ) 
 
-          # Exit if 'q' is pressed
-          if cv2.waitKey(1) & 0xFF == ord('q'):
-              break
+            # Exit if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+          except:
+            print("Couldn't show frame")
 
 
 
@@ -855,7 +858,6 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
   else:
     rep_histos = [match[6] for match in coarse_matches]
 
-
   moving_avg_centroid = None
   for i, (sampled_frame, all_faces, ignored_faces) in enumerate(face_matches):
     # print(f"\tmatch for frame {sampled_frame} {len(faces)} {center} {avg_size}")
@@ -870,14 +872,17 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
         face_centroid = (x + w/2, y + h/2)
         my_centroid = (kernel[0] + kernel[2]/2, kernel[1] + kernel[3]/2)
 
-        other_face_is_closer = False
+        other_kernel_is_closer = False
         for kern in other_kernels:
           other_centroid = (kern[0] + kern[2]/2, kern[1] + kern[3]/2)
-          if distance(other_centroid, face_centroid) < distance(my_centroid, face_centroid):
-            other_face_is_closer = True
+          dist_to_other = distance(other_centroid, face_centroid)
+          dist_to_me    = distance(my_centroid, face_centroid)
+
+          if dist_to_other < dist_to_me:
+            other_kernel_is_closer = True
             break
 
-        if not other_face_is_closer:
+        if not other_kernel_is_closer:
           faces.append(face)
 
     else:
@@ -887,8 +892,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
     best_score = 0
     best_centroid = None 
 
-    if i == 0 or len(faces) >= num_reactors: # we get bogus results if we don't have enough faces to 
-                                             # choose from in a given frame
+    if i == 0 or len(faces) >= 1: 
 
       if len(faces) > 1:
         for (x,y,w,h,nose,all_data,hist) in faces:
@@ -1067,6 +1071,7 @@ def smooth_and_interpolate_centroids(sampled_centroids):
 
       plt.tight_layout()
       plt.show()
+
 
     print("\t...done")
 
