@@ -11,14 +11,14 @@ from utilities import conf, save_object_to_file, read_object_from_file
 
 from utilities import print_profiling
 
-
+from library import channel_labels
 
 
 
 conf = {} # global conf
 
-constrain_to = ['Kso Big Dipper', 'Bruce Deeble', 'Office Bloke Dave', 'STUMPY', 'The Couple Crib', 'UglyAceEnt', 'Mr Network', 'Jamel_AKA_Jamal', 'DonVon_', 'ashlena', 'Dicodec', 'Bklyn_reau', 'MRLBOYD MUSIC', 'Rodney ', 'Cliff Beats', 'Shane Alan Gower']
 constrain_to = []
+
 
 def make_conf(song_def, options, temp_directory): 
   global conf
@@ -26,8 +26,6 @@ def make_conf(song_def, options, temp_directory):
   conf.clear()
 
   conf.update(options)
-
-
 
 
 
@@ -90,6 +88,8 @@ def make_conf(song_def, options, temp_directory):
 
 
   def load_reactions():
+    global channel_labels
+
     from inventory import get_manifest_path
 
     try: 
@@ -117,8 +117,9 @@ def make_conf(song_def, options, temp_directory):
     foregrounded_backchannel = song_def.get('foregrounded_backchannel', None)
     backgrounded_backchannel = song_def.get('backgrounded_backchannel', None)
 
-    mute = song_def.get('mute', None)
+    face_orientation = song_def.get('face_orientation', None)
 
+    mute = song_def.get('mute', None)
 
 
 
@@ -193,17 +194,24 @@ def make_conf(song_def, options, temp_directory):
           reactions[channel]['manual_bounds'] = manual_bounds.get(channel)
           reactions[channel]['manual_bounds'].sort(key=lambda x: x[0])
 
+        if face_orientation is not None and face_orientation.get(channel, False):
+          reactions[channel]['face_orientation'] = face_orientation.get(channel)
+
         if featured: 
           default_priority = 75
         else:
           default_priority = 50
 
+        # print("Priority", channel, priority.get(channel, default_priority))
         reactions[channel]['priority'] = priority.get(channel, default_priority)
 
 
         if swap_grid_positions is not None and swap_grid_positions.get(channel, False):
           reactions[channel]['swap_grid_positions'] = swap_grid_positions.get(channel)
 
+        reactions[channel]['channel_label'] = channel_labels.get(channel, channel)
+        if 'Black Pegasus' in reactions[channel]['channel_label']:
+          reactions[channel]['channel_label'] = 'Black Pegasus'
 
     conf['reactions'] = reactions
 
@@ -258,12 +266,24 @@ def make_conf(song_def, options, temp_directory):
         unload_reaction(channel)
         del conf['reactions'][channel]
 
+  def free_conf():
+    import gc
+
+    for channel in conf.get('reactions', {}):
+      remove_reaction(channel)
+
+    temp_dir = conf.get('temp_directory')
+    conf.clear()
+    conf['temp_directory'] = temp_dir # so that compilation lock can be lifted
+    gc.collect()
+
   conf.update({
     'load_base_video': load_base_video,
     'load_reactions':  load_reactions,
     'load_reaction': load_reaction,
     'load_aligned_reaction_data': load_aligned_reaction_data,
-    'remove_reaction': remove_reaction
+    'remove_reaction': remove_reaction,
+    'free_conf': free_conf
   })
 
 
@@ -314,7 +334,7 @@ def get_normalization_factor(reaction):
   return normalization_factor
 
 
-to_delete = ['aligned_reaction_data']
+to_delete = ['aligned_reaction_data', 'mixed_audio']
 for source in ['_', '_vocals', '_accompaniment']:
   for metric in ['_data', '_mfcc', '_pitch_contour', '_spectral_flux', '_root_mean_square_energy']:     # _continuous_wavelet_transform
     to_delete.append(f"reaction_audio{source}{metric}")

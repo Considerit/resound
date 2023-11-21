@@ -592,7 +592,7 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
     if not os.path.exists( song_vocals_path ):
         separate_vocals(song_separation_path, base_audio, vocal_path_filename, duration=song_length)
 
-    if not os.path.exists(backchannel_path) or conf.get('force_backchannel', False):
+    if not os.path.exists(backchannel_path):
 
         print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
         mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)

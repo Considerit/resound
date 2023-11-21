@@ -142,7 +142,9 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
       'clip': VideoFileClip(file),
       'orientation': sophisticated_orientation,
       'x': int(x)
-    })  
+    })
+
+  cropped_reactors.sort(key=lambda r: r['x'])  
 
   return cropped_reactors, reactors
 
@@ -223,57 +225,6 @@ def find_face_orientation(reactors):
 
 
     return dominant_horizontal, dominant_vertical
-
-
-#       There is a new argument to the below crop_video function, centroids, is an array of 
-#       (x,y) values. Each entry in the array is a frame of the video at video_file. 
-#       The below function currently crops the whole video at fixed centroid given
-#       by function parameters x and y. The function needs to be modified such that
-#       at each frame f the frame is cropped to the centroid given at centroids[f]. 
-
-# def crop_video2(video_file, output_file, x, y, w, h, centroids, remove_audio=False):
-
-#     # Load the video clip
-#     video = VideoFileClip(video_file)
-
-#     if w != h:
-#       w = h = min(w,h)
-
-#     if w % 2 > 0:
-#       w -= 1
-#       h -= 1
-
-#     if x < 0:
-#       x = 0
-
-#     if x + w > video.w:
-#       x -= x + w - video.w
-
-#     if y < 0: 
-#       y = 0
-
-#     if y + h > video.h:
-#       y -= y + h - video.h
-
-#     # Crop the video clip
-#     cropped_video = video.crop(x1=x, y1=y, x2=x+w, y2=y+h)
-
-#     if w > 450: 
-#       w = h = 450
-#       cropped_video = cropped_video.resize(width=w, height=h)
-
-#     if remove_audio:
-#       cropped_video = cropped_video.without_audio()
-
-
-#     # Write the cropped video to a file
-#     cropped_video.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", fps=conversion_frame_rate,
-#                                   ffmpeg_params=['-q:v', '40'])
-
-
-
-#     # Close the video clip
-#     video.close()
 
 
 def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_audio=False):
