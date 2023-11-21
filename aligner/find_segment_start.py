@@ -55,9 +55,6 @@ def find_segment_starts(reaction, open_chunk, closed_chunk, current_chunk_size, 
     global full_search_start_cache
     global seg_start_cache
 
-    force_ground_truth = conf.get("force_ground_truth_paths")
-
-
     key = f"{conf.get('song_key')} {signal} {open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {hop_length}"
 
 
