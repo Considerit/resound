@@ -8,14 +8,20 @@ import json
 import os
 import subprocess
 import copy
-from pyyoutube import Client, PyYouTubeException
+import glob 
 
 from utilities import conf, conversion_audio_sample_rate as sr
 from utilities.utilities import extract_audio
 
 
+
+from pyyoutube import Client, PyYouTubeException
 client = Client(api_key=api_key)
+
 RATE_LIMIT_PAUSE = 10  # Pause for 10 seconds if rate limit is hit
+
+
+
 
 def handle_rate_limiting():
     print("Rate limit hit. Pausing for a while...")
@@ -296,6 +302,32 @@ def download_and_parse_reactions(song_def, artist, song, song_search, search, fo
             except:
                 print(f"Failed to download {output} {cmd}")
 
+
+        # Get all reaction video files
+        mkv_videos = glob.glob(os.path.join(full_reactions_path, "*.mkv"))
+
+        # Convert all mkv videos to mp4 in the same directory and then delete the mkv videos
+
+        for mkv_video in mkv_videos:
+            print(f"HANDLING MKV {mkv_video}")
+            # Strip existing video extension from filename
+            base_name = os.path.basename(mkv_video)
+            file_name_without_ext = os.path.splitext(base_name)[0]
+            # If the stripped filename still has an extension, remove that too
+            if any(ext in file_name_without_ext for ext in ['.webm', '.mp4', '.mkv']):
+                file_name_without_ext = os.path.splitext(file_name_without_ext)[0]
+
+            output_file = os.path.join(reaction_dir, file_name_without_ext + '.mp4')
+
+            print(f'OUTPUT FILE {output_file}')
+            ffmpeg.input(mkv_video).output(output_file).run()
+            os.remove(mkv_video)
+
+
+
+
+
+
         if os.path.exists(extracted_output):
             reaction_file = extracted_output
         else: 
@@ -374,5 +406,6 @@ if __name__ == '__main__':
                 print(f"\tConsider including {k} / https://www.youtube.com/watch?v={avail[k]['id']}")
 
 
+    
 
 
