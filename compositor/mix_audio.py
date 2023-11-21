@@ -329,7 +329,7 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
 
 
 
-    # plot_scaling_factors(scaling_factors)
+    plot_scaling_factors(scaling_factors)
 
     return scaling_factors
 
@@ -351,7 +351,7 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
 # is based on the data at a granularity that examines every hop_length (=5096) samples. 
 from matplotlib.colors import LinearSegmentedColormap
 
-def plot_scaling_factors(scaling_factors, hop_length=5096):
+def plot_scaling_factors(scaling_factors, hop_length=5096, show=False):
     # Determine the number of channels and the maximum length of the arrays
     n_channels = len(scaling_factors)
     max_length = max(len(v) for v in scaling_factors.values())
@@ -377,15 +377,22 @@ def plot_scaling_factors(scaling_factors, hop_length=5096):
     # Create a custom colormap that goes from white to black
     white_black_cmap = LinearSegmentedColormap.from_list('white_black', ['white', 'black'])
 
+    font_size = 8
+    space_per_label = 1.5 * font_size
+    total_label_space = space_per_label * n_channels
+    total_height_inches = total_label_space / 72
+
     # Adjust figure size and aspect ratio here
-    fig, ax = plt.subplots(figsize=(10, max(1, n_channels // 30)))  # Reduced vertical space
-    plt.subplots_adjust(left=0.2, right=0.8, top=0.99, bottom=0.05)  # Adjust these values as needed
+    fig, ax = plt.subplots(figsize=(10, total_height_inches))
+    plt.subplots_adjust(left=0.2, right=0.8, top=0.99, bottom=0.05) 
 
     cax = ax.imshow(heatmap_data, aspect='auto', cmap=white_black_cmap, interpolation='nearest')
 
+
+
     # Set the channel names on the y-axis
     ax.set_yticks(np.arange(n_channels))
-    ax.set_yticklabels(channels, fontsize=8)
+    ax.set_yticklabels(channels, fontsize=font_size)
     ax.yaxis.tick_right()  # Move y-axis labels to the right
 
     # Set the time (x-axis) labels for every 30 seconds
@@ -407,7 +414,12 @@ def plot_scaling_factors(scaling_factors, hop_length=5096):
     # Add a color bar
     # plt.colorbar(cax, ax=ax)
 
-    plt.show()
+
+    filename = os.path.join(conf.get('temp_directory'), f"backchannel-foreground-backchannel-audio.png")
+    plt.savefig(filename, dpi=500)
+
+    if show: 
+        plt.show()
 
 
 
