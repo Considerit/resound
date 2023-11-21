@@ -126,7 +126,11 @@ def get_seat_preferences(reaction, grid_centroid, all_seats, base_video_width, b
 
     key = f"{conf.get('song_key')}-{reaction.get('channel')}"
     if key not in seat_preferences:
-        horizontal_orientation, vertical_orientation = reaction.get('face_orientation')
+        orientation = reaction.get('face_orientation')
+        if orientation is None:
+            print("ORIENTATION IS NONE!", reaction.get('channel'))
+            orientation=("left", "down")
+        horizontal_orientation, vertical_orientation = orientation
 
         my_value = list(grid_centroid)
 
