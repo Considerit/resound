@@ -20,7 +20,6 @@ import pstats
 
 from utilities import print_profiling
 
-
 def clean_up(song_def: dict):
     song = f"{song_def['artist']} - {song_def['song']}"
     song_directory = os.path.join('Media', song)
@@ -70,7 +69,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
         return []
 
     # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
-    reaction["reactors"], __ = create_reactor_view(reaction, show_facial_recognition=False)
+    reaction["reactors"], __ = create_reactor_view(reaction)
 
     if reaction['asides']:
         from moviepy.editor import VideoFileClip
@@ -78,7 +77,12 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
         print(f"Asides: {reaction.get('channel')} has {len(reaction['asides'])}")
 
         for i, aside in enumerate(reaction['asides']):
-            start, end, insertion_point = aside
+
+            if len(aside) == 4:
+                start, end, insertion_point, rewind = aside
+            else: 
+                start, end, insertion_point = aside
+                rewind = 3
 
             # first, isolate the correct part of the reaction video
             aside_video_clip = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-aside-{i}.mp4")
@@ -90,8 +94,15 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
                 aside_clip.write_videofile(aside_video_clip, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
                 react_video.close()
 
+            song_audio_data, _, _ = extract_audio(aside_video_clip, conf.get('temp_directory'), sr, convert_to_mono=False)            
+
             # second, do face detection on it
-            reaction["aside_clips"][insertion_point], __ = create_reactor_view(reaction, show_facial_recognition=False, aside_video = aside_video_clip)
+            asides, __ = create_reactor_view(reaction, aside_video = aside_video_clip)
+            for aside in asides: 
+                aside['audio'] = song_audio_data
+                aside['clip'].without_audio()
+
+            reaction["aside_clips"][insertion_point] = (asides, rewind)
 
 
 
@@ -367,6 +378,8 @@ if __name__ == '__main__':
         failed = create_reaction_compilation(song, progress, output_dir = results_output_dir, options=manifest_options)
         if(len(failed) > 0):
             failures.append((song, failed)) 
+        conf['free_conf']()
+
 
     options = {
         "create_alignment": True,
@@ -375,13 +388,10 @@ if __name__ == '__main__':
         "isolate_commentary": True,
         "create_reactor_view": True,
         "create_compilation": True,
-        "download_and_parse": False,
+        "download_and_parse": True,
         "alignment_test": False,
-        "force_ground_truth_paths": False,
         "draft": True,
-        "paint_paths": True,
         "break_on_exception": False,
-        "force_backchannel": False,
     }
     failures = []
     for song in drafts: 

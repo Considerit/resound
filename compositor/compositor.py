@@ -6,12 +6,12 @@ import math
 from PIL import Image, ImageDraw, ImageChops
 import colorsys
 
+from moviepy.video.tools.drawing import color_gradient
 
-from moviepy.editor import ImageClip, CompositeVideoClip, concatenate_videoclips
+from moviepy.editor import ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
 from moviepy.audio.AudioClip import AudioClip
 from moviepy.video.VideoClip import VideoClip, ColorClip
 from moviepy.editor import VideoFileClip
-from moviepy.video.fx.all import crop
 from moviepy.audio.fx import all as audio_fx
 from moviepy.video.fx import fadeout
 
@@ -71,7 +71,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
 
     base_video, cell_size, base_video_position = create_layout_for_composition(base_video, width, height)
     print("\tLayout created")
-    all_clips, audio_clips, clip_length = create_clips(base_video, cell_size, draft, output_size)
+    all_clips, audio_clips, clip_length, audio_scaling_factors = create_clips(base_video, cell_size, draft, output_size)
     print("\tClips created")
 
     if base_video_position is not None:
@@ -81,13 +81,15 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
     clips.sort(key=lambda x: x['priority'])
     clips = [c['video'] for c in clips]
 
+    active_segments = find_active_segments(audio_scaling_factors)
+    text_clips = create_channel_labels_video(active_segments, cell_size, output_size)
+    clips += text_clips
+
     final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
+    
+
     print("\tClips composed")
 
-    # clear up memory from the audio clips, as they've now been written to file
-    audio_clips = []
-    for channel, reaction in conf.get('reactions').items():
-        unload_reaction(channel)
 
 
 
@@ -135,7 +137,10 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
         final_clip = concatenate_videoclips(outerclips)
 
 
-    #TODO: can I unload a lot of the conf & reactions here to free memory?
+    # Unload a lot of the conf & reactions here to free memory
+    audio_clips = []
+    conf['free_conf']()
+
 
     # Save the result
     if draft:
@@ -177,6 +182,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
 def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size):
     duration = max(base_video.duration, clip_length)
     # duration = 30 
+
 
     final_clip = CompositeVideoClip(clips, size=output_size)
     final_clip = final_clip.set_duration(duration)
@@ -233,7 +239,147 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
 
 
 
+def find_active_segments(audio_scaling_factors, duration_threshold=3):
+    global sr  # Assuming sr is defined globally
+    active_segments = {}
+    final_segments = []
 
+    # Step 1: Identify Qualifying Segments for Each Channel
+    for channel, audio_mask in audio_scaling_factors.items():
+        start_sample = None
+        active_segments[channel] = []
+
+        for i, value in enumerate(audio_mask):
+            if value == 1:
+                if start_sample is None:
+                    start_sample = i  # Start of a new active segment
+            else:
+                if start_sample is not None and i - start_sample >= duration_threshold * sr:
+                    active_segments[channel].append((start_sample, i - 1))
+                start_sample = None  # Reset for the next segment
+
+        # Check if the last segment reaches the end of the array
+        if start_sample is not None and len(audio_mask) - start_sample >= duration_threshold * sr:
+            active_segments[channel].append((start_sample, len(audio_mask) - 1))
+
+    # Step 2: Modify and Check Segments for Overlaps
+    for channel, segments in active_segments.items():
+        for segment in segments:
+            segment_fragments = [segment]
+
+            for other_channel, other_segments in active_segments.items():
+                if other_channel != channel:
+                    for other_segment in other_segments:
+                        new_fragments = []
+                        for fragment in segment_fragments:
+                            start, end = fragment
+                            other_start, other_end = other_segment
+
+                            # Check for overlap and split the segment if necessary
+                            if not (end < other_start or start > other_end):
+                                if start < other_start:
+                                    new_fragments.append((start, other_start - 1))
+                                if end > other_end:
+                                    new_fragments.append((other_end + 1, end))
+                            else:
+                                new_fragments.append(fragment)
+
+                        segment_fragments = new_fragments
+
+            # Add non-overlapping fragments that meet the duration threshold to the final list
+            for fragment in segment_fragments:
+                if fragment[1] - fragment[0] >= duration_threshold * sr:
+                    final_segments.append((channel, fragment[0], fragment[1]))
+
+
+    summative = {}
+    for channel, start, end in final_segments:
+        if channel not in summative:
+            summative[channel] = 0
+
+        summative[channel] += end - start
+
+    most_featured = [ (c, t) for c,t in summative.items()   ]
+    most_featured.sort( key=lambda x: x[t], reverse=True)
+    print("Featured Time by Channel")
+    for c,t in most_featured:
+        print(c, t/sr)
+    for c,t in most_featured:
+        print(c)
+
+
+    return final_segments
+
+
+from moviepy.editor import ImageSequenceClip
+
+def create_progress_bar_clip(duration, width, height, start_time, bar_color=(0, 255, 0)):
+    """ Creates a progress bar clip using a lazy frame generation method. """
+    def make_frame(t):
+        progress = t / duration
+        new_width = int(progress * width)
+        bar_frame = np.zeros((height, width, 3), dtype=np.uint8)
+        bar_frame[:, :new_width, :] = bar_color
+        return bar_frame
+
+    bar_clip = VideoClip(make_frame, duration=duration).set_start(start_time)
+    return bar_clip
+
+def create_channel_labels_video(active_segments, cell_size, output_size):
+    channel_textclips = []
+    progress_bar_height = 10  # Height of the progress bar
+
+    print('creating channel label video')
+    for channel, start, end in active_segments:
+
+        reaction = conf.get('reactions').get(channel)
+
+        duration = (end - start) / sr
+
+        txt_clip = TextClip(reaction.get('channel_label'), fontsize=24, color='white', font="Fira-Sans-ExtraBold")
+        text_width, text_height = txt_clip.size
+
+        # Determine text position
+        reactors = reaction.get('reactors')
+        xs = [r['position'][0] for r in reactors]
+        x = min(xs) + (max(xs) - min(xs)) // 2  + cell_size // 2
+        y = reactors[0]['position'][1]
+
+        x -= text_width // 2
+
+        if y >= output_size[1] + cell_size + text_height + progress_bar_height + 4 + 4:  # Bottom row
+            y = y - text_height // 2 - progress_bar_height - 4 - 4  # Place above the channel
+        else:
+            y += cell_size + text_height // 2 - progress_bar_height - 4 - 4 # Place below the channel
+            
+        
+
+        # Adjust position if at an edge
+        x = max(min(x, output_size[0] - text_width  // 2), 10)
+        y = max(min(y, output_size[1] - text_height // 2 - progress_bar_height - 4), 10)
+
+        txt_clip = (txt_clip
+                    .set_position((x, y))
+                    .set_duration(duration)
+                    .set_start(start / sr))
+
+        channel_textclips.append( txt_clip )
+
+        # Calculate position for progress bar
+        bar_position = (x, y + text_height // 2 + progress_bar_height + 4)
+
+        # Create progress bar clip
+        progress_bar_clip = create_progress_bar_clip(
+            duration, txt_clip.size[0], progress_bar_height, start / sr
+        )
+        progress_bar_clip = progress_bar_clip.set_position(bar_position)
+
+        channel_textclips.append( progress_bar_clip )
+
+    # Synthesize channel_textclips into a composite video clip
+    # composite_clip = CompositeVideoClip(channel_textclips, size=video_clip.size)
+
+    return channel_textclips
 
 
 
@@ -344,6 +490,10 @@ def create_clips(base_video, cell_size, draft, output_size):
 
 
 
+
+
+
+
     audio_clips.append(base_audio_clip)
     base_clip = {
       'base': True,
@@ -359,7 +509,7 @@ def create_clips(base_video, cell_size, draft, output_size):
 
 
 
-    return all_clips, audio_clips, clip_length
+    return all_clips, audio_clips, clip_length, audio_scaling_factors
 
 
 
@@ -383,8 +533,8 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             continue
 
         if reaction.get('aside_clips', None):
-            for insertion_point, aside_clips in reaction.get('aside_clips').items():
-                all_asides.append([insertion_point, aside_clips, reaction.get('channel') ])
+            for insertion_point, (aside_clips, rewind) in reaction.get('aside_clips').items():
+                all_asides.append([insertion_point, aside_clips, reaction.get('channel'), rewind ])
 
     if len(all_asides) == 0:
         return base_video, base_audio_clip
@@ -393,14 +543,43 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
     all_asides.sort(key=lambda x: x[0], reverse=True)
 
 
-    def extend_for_aside(clip, insertion_point, duration, aside=None):
+    def create_countdown_timer(starting_value):
+        count_start = int(starting_value)
+        def make_frame(t):
+            countdown_time = count_start - int(t)
+            if countdown_time < 0:
+                countdown_time = 0
+            
+            text = TextClip(str(countdown_time), fontsize=28, color='white', font="Fira-Sans-ExtraBold", transparent=True)
+            
+            return text.get_frame(t)
+
+        countdown_clip = VideoClip(make_frame, duration=count_start).set_fps(conversion_frame_rate)
+
+        # countdown_clip.write_videofile(os.path.join(conf.get('temp_directory'), 'COUNTDOWN_CLIP.mp4'), 
+        #                          codec="h264_videotoolbox", 
+        #                          # audio_codec="aac", 
+        #                          ffmpeg_params=['-q:v', '40']
+        #                         )        
+        return countdown_clip
+
+    def extend_for_aside(clip, insertion_point, duration, aside=None, use_countdown_timer=False):
         if clip.duration < insertion_point:
             return clip
 
         if aside is None: 
             # print('insertion_point', insertion_point)
-            frame = clip.get_frame(insertion_point)  
-            extended_clip = ImageClip(frame, duration=duration).set_audio(AudioClip(lambda t: 0, duration=duration))
+            frame = clip.get_frame(max(0,insertion_point - 1))
+            extended_clip = ImageClip(frame, duration=duration) #.set_audio(AudioClip(lambda t: 0, duration=duration))
+        elif False and use_countdown_timer:
+            countdown_timer = create_countdown_timer(duration)
+            countdown_timer = countdown_timer.set_position(("center", aside.size[1] - 56))
+            extended_clip = CompositeVideoClip([aside, countdown_timer])
+            # extended_clip.write_videofile(os.path.join(conf.get('temp_directory'), f'EXTENDED_CLIP-{insertion_point}.mp4'), 
+            #                      codec="h264_videotoolbox", 
+            #                      # audio_codec="aac", 
+            #                      ffmpeg_params=['-q:v', '40']
+            #                     )               
         else:
             extended_clip = aside
 
@@ -411,7 +590,7 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
         new_clip = concatenate_videoclips([before, extended_clip, after])
         return new_clip
 
-    def extend_for_audio_aside(audio, insertion_point, duration, channel=None, aside=None):
+    def extend_for_audio_aside(audio, insertion_point, duration, aside=None):
         insertion_point = int(insertion_point * sr)
 
         if audio.shape[0] < insertion_point:
@@ -425,19 +604,70 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             # Use the provided aside audio clip
             silent_aside = aside
 
-
         new_audio = np.concatenate([audio[0:insertion_point, :], silent_aside, audio[insertion_point:, :]])
 
         return new_audio
 
 
+    original_video = base_video
 
-    for insertion_point, aside_clips, channel in all_asides:
+    reaction_segments = {}
+    for channel, reaction in conf.get('reactions').items():
+        reaction_segments[channel] = []
+        reactors = reaction.get('reactors')
+        if reactors is None:
+            continue
+        for idx, reactor in enumerate(reactors): 
+            reaction_segments[channel].append([reactor['clip']])
+
+
+
+
+    for i, (insertion_point, aside_clips, channel, rewind) in enumerate(all_asides):
         duration = aside_clips[0]['clip'].duration
         print(f"\tAside at {insertion_point} of {duration} seconds for {channel}")
 
-        base_video = extend_for_aside(base_video, insertion_point, duration)
-        base_audio_clip = extend_for_audio_aside(base_audio_clip, insertion_point, duration, channel)
+        if not rewind:
+            rewind = 0
+
+        if rewind > 0:             
+            rewind = min(insertion_point, rewind)
+            # extend base video for aside with the rewind clip
+            rewind_clip = original_video.subclip(insertion_point - rewind, insertion_point) # not sure why I have to use original_video rather than base_video here...
+
+            rewind_icon = ImageClip(os.path.join('compositor', 'rewind.png')).set_duration(1).resize( (100,100)  )
+            rewind_icon = rewind_icon.fadeout(.5)
+            rewind_icon = rewind_icon.set_position(("center", "center"))
+
+            composite_rewind_clip = CompositeVideoClip([rewind_clip, rewind_icon]) # results in video with just black background
+            f = os.path.join(conf.get('temp_directory'), f'COMPOSITE_REWIND_CLIP-{insertion_point-rewind}-{insertion_point}.mp4')
+            composite_rewind_clip.write_videofile(f, 
+                                 codec="h264_videotoolbox", 
+                                 ffmpeg_params=['-q:v', '60']
+                                )
+            composite_rewind_clip = VideoFileClip(f).resize(rewind_clip.size)
+
+            base_video = extend_for_aside(base_video, insertion_point, duration=rewind, aside=composite_rewind_clip)
+
+            rewind_audio_clip = base_audio_clip[int((insertion_point - rewind) * sr):int(insertion_point * sr), :] 
+            base_audio_clip = extend_for_audio_aside(base_audio_clip, insertion_point, duration=rewind, aside=rewind_audio_clip)
+
+        # base_video.write_videofile(os.path.join(conf.get('temp_directory'), f'{i}-before.mp4'), 
+        #                                  codec="h264_videotoolbox", 
+        #                                  ffmpeg_params=['-q:v', '40']
+        #                                 )       
+
+        base_video      = extend_for_aside(base_video, insertion_point, duration)
+
+
+
+        base_audio_clip = extend_for_audio_aside(base_audio_clip, insertion_point, duration)
+
+
+        # base_video.write_videofile(os.path.join(conf.get('temp_directory'), f'{i}-after.mp4'), 
+        #                                  codec="h264_videotoolbox", 
+        #                                  ffmpeg_params=['-q:v', '40']
+        #                                 )       
 
         for name, reaction in conf.get('reactions').items():
             print(f"\t\tCreating clip for {name}")
@@ -447,30 +677,41 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
 
 
             for idx, reactor in enumerate(reactors): 
-                # print(reactor, reactor['clip'])
 
                 if channel == name:
+
                     extended_clip = aside_clips[idx].get('clip')
-                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration, aside=extended_clip)
-                else:                     
-                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration)
+
+                    if rewind > 0:
+                        reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration=rewind)
+
+                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration, aside=extended_clip, use_countdown_timer=True)
+
+                else:
+                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration + rewind)
+
 
             len_audio_before = reaction['mixed_audio'].shape[0]
 
             if channel != name:
-                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration)                
-                middle = np.zeros(int(sr * duration))
+                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration + rewind)                
+                middle = np.zeros(int(sr * (duration + rewind)))
             else: 
-                extended_clip = aside_clips[idx].get('clip')
-                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration, aside=extended_clip.audio.to_soundarray())                
-                middle = np.ones( int(sr * duration))
+                if rewind > 0:
+                    reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration=rewind)
+
+                extended_clip = aside_clips[idx].get('audio')
+                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration, aside=extended_clip)                
+                middle = np.ones( int(sr * (duration + rewind)))
 
             split = int(sr * insertion_point)
-            # len_before = len(audio_scaling_factors[name])
             audio_scaling_factors[name] = np.concatenate([audio_scaling_factors[name][0:split], middle, audio_scaling_factors[name][split:]])
-            
-            # print(f"LEN AFTER INSERTING ASIDE={len(audio_scaling_factors[name]) / sr} (before={len_before / sr})")
-            # print(f"LEN AUDIO AFTER INSERTING ASIDE={reaction['mixed_audio'].shape[0] / sr} (before={len_audio_before / sr})")
+    
+
+
+    from compositor.mix_audio import plot_scaling_factors
+    plot_scaling_factors(audio_scaling_factors)
+        
 
     return (base_video, base_audio_clip)
 
