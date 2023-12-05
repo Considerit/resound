@@ -9,6 +9,7 @@ import os
 import subprocess
 import copy
 import glob 
+import ffmpeg
 
 from utilities import conf, conversion_audio_sample_rate as sr
 from utilities.utilities import extract_audio
@@ -317,7 +318,7 @@ def download_and_parse_reactions(song_def, artist, song, song_search, search, fo
             if any(ext in file_name_without_ext for ext in ['.webm', '.mp4', '.mkv']):
                 file_name_without_ext = os.path.splitext(file_name_without_ext)[0]
 
-            output_file = os.path.join(reaction_dir, file_name_without_ext + '.mp4')
+            output_file = os.path.join(full_reactions_path, file_name_without_ext + '.mp4')
 
             print(f'OUTPUT FILE {output_file}')
             ffmpeg.input(mkv_video).output(output_file).run()

@@ -1664,19 +1664,20 @@ def find_best_intercept(reaction, intercepts, base_start, base_end, include_cros
         # print(f"{corr_search_start/sr}-{corr_search_end/sr} (prev={(corr_search_start + (base_end - base_start) + search_window)/sr}) ({len(cross_corr)/sr})")
 
         # Find the maximum correlation value within the constrained window
-        windowed_corr_max_index = np.argmax(cross_corr[corr_search_start:corr_search_end]) + corr_search_start
+        if corr_search_end >= corr_search_start: 
+            windowed_corr_max_index = np.argmax(cross_corr[corr_search_start:corr_search_end]) + corr_search_start
 
-        # Calculate the starting index of the best match within the original reaction_data
-        corr_reaction_start = search_start + windowed_corr_max_index
+            # Calculate the starting index of the best match within the original reaction_data
+            corr_reaction_start = search_start + windowed_corr_max_index
 
-        # Ensure that corr_reaction_start is within the desired range
-        # Since we are bounding our argmax, this should inherently be the case.
-        corr_intercept = corr_reaction_start - base_start
+            # Ensure that corr_reaction_start is within the desired range
+            # Since we are bounding our argmax, this should inherently be the case.
+            corr_intercept = corr_reaction_start - base_start
 
-        # print('corr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, corr_reaction_start / sr, corr_intercept / sr, offset/sr, reaction_start <= corr_reaction_start <= reaction_end)        
-        assert(  reaction_start <= corr_reaction_start <= reaction_end,  f"{reaction_start/sr} <= {corr_reaction_start/sr} <= {reaction_end/sr}"  )
+            # print('corr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, corr_reaction_start / sr, corr_intercept / sr, offset/sr, reaction_start <= corr_reaction_start <= reaction_end)        
+            assert(  reaction_start <= corr_reaction_start <= reaction_end,  f"{reaction_start/sr} <= {corr_reaction_start/sr} <= {reaction_end/sr}"  )
 
-        intercepts.append(corr_intercept)
+            intercepts.append(corr_intercept)
 
     for b in intercepts:
         if not include_cross_correlation or reaction_start - .05 * sr <= b + base_start <= reaction_end + .05 * sr:

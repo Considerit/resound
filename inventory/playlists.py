@@ -112,8 +112,16 @@ def get_existing_video_ids(playlist_id):
         print(f"An error occurred: {e}")
         return []
 
+
+
+existing_ids = []
+
+
+
 def add_videos_to_playlist(playlist_id, video_ids):
-    existing_ids = get_existing_video_ids(playlist_id)
+    global existing_ids
+    # existing_ids += get_existing_video_ids(playlist_id)
+    print(existing_ids)
     for video_id in video_ids:
         if video_id not in existing_ids:
             try:
@@ -131,7 +139,9 @@ def add_videos_to_playlist(playlist_id, video_ids):
                     part="snippet",
                     body=body
                 )
+                existing_ids.append(video_id)
                 print(f"Added video {video_id} to playlist.")
+
             except PyYouTubeException as e:
                 print(f"Error adding video {video_id}: {e}")
 
@@ -151,7 +161,7 @@ if __name__=='__main__':
     playlist_id = get_or_create_playlist(playlist_title, playlist_description)
     print(playlist_id)
 
-    print(get_existing_video_ids(playlist_id))
+    # print(get_existing_video_ids(playlist_id))
 
     # if playlist_id is not None:
 

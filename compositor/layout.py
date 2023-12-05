@@ -40,6 +40,7 @@ def create_layout_for_composition(base_video, width, height):
       center = [width / 2, height / 2]
       value_relative_to = [width / 2, height / 2]
       base_video_position = None
+      base_width = base_height = 0 
     hex_grid, cell_size = generate_hexagonal_grid(width, height, total_videos, bounds, center)
 
     # hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)

@@ -165,7 +165,7 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
                     foregrounded_backchannel_segments.append(channel_seg)
 
             for fb in backgrounded_backchannel:
-                if start <= fb * sr <= end:
+                if start <= fb * sr <= end or fb == -1:
                     backgrounded_backchannel_segments.append(channel_seg)
 
 

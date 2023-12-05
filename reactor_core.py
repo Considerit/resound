@@ -26,17 +26,40 @@ def clean_up(song_def: dict):
 
     print(f"Cleaning up {song}...")
 
-    # Recursively find all .wav files starting from song_directory
     wav_files = glob.glob(f"{song_directory}/**/*.wav", recursive=True)
 
     # Delete each .wav file
     for wav_file in wav_files:
+        if 'isolated_backchannel' in wav_file:
+            continue
+
         try:
             os.remove(wav_file)
             print(f"\tDeleted: {wav_file}")
         except Exception as e:
             print(f"Error occurred while deleting file {wav_file}: {e}")
 
+
+    mp4_files = glob.glob(f"{song_directory}/**/*CROSS-EXPANDER*.mp4", recursive=True)
+
+    for mp4 in mp4_files:
+        if 'cropped' in mp4:
+            continue
+
+        try:
+            os.remove(mp4)
+            print(f"\tDeleted: {mp4}")
+        except Exception as e:
+            print(f"Error occurred while deleting file {mp4}: {e}")
+
+    webm_files = glob.glob(f"{song_directory}/**/*.webm", recursive=True)
+
+    for webm in webm_files:
+        try:
+            os.remove(webm)
+            print(f"\tDeleted: {webm}")
+        except Exception as e:
+            print(f"Error occurred while deleting file {webm}: {e}")
 
 def handle_reaction_video(reaction, compilation_exists, extend_by=15):
 
@@ -74,7 +97,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     if reaction['asides']:
         from moviepy.editor import VideoFileClip
         reaction["aside_clips"] = {}
-        print(f"Asides: {reaction.get('channel')} has {len(reaction['asides'])}")
+        # print(f"Asides: {reaction.get('channel')} has {len(reaction['asides'])}")
 
         for i, aside in enumerate(reaction['asides']):
 
@@ -248,12 +271,11 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
                     raise(e)
 
             log_progress(progress)
-            print_progress(progress)
 
             unload_reaction(channel)
             free_lock(channel)
 
-        
+        print_progress(progress)        
         compilation_exists = os.path.exists(compilation_path)
         if not compilation_exists and conf['create_compilation'] and request_lock('compilation'):
 

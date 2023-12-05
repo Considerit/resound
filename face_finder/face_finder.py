@@ -99,7 +99,7 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
   pattern = f"{base_reaction_path}-cropped-*-*-*.mp4"
   output_files = glob.glob(pattern)
 
-  print('Getting face matches')
+  # print('Getting face matches')
   face_matches, width, height = detect_faces(reaction, react_path, face_match_output_file, show_facial_recognition=show_facial_recognition, frames_per_capture=frames_per_capture)
 
   if width is None:
@@ -108,7 +108,7 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
     height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
     video.release()
   
-  print('Processing faces')
+  # print('Processing faces')
   reactors = process_faces(reaction, face_matches, width, height)
 
   if not reaction.get('face_orientation', False):
@@ -123,9 +123,9 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
           reactor_captures = reactor[1]
           centroids = reactor[2]
           output_file = f"{base_reaction_path}-cropped-{i}-{int(x+w/2)}-{sophisticated_orientation[0]}-{sophisticated_orientation[1]}.mp4"
-          print("Going to crop the video now...")
+          # print("Going to crop the video now...")
           crop_video(react_path, output_file, len(reactors), int(w), int(h), centroids, remove_audio=(aside_video is None))
-          print("\t...Done cropping")
+          # print("\t...Done cropping")
           output_files.append(output_file)
 
   cropped_reactors = []
@@ -506,7 +506,7 @@ def process_faces(reaction, face_matches, width, height):
     # as well as their orientation and size. 
 
     num_reactors = reaction.get('num_reactors', None)
-    print(f"LOOKING FOR {num_reactors}")
+    # print(f"LOOKING FOR {num_reactors}")
 
     coarse_reactors, _ = find_top_candidates(face_matches, width, height, num_reactors)
     reactors = []
@@ -541,7 +541,7 @@ def process_faces(reaction, face_matches, width, height):
 
       reactor.append(centroids)
 
-    print(f"done detecting faces, found {len(reactors)}")
+    # print(f"done detecting faces, found {len(reactors)}")
 
     return reactors
 
@@ -591,7 +591,7 @@ def expand_face(group, width, height, expansion=.8, sidedness=.7):
       y = 0
 
 
-  print("Expanded face from ", group[2], " to ", (x,y,w,h))
+  # print("Expanded face from ", group[2], " to ", (x,y,w,h))
   return (x,y,w,h,orientation)
 
 
@@ -797,7 +797,7 @@ def calculate_center(group):
 #    
 def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kernel, video_width, video_height, num_reactors, other_kernels):
   centroids = []
-  print(f"Finding reactor centroids {len(face_matches)}")
+  # print(f"Finding reactor centroids {len(face_matches)}")
 
   assert(len(coarse_matches) > 0)
 
@@ -899,7 +899,7 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
     else: 
       centroids.append( (sampled_frame, centroids[-1][1]))
 
-  print(f"Done finding centroids {len(centroids)}")
+  # print(f"Done finding centroids {len(centroids)}")
   return centroids
 
 
@@ -951,7 +951,7 @@ def compare_faces(hist1, hist2):
 
 def smooth_and_interpolate_centroids(sampled_centroids):
 
-    print("Smoothing and interpolating centroids...")
+    # print("Smoothing and interpolating centroids...")
     # Unpack the frames and the centroids from the input
     frames, centroids = zip(*sampled_centroids)
     frames = np.array(frames)
@@ -1024,7 +1024,7 @@ def smooth_and_interpolate_centroids(sampled_centroids):
       plt.show()
 
 
-    print("\t...done")
+    # print("\t...done")
 
     return interpolated_centroids
 

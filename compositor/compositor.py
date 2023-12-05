@@ -87,7 +87,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
 
     final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
     
-
+    
     print("\tClips composed")
 
 
@@ -300,7 +300,7 @@ def find_active_segments(audio_scaling_factors, duration_threshold=3):
         summative[channel] += end - start
 
     most_featured = [ (c, t) for c,t in summative.items()   ]
-    most_featured.sort( key=lambda x: x[t], reverse=True)
+    most_featured.sort( key=lambda x: x[1], reverse=True)
     print("Featured Time by Channel")
     for c,t in most_featured:
         print(c, t/sr)
@@ -627,12 +627,13 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
         duration = aside_clips[0]['clip'].duration
         print(f"\tAside at {insertion_point} of {duration} seconds for {channel}")
 
-        if not rewind:
+        if not rewind or original_video.duration < insertion_point:
             rewind = 0
 
         if rewind > 0:             
             rewind = min(insertion_point, rewind)
             # extend base video for aside with the rewind clip
+            print(insertion_point, rewind, insertion_point - rewind)
             rewind_clip = original_video.subclip(insertion_point - rewind, insertion_point) # not sure why I have to use original_video rather than base_video here...
 
             rewind_icon = ImageClip(os.path.join('compositor', 'rewind.png')).set_duration(1).resize( (100,100)  )
@@ -827,12 +828,6 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
         img[border_mask_np > 0] = color_rgb  # apply color to border
 
         return img
-
-    # Define make_mask function to create mask for the border
-    # def make_mask(t):
-    #     mask = np.zeros((height, width))
-    #     mask[border_mask_np > 0] = 1
-    #     return mask
 
     def make_mask(t):
         mask = np.zeros((height, width))
