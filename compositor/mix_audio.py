@@ -6,7 +6,7 @@ import soundfile as sf
 
 from moviepy.editor import AudioFileClip
 
-from utilities import conf, conversion_audio_sample_rate as sr
+from utilities import conf, conversion_audio_sample_rate as sr, save_object_to_file
 
 from utilities.audio_processing import calculate_perceptual_loudness
 from utilities import print_profiling
@@ -16,12 +16,12 @@ import matplotlib.colors as mcolors
 
 
 # Mixing knobs
-normalize_base_with_headroom = 0.3
+normalize_base_with_headroom = .75
 foreground_scaler = 1
 background_scaler = 1
 sum_reaction_audio_threshold = .95
 base_excess_limitation = 0.75
-stereo_pan_max = 0.7
+stereo_pan_max = 0.75
 
 
 
@@ -52,8 +52,7 @@ def mix_audio(base_video, output_size):
 
         reaction['mixed_audio'] = isolated_backchannel
 
-
-    audio_scaling_factors = foreground_background_backchannel_segments(base_audio_as_array, foreground_scaler, background_scaler)
+    audio_scaling_factors = foreground_background_backchannel_segments(base_audio_as_array, foreground_scaler, background_scaler, conf.get('disable_backchannel_backgrounding'))
 
     all_reactor_audios = []
 
@@ -78,6 +77,20 @@ def mix_audio(base_video, output_size):
 
     # Apply dynamic limiting on the collected reactor audios
     dynamic_limit_without_combining(base_audio_as_array)
+
+
+    # def convert_dict_for_json(input_dict):
+    #     converted_dict = {}
+    #     for key, value in input_dict.items():
+    #         # Convert ndarray to a native Python list
+    #         if isinstance(value, np.ndarray):
+    #             converted_dict[key] = value.tolist()
+    #         else:
+    #             converted_dict[key] = value
+    #     return converted_dict
+
+    # audio_scaling_file = os.path.join(conf.get('temp_directory'), 'audio_scaling_factors.json')
+    # save_object_to_file(audio_scaling_file, convert_dict_for_json(audio_scaling_factors))
 
     return base_audio_as_array, audio_scaling_factors
 
@@ -127,7 +140,7 @@ def find_contiguous_backchannel_segments(audio, max_silence_duration_samples=1.5
 # (which will eventually be assigned e.g. 80% of the reactor volume for its duration) or as background 
 # (which will eventually be mixed equally at 20% of allocated reactor volume). 
 
-def foreground_background_backchannel_segments(base_audio_as_array, foreground_scaler, background_scaler):
+def foreground_background_backchannel_segments(base_audio_as_array, foreground_scaler, background_scaler, disable_backchannel_backgrounding):
     channel_segments = []
     scaling_factors = {} 
 
@@ -282,49 +295,49 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
         return foregrounded
 
 
-    print('\t\tIteratively backgrounding')
+    if not disable_backchannel_backgrounding:
+        print('\t\tIteratively backgrounding')
 
-    for featured in foregrounded_backchannel_segments: 
-        seg, channel, score = featured
+        for featured in foregrounded_backchannel_segments: 
+            seg, channel, score = featured
 
-        active_channel_segments = [s for s in channel_segments if segments_overlap(s[0], seg)] 
+            active_channel_segments = [s for s in channel_segments if segments_overlap(s[0], seg)] 
 
-        print(f'\t\tFeatured backchannel for {channel} at {(seg[1]-seg[0]) / 2 / sr}. Backgrounding {len(active_channel_segments) - 1} other backchannels')
+            print(f'\t\tFeatured backchannel for {channel} at {(seg[1]-seg[0]) / 2 / sr}. Backgrounding {len(active_channel_segments) - 1} other backchannels')
 
-        removed = move_to_background(active_channel_segments, featured)
-        for chan in removed: 
-            channel_segments.remove(chan)            
+            removed = move_to_background(active_channel_segments, featured)
+            for chan in removed: 
+                channel_segments.remove(chan)            
 
-    bins = construct_temporal_storage_for_backchannel_segments(channel_segments)
+        bins = construct_temporal_storage_for_backchannel_segments(channel_segments)
 
-    i = 0
-    while True: 
-        print_profiling()
+        i = 0
+        while True: 
+            print_profiling()
 
-        active_channel_segments = find_most_overlapping_backchannel_segments(bins)
+            active_channel_segments = find_most_overlapping_backchannel_segments(bins)
 
-        if len(active_channel_segments) <= 1:
-            break
+            if len(active_channel_segments) <= 1:
+                break
 
-        highest_scoring_segment = None
-        for chan in active_channel_segments:
-            if (not highest_scoring_segment or chan[2] > highest_scoring_segment[2]) and chan not in backgrounded_backchannel_segments:
-                highest_scoring_segment = chan
+            highest_scoring_segment = None
+            for chan in active_channel_segments:
+                if (not highest_scoring_segment or chan[2] > highest_scoring_segment[2]) and chan not in backgrounded_backchannel_segments:
+                    highest_scoring_segment = chan
 
 
-        to_remove = move_to_background(active_channel_segments, highest_scoring_segment)
-        remove_from_foreground(bins, to_remove)
+            to_remove = move_to_background(active_channel_segments, highest_scoring_segment)
+            remove_from_foreground(bins, to_remove)
 
-        i += 1
+            i += 1
 
-    print('')
 
-    # Any audio past the end of the base audio should be set to one
+    # Any audio past the end of the base audio should be set to one (or how about 1 / num_reactors?)
     for channel, reaction in conf.get('reactions').items():
         audio_mask = scaling_factors[channel]
         diff = len(audio_mask) - len(base_audio_as_array)
         if diff > 0:
-            audio_mask[-diff:] = np.ones(diff)
+            audio_mask[-diff:] = np.full(diff, 1 / len(conf.get('reactions')))  # np.ones(diff)
 
 
 
