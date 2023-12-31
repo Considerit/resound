@@ -1,0 +1,13 @@
+{
+  "name": "resound",
+  "version": "1.0.0",
+  "description": "",
+  "author": "Travis Kriplean",
+  "repository": "https://github.com/Considerit/resound",
+  "license": "MIT",
+  "dependencies": {
+    "coffeescript": "latest",
+    "nodemon": "^3.0.2",
+    "statebus": "latest"
+  }
+}
