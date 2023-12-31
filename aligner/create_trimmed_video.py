@@ -27,8 +27,8 @@ def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[
 
     # process video  target_resolution=(1080, 1920)
     reaction_video = VideoFileClip(video_file)
-    if reaction_video.w > 1920:
-        reaction_video = reaction_video.resize( 1920 / reaction_video.w )
+    # if reaction_video.w > 1920:
+    #     reaction_video = reaction_video.resize( 1920 / reaction_video.w )
 
     if reaction_video.audio.fps != sr:
         reaction_video = reaction_video.set_audio(reaction_video.audio.set_fps(sr))
