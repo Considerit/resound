@@ -14,7 +14,7 @@ from backchannel_isolator.track_separation import separate_vocals
 
 from utilities.audio_processing import audio_percentile_loudness, convert_to_mono
 from utilities import conversion_audio_sample_rate as sr
-from utilities import conf
+from utilities import conf, save_object_to_file, read_object_from_file
 
 # I have two audio tracks. One track is a song. The other track is a reaction — a recording of 
 # one or two people reacting to the song. The reaction track contains a possibly distorted, though 
@@ -364,20 +364,18 @@ def apply_linear_fade(segment_audio, fade_duration_samples):
     return segment_audio
 
 
-def apply_segments(reaction, audio, segments, audibility_threshold=0.01, suppresion_period=2, fade_duration=0.005): 
+
+
+
+def get_audible_segments(audio, segments, audibility_threshold=0.01, suppresion_period=2): 
     # Initialize a new audio array with zeros
-    suppressed_audio = np.zeros_like(audio)
     suppresion_period *= sr
-    fade_duration_samples = int(fade_duration * sr)
+
+    audible_segments = []
 
     # For each segment, check if it contains an audible sample and if so, copy it
     for (start, end) in segments:
         segment_audio = audio[start:end]
-
-        # Calculate the actual fade duration ensuring it's not longer than the segment
-        actual_fade_duration = min(fade_duration_samples, len(segment_audio) // 2)
-
-        segment_audio = apply_logarithmic_fade(segment_audio, actual_fade_duration)
         
         # Find the indices where the audio is above the threshold
         audible_indices = np.where(np.abs(segment_audio) > audibility_threshold)[0]
@@ -393,28 +391,86 @@ def apply_segments(reaction, audio, segments, audibility_threshold=0.01, suppres
             # Iterate through the inaudible stretches
             for i in np.where(inaudible_stretches)[0]:
                 chunk_end = audible_indices[i]
-                suppressed_audio[start + chunk_start:start + chunk_end] = segment_audio[chunk_start:chunk_end]
+                audible_segments.append( [start + chunk_start, start + chunk_end]   )
                 print(f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}")
                 
                 # Skip 1 second after the inaudible stretch
                 chunk_start = audible_indices[i+1]
 
             # Handle the segment after the last inaudible stretch
-            chunk_end = len(segment_audio)
-            suppressed_audio[start + chunk_start:start + chunk_end] = segment_audio[chunk_start:chunk_end]
+            audible_segments.append( [start + chunk_start, end]   )
+
             print(f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}")
 
         else:
             # If there are no inaudible stretches of more than 1 second, just copy the entire segment
-            suppressed_audio[start:end] = segment_audio
+            audible_segments.append( [start, end]   )
             print(f"Selected entire segment from {start / sr} to {end / sr}")
 
 
-    muted_sections = reaction.get('mute', False) 
-    if muted_sections:        
-        for start_sample, end_sample in muted_sections:
-            suppressed_audio[start_sample:end_sample] = 0
 
+    return audible_segments
+
+
+def apply_mute_segments(audible_segments, mute_segments):
+    updated_segments = []
+
+    for audible_start, audible_end in audible_segments:
+        current_segment = (audible_start, audible_end)
+
+        for mute_start, mute_end in mute_segments:
+            if mute_start > current_segment[1] or mute_end < current_segment[0]:
+                # No overlap
+                continue
+
+            # Check for partial or complete overlap
+            if mute_start <= current_segment[0] and mute_end >= current_segment[1]:
+                # Mute segment completely covers the audible segment
+                current_segment = None
+                break
+            elif mute_start > current_segment[0] and mute_end < current_segment[1]:
+                # Mute segment splits the audible segment
+                updated_segments.append((current_segment[0], mute_start))
+                current_segment = (mute_end, current_segment[1])
+            elif mute_start <= current_segment[0]:
+                # Mute segment overlaps the start of the audible segment
+                current_segment = (mute_end, current_segment[1])
+            elif mute_end >= current_segment[1]:
+                # Mute segment overlaps the end of the audible segment
+                current_segment = (current_segment[0], mute_start)
+
+        if current_segment:
+            updated_segments.append(current_segment)
+
+    return updated_segments
+
+
+
+
+
+
+
+def create_isolated_audio(audio, segments, fade_duration=0.005): 
+    # Initialize a new audio array with zeros
+    suppressed_audio = np.zeros_like(audio)
+
+    fade_duration_samples = int(fade_duration * sr)
+
+    audible_segments = []
+
+    # For each segment, check if it contains an audible sample and if so, copy it
+    for (start, end) in segments:
+        segment_audio = audio[start:end]
+
+        # Calculate the actual fade duration ensuring it's not longer than the segment
+        actual_fade_duration = min(fade_duration_samples, len(segment_audio) // 2)
+
+        segment_audio = apply_logarithmic_fade(segment_audio, actual_fade_duration)
+                  
+        # If there are no inaudible stretches of more than 1 second, just copy the entire segment
+        suppressed_audio[start:end] = segment_audio
+        audible_segments.append( [start, end]   )
+        print(f"Selected entire segment from {start / sr} to {end / sr}")
 
     return suppressed_audio
 
@@ -426,70 +482,90 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
         global profiler
         profiler.enable()
 
-
-    min_segment_length = 0.01
-    max_gap_frames = 0.5
-    percent_volume_diff_thresh = 5
-
     audio_data, __ = sf.read(song_path)
     song = convert_to_mono(audio_data)
 
     audio_data, __ = sf.read(reaction_path)
-    reaction_data = convert_to_mono(audio_data)
+    reaction_audio = convert_to_mono(audio_data)
 
     delay = 0
     extra_reaction = None # often a result of extend by
-    if len(song) > len(reaction_data):
-        song = song[:len(reaction_data)]
+    if len(song) > len(reaction_audio):
+        song = song[:len(reaction_audio)]
     else:
         conf.get('load_aligned_reaction_data')(reaction.get('channel'))
 
         original_reaction = reaction.get('aligned_reaction_data')
 
         extra_reaction = original_reaction[len(song):] # extract this from the original reaction audio, not the source separated content
-        reaction_data = reaction_data[:len(song)]
-
-    # print("calculating short volume diff")
-    # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh)
-
-    print("calculating long volume diff")
-    percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_data, percent_volume_diff_thresh, window=1 * sr, plot=False)
-    long_mask1, long_diff1, song_percentile_loudness, reaction_percentile_loudness = percep_mask
-    
-
-    # print('calculating diffs and masks')
-
-    # long_confirmed_diff = (diff1 + long_diff1) / 4
-    # long_confirmed_mask = long_confirmed_diff > percent_volume_diff_thresh
-    # long_confirmed_dilated_mask = long_confirmed_diff > percent_volume_diff_thresh
-
-
-    if False: 
-        plot_masks(song_percentile_loudness, reaction_percentile_loudness, long_diff1, long_mask1)
+        reaction_audio = reaction_audio[:len(song)]
 
 
 
-    mask = long_mask1
+    if not os.path.exists(output_path):
+        min_segment_length = 0.01
+        max_gap_frames = 0.5
+        percent_volume_diff_thresh = 5
 
-    segments = process_mask(mask, min_segment_length / 1000)
+        # print("calculating short volume diff")
+        # mask1, diff1 = create_mask_by_relative_perceptual_loudness_difference(song, reaction_audio, percent_volume_diff_thresh)
 
-    loud_enough_segments = mute_quiet_segments(reaction, reaction_data, segments)
+        print("calculating long volume diff")
+        percep_mask = create_mask_by_relative_perceptual_loudness_difference(song, reaction_audio, percent_volume_diff_thresh, window=1 * sr, plot=False)
+        long_mask1, long_diff1, song_percentile_loudness, reaction_percentile_loudness = percep_mask
+        
+
+        # print('calculating diffs and masks')
+
+        # long_confirmed_diff = (diff1 + long_diff1) / 4
+        # long_confirmed_mask = long_confirmed_diff > percent_volume_diff_thresh
+        # long_confirmed_dilated_mask = long_confirmed_diff > percent_volume_diff_thresh
 
 
-    confirmed_segments = confirm_via_correlation(reaction, loud_enough_segments)
 
 
-    padded_segments = pad_segments(confirmed_segments, len(reaction_data), pad_beginning=0.75, pad_ending=0.25)
-    merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
+        if False: 
+            plot_masks(song_percentile_loudness, reaction_percentile_loudness, long_diff1, long_mask1)
+
+        mask = long_mask1
+
+        segments = process_mask(mask, min_segment_length / 1000)
+
+        loud_enough_segments = mute_quiet_segments(reaction, reaction_audio, segments)
 
 
-    suppressed_reaction = apply_segments(reaction, reaction_data, merged_segments)
+        confirmed_segments = confirm_via_correlation(reaction, loud_enough_segments)
+
+
+        padded_segments = pad_segments(confirmed_segments, len(reaction_audio), pad_beginning=0.75, pad_ending=0.25)
+        merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
+
+
+        audible_segments = get_audible_segments(reaction_audio, merged_segments)
+        audible_segments = apply_mute_segments(audible_segments, reaction.get('mute', []))
+
+        def convert_segments_for_json(segments):
+            converted_segments = []
+            for start, end in segments:
+                # Convert numpy.int64 to Python int
+                converted_start = int(start) if isinstance(start, np.integer) else start
+                converted_end = int(end) if isinstance(end, np.integer) else end
+                converted_segments.append((converted_start, converted_end))
+            return converted_segments
+        
+        save_object_to_file(output_path, convert_segments_for_json(audible_segments))
+
+    audible_segments = read_object_from_file(output_path)
+
+    suppressed_reaction = create_isolated_audio(reaction_audio, audible_segments)
 
 
     if extra_reaction is not None:
         suppressed_reaction = np.concatenate((suppressed_reaction, extra_reaction))
-    
-    sf.write(output_path, suppressed_reaction, sr)
+
+
+    isolated_audio_path = os.path.splitext(output_path)[0] + '.wav'
+    sf.write(isolated_audio_path, suppressed_reaction, sr)
 
     if profile_isolator:
         profiler.disable()
@@ -497,7 +573,7 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
         stats.print_stats()
         profiler.enable()
 
-    return output_path
+    return isolated_audio_path
 
 
 def mute_quiet_segments(reaction, audio, segments, audibility_threshold=.2):
@@ -581,8 +657,11 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
     reaction_vocals_path = os.path.join(react_separation_path, vocal_path_filename)
     song_vocals_path =     os.path.join(song_separation_path, vocal_path_filename)
 
-    backchannel_filename = f"{reaction.get('channel')}_isolated_backchannel.wav"
+    backchannel_filename = f"{reaction.get('channel')}-isolated_backchannel.json"
     backchannel_path = os.path.join(output_dir, backchannel_filename)
+
+    backchannel_audio_filename = f"{reaction.get('channel')}-isolated_backchannel.wav"
+    backchannel_audio_path = os.path.join(output_dir, backchannel_audio_filename)
 
     song_length = len(conf.get('song_audio_data')) / sr + 1
 
@@ -592,14 +671,12 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
     if not os.path.exists( song_vocals_path ):
         separate_vocals(song_separation_path, base_audio, vocal_path_filename, duration=song_length)
 
-    if not os.path.exists(backchannel_path):
 
-        print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
-        mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)
-
+    print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
+    mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)
 
 
-    return backchannel_path
+    return backchannel_audio_path
 
 
 
