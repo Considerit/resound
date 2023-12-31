@@ -1,12 +1,13 @@
 import os
 import copy
 import glob
+import json 
 
 from prettytable import PrettyTable
 
 from utilities import prepare_reactions, extract_audio, conf, make_conf, unload_reaction
 from utilities import conversion_audio_sample_rate as sr
-from inventory import download_and_parse_reactions, get_manifest_path
+from inventory import download_and_parse_reactions, get_manifest_path, filter_and_augment_manifest
 from aligner import create_aligned_reaction_video
 from face_finder import create_reactor_view
 from backchannel_isolator import isolate_reactor_backchannel
@@ -225,12 +226,19 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             print("Processing directory", song_directory, "Outputting to", output_dir)
 
             if conf.get('refresh_manifest', False) or (not compilation_exists and (conf.get('download_and_parse', False))):
-                download_and_parse_reactions(song_def, song_def['artist'], song_def['song'], song_def.get('song_search', f"{song_def.get('artist')} {song_def.get('song')}"), song_def['search'], force=conf.get('refresh_manifest', False))
+                download_and_parse_reactions(song_def, song_def['artist'], song_def['song'], song_def.get('song_search', f"{song_def.get('artist')} {song_def.get('song')}"), song_def['search'], refresh_manifest=conf.get('refresh_manifest', False))
+        
+            print("Filtering and augmenting manifest", song_directory, "Outputting to", output_dir)
+            filter_and_augment_manifest(song_def['artist'], song_def['song'])
+
         else:
             print(f"...Skipping {song_def['song']} because another process is already working on this video")
             return []
 
         free_lock('downloading')
+
+
+
 
 
         conf.get('load_reactions')()
@@ -379,11 +387,23 @@ import traceback
 
 if __name__ == '__main__':
 
-    from library import songs, drafts, manifest_only, finished
+    def load_songs(lst):
+        loaded = []
+        for s in lst:
+            f = os.path.join(f'library/{s}.json')
+            print(f)
+            defn = json.load( open(f))
+            loaded.append( defn  )
+        return loaded
+
+    from library import songs, drafts, refresh_manifest, finished
+
+    songs = load_songs(songs)
+    drafts = load_songs(drafts)
+    refresh_manifest = load_songs(refresh_manifest)
+    finished = load_songs(finished)
 
     progress = {}
-
-    
 
     for song in finished:
         clean_up(song)
@@ -395,7 +415,7 @@ if __name__ == '__main__':
     }
 
     failures = []
-    for song in manifest_only: 
+    for song in refresh_manifest: 
         print(f"Updating manifest for {song.get('song')}")
         failed = create_reaction_compilation(song, progress, output_dir = results_output_dir, options=manifest_options)
         if(len(failed) > 0):

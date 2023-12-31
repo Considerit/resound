@@ -1,1 +1,1 @@
-from inventory.inventory import download_and_parse_reactions, get_manifest_path
+from inventory.inventory import download_and_parse_reactions, get_manifest_path, filter_and_augment_manifest

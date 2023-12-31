@@ -53,14 +53,15 @@ def insert_filler(video_path, insertion_point, filler_length, output_path):
 
 
 
+# note: this will not work anymore because we've moved to JSON storage of song configuration
 if __name__=="__main__":
     from utilities import conf, make_conf
-    from library import songs, drafts, manifest_only, finished
+    from library import songs, drafts, refresh_manifest, finished
     from reactor_core import results_output_dir
     import os 
 
 
-    all_defs = songs + drafts + manifest_only + finished
+    all_defs = songs + drafts + refresh_manifest + finished
     options = {}
 
     for song_def in all_defs:
