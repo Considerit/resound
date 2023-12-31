@@ -1,12 +1,22 @@
 library.py
+old_library.py
 Media
 pretrained_models
 *.sublime*
 *.mp4
 .env
-*.coffee
+.coffee
 
 *pycache*
 .python*
 production
 concerts
+inventory/reactor_notations.py
+library/*
+app/node_modules
+app/backups
+app/db
+app/.nvmrc
+app/vendor
+app/package-lock.json
+testren.coffee
