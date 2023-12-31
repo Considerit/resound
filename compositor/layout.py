@@ -23,7 +23,7 @@ def create_layout_for_composition(base_video, width, height):
           base_video = base_video.set_audio(base_video.audio.set_fps(conversion_audio_sample_rate))
 
       x,y = (base_width / 2, base_height / 2)          # left / top
-      x,y = (base_width / 2, height - base_height / 2) # left / bottom
+      # x,y = (base_width / 2, height - base_height / 2) # left / bottom
       x,y = (width / 2, height - base_height / 2)      # center / bottom
 
       print(f"SETTING POSITION TO {(x - base_width / 2, y - base_height / 2)}")
@@ -65,6 +65,9 @@ def create_layout_for_composition(base_video, width, height):
 # distance to the center of the grid, with the first ones the closest. 
 
 def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, center=None):
+
+    min_cells += 3
+
     # Calculate a starting size for the hexagons based on the width and height
     a = min(width / ((min_cells / 2) ** 0.5), height / ((min_cells / (2 * np.sqrt(3))) ** 0.5))
     a *= 2
@@ -98,7 +101,7 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
           y = center[1] + dy * j
           
           # Add the hexagon to the list if it's fully inside the width x height area
-          if x - a >= 0 and y - a >= 0 and x + a <= width and y + a <= height and distance_from_region((x,y), outside_bounds) > 0:
+          if x - a >= 0 and y - a >= 0 and x + a <= width and y + a <= height and distance_from_region((x,y), outside_bounds) > a - (outside_bounds[3] - outside_bounds[1]) / 10:
             coords.append((x, y))
 
       # Reduce the size of the hexagons and try again if we don't have enough
@@ -274,7 +277,6 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
 
 
     def assign_seats(chosen_seats, chosen_channel):
-
         reaction = conf.get('reactions')[chosen_channel]
         reactors = reaction['reactors']
 
@@ -286,7 +288,7 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
                     if seat_key not in seating_by_seat and seat_key not in [str(t) for t in chosen_seats]:
                         chosen_seats.append(seat)
 
-        assert( len(reactors) == len(chosen_seats) )
+        assert( len(reactors) == len(chosen_seats), f"{len(reactors)}  {len(chosen_seats)}" )
 
         # align seats and reactors by their x-position
         chosen_seats.sort( key=lambda seat: seat[0] )
@@ -367,7 +369,8 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
                     highest_score = score
                     highest_priority = priority
 
-        assign_seats(chosen_seats, chosen_channel)
+        if chosen_channel:
+          assign_seats(chosen_seats, chosen_channel)
 
     return seating_by_reactor
 
