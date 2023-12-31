@@ -20,6 +20,9 @@ conf = {} # global conf
 constrain_to = []
 
 
+from library import search_testers
+
+
 def make_conf(song_def, options, temp_directory): 
   global conf
 
@@ -81,9 +84,12 @@ def make_conf(song_def, options, temp_directory):
     'introduction': intro_path,
     'outro': outro_path,
 
-    'search_tester': song_def.get('search_tester', None),
+    'search_tester': search_testers.get(song, None),
     'background': background_path,
-    'convert_videos': song_def.get('convert_videos', [])
+    'convert_videos': song_def.get('convert_videos', []),
+    'copyright_sensitive': song_def.get('copyright_sensitive', False),
+    'disable_backchannel_backgrounding': song_def.get('disable_backchannel_backgrounding', False),
+
   })
 
 
@@ -116,6 +122,7 @@ def make_conf(song_def, options, temp_directory):
     manual_bounds = song_def.get('manual_bounds', None)
     foregrounded_backchannel = song_def.get('foregrounded_backchannel', None)
     backgrounded_backchannel = song_def.get('backgrounded_backchannel', None)
+
 
     face_orientation = song_def.get('face_orientation', None)
 
@@ -297,7 +304,7 @@ def get_normalization_factor(reaction):
   if not os.path.exists(normalization_dir):
       os.makedirs(normalization_dir)
 
-  normalization_file = os.path.join(normalization_dir, f"{reaction.get('channel')}-normalization.pckl")
+  normalization_file = os.path.join(normalization_dir, f"{reaction.get('channel')}-normalization.json")
 
   if os.path.exists(normalization_file):
       normalization_factor = read_object_from_file(normalization_file)

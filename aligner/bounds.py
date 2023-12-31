@@ -31,7 +31,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
     from aligner.path_painter import get_candidate_starts, get_signals
 
 
-    saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-intercept_bounds.pckl'
+    saved_bounds = os.path.splitext(reaction.get('aligned_path'))[0] + '-intercept_bounds.json'
     if os.path.exists(saved_bounds):
         reaction['alignment_bounds'] = read_object_from_file(saved_bounds)
         print_alignment_bounds(reaction)        

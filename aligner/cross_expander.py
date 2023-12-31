@@ -20,9 +20,6 @@ from aligner.bounds import create_reaction_alignment_bounds, print_alignment_bou
 from aligner.path_painter import paint_paths
 
 
-
-
-
 def create_aligned_reaction_video(reaction, extend_by = 0):
     global conf
 
@@ -31,7 +28,7 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
 
 
     if conf['create_alignment'] or conf['alignment_test']:
-        alignment_metadata_file = os.path.splitext(output_file)[0] + '.pckl'
+        alignment_metadata_file = os.path.splitext(output_file)[0] + '.json'
 
         if not os.path.exists(alignment_metadata_file):
             conf['load_reaction'](reaction['channel'])
@@ -97,6 +94,8 @@ def create_aligned_reaction_video(reaction, extend_by = 0):
         
 
     return output_file
+
+
 
 
 

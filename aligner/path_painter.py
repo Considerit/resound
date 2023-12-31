@@ -2057,13 +2057,8 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
 
-    cache_file_name = f"{reaction.get('channel')}-start_cache-{seg_cache_key}.pckl"
+    cache_file_name = f"{reaction.get('channel')}-start_cache-{seg_cache_key}.json"
     candidate_cache_file = os.path.join( cache_dir, cache_file_name )    
-    candidate_cache_file_legacy = os.path.join( conf.get('song_directory'), cache_file_name )
-
-    if os.path.exists(candidate_cache_file_legacy):
-        import shutil
-        shutil.move(candidate_cache_file_legacy, candidate_cache_file)
 
     if os.path.exists(candidate_cache_file):
         candidate_cache = read_object_from_file(candidate_cache_file)

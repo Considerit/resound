@@ -40,15 +40,26 @@ from decimal import Decimal, getcontext
 
 
 
-import pickle
+import pickle, json
 
 def save_object_to_file(output_file, object):
-    with open(output_file, 'wb') as f:
-        pickle.dump(object, f)
+    # Open the file in binary mode for pickle, text mode for JSON
+    if output_file.endswith('.pckl'):
+        with open(output_file, 'wb') as f:
+            pickle.dump(object, f)
+    else:
+        with open(output_file, 'w') as f:  # Open in text mode for JSON
+            json.dump(object, f, indent=4)
 
 def read_object_from_file(input_file):
-    with open(input_file, 'rb') as f:
-        data = pickle.load(f)
+    print(f"reading {input_file}")
+    if input_file.endswith('.pckl'):
+        with open(input_file, 'rb') as f:  # Open in binary mode for pickle
+            data = pickle.load(f)
+    else:
+        with open(input_file, 'r') as f:  # Open in text mode for JSON
+            data = json.load(f)
+        
     return data
 
 
