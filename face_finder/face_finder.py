@@ -380,9 +380,11 @@ def detect_faces_in_frame(reaction, react_frame, show_facial_recognition, width,
               cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
 
         else:
+
           if show_facial_recognition:
               x, y, w, h, nose, all_data = face
               cv2.rectangle(react_frame, (x, y), (x+w, y+h), (0, 40, 190), 2)
+          face.append([])
           ignored_faces_this_frame.append(face)
           print("IGNORING FACE!!!")
 
@@ -506,7 +508,7 @@ def process_faces(reaction, face_matches, width, height):
     # as well as their orientation and size. 
 
     num_reactors = reaction.get('num_reactors', None)
-    # print(f"LOOKING FOR {num_reactors}")
+    print(f"LOOKING FOR {num_reactors} for {reaction.get('channel')}")
 
     coarse_reactors, _ = find_top_candidates(face_matches, width, height, num_reactors)
     reactors = []
@@ -625,7 +627,7 @@ def overlap_percentage(rect1, rect2):
 
 
 
-def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_area = None):
+def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_area = None, thresh=170):
 
 
 
@@ -662,7 +664,7 @@ def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_ar
       heat_map_color = cv2.applyColorMap(heat_map, cv2.COLORMAP_JET)
 
       # Threshold
-      _, binary = cv2.threshold(heat_map, 170, 255, cv2.THRESH_BINARY)
+      _, binary = cv2.threshold(heat_map, thresh, 255, cv2.THRESH_BINARY)
 
       # Find contours in the heat map
       contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -705,8 +707,12 @@ def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_ar
 
 
 def find_top_candidates(matches, wwidth, hheight, num_reactors):
+    if num_reactors is None:
+      thresh = 170
+    else: 
+      thresh = 70
 
-    ignored_face_groups, __ = create_heat_map_from_faces( [f[2] for f in matches], hheight, wwidth )
+    ignored_face_groups, __ = create_heat_map_from_faces( [f[2] for f in matches], hheight, wwidth, thresh=thresh )
 
     if len(ignored_face_groups) > 0:
       ignored_face_groups.sort(key=lambda x: x[2], reverse=True)
@@ -714,7 +720,7 @@ def find_top_candidates(matches, wwidth, hheight, num_reactors):
     else:
       best_ignored_area = None
 
-    face_groups, heat_map_color = create_heat_map_from_faces( [f[1] for f in matches], hheight, wwidth, best_ignored_area )
+    face_groups, heat_map_color = create_heat_map_from_faces( [f[1] for f in matches], hheight, wwidth, best_ignored_area, thresh=thresh )
 
 
     # Calculate the score for each group based on the total area covered
@@ -731,6 +737,11 @@ def find_top_candidates(matches, wwidth, hheight, num_reactors):
       max_score = sorted_groups[0][1]
       accepted_groups = [grp for grp in sorted_groups if grp[1] >= .5 * max_score]
     else: 
+      if len(sorted_groups) < num_reactors:
+        print(f"\n\n\tFOUND {len(sorted_groups)} face groups, while configuration specifies {num_reactors}\n\n")
+      else: 
+        print(f"\n\n\tFOUND {len(sorted_groups)} face groups, while configuration specifies {num_reactors}\n\n")
+
       accepted_groups = sorted_groups[0:num_reactors]
       
     # print(sorted_groups)
