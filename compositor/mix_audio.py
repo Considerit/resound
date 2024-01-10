@@ -15,14 +15,6 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
 
-# Mixing knobs
-normalize_base_with_headroom = .75
-foreground_scaler = 1
-background_scaler = 1
-sum_reaction_audio_threshold = .95
-base_excess_limitation = 0.75
-stereo_pan_max = 0.75
-
 
 
 def write_audio_to_file(reaction, audio, name):
@@ -31,11 +23,23 @@ def write_audio_to_file(reaction, audio, name):
     sf.write(path, audio, sr)
 
 def mix_audio(base_video, output_size):
+
+    # Mixing knobs
+    knobs = conf.get('audio_mixing', {})
+    normalize_base_with_headroom = knobs.get('normalize_base_with_headroom', .2)  # base volume set to 1 - headroom
+    foreground_scaler =            knobs.get('foreground_scaler', 1)
+    background_scaler =            knobs.get('background_scaler', 1)
+    sum_reaction_audio_threshold = knobs.get('sum_reaction_audio_threshold', .99)
+    base_excess_limitation =       knobs.get('base_excess_limitation', .75)
+    stereo_pan_max =               knobs.get('stereo_pan_max', .75)
+
+
     base_video.audio.fps = sr
     base_audio_as_array = base_video.audio.to_soundarray()
 
     base_audio_as_array = peak_normalize_with_headroom(base_audio_as_array, headroom=normalize_base_with_headroom)
     base_audio_rms = rms_level_excluding_silence(base_audio_as_array)
+
 
 
     for channel, reaction in conf.get('reactions').items():
@@ -64,6 +68,13 @@ def mix_audio(base_video, output_size):
         audio_scaling_factor = audio_scaling_factors[channel]
         audio_scaling_factor_reshaped = audio_scaling_factor[:, np.newaxis]
 
+        non_zero_elements = audio_scaling_factor[np.nonzero(audio_scaling_factor)]
+        if non_zero_elements.size > 0:
+            average_non_zero = np.mean(non_zero_elements)
+            print(f"\t\t\tscaling reaction by average of non-zero elements: {average_non_zero}")
+        else:
+            print("No non-zero elements to average.")
+
         reaction['mixed_audio'] *= audio_scaling_factor_reshaped
         # write_audio_to_file(reaction, reaction['mixed_audio'], 'adjusted_for_foreground')
 
@@ -76,7 +87,7 @@ def mix_audio(base_video, output_size):
 
 
     # Apply dynamic limiting on the collected reactor audios
-    dynamic_limit_without_combining(base_audio_as_array)
+    dynamic_limit_without_combining(base_audio_as_array, base_excess_limitation, sum_reaction_audio_threshold)
 
 
     # def convert_dict_for_json(input_dict):
@@ -287,7 +298,7 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
 
             co_listener_scaler = background_scaler / max(2, split_between)
             quality_scaler = background_scaler * score / total_score
-            scaler = max(co_listener_scaler, quality_scaler)
+            scaler = min(1, max(co_listener_scaler, quality_scaler))
             scaling_factors[channel][start:end] = np.minimum(scaler, scaling_factors[channel][start:end])
 
 
@@ -448,11 +459,21 @@ def plot_scaling_factors(scaling_factors, hop_length=5096, show=False):
 def rms_level_excluding_silence(audio_array, threshold=0.01):
     '''Compute the RMS level, excluding silence.'''
     non_silent_samples = audio_array[np.abs(audio_array) > threshold]
-    return np.sqrt(np.mean(non_silent_samples**2))
+
+    if len(non_silent_samples) == 0:
+        return 1
+        
+    rms = np.sqrt(np.mean(non_silent_samples**2))
+
+    if math.isnan(rms):
+        print("NAN!", np.mean(non_silent_samples**2), non_silent_samples)
+
+    return rms
 
 def adjust_gain_for_rms_match(audio_array, target_rms):
     '''Adjust the gain of audio_array to match the target RMS.'''
     current_rms = rms_level_excluding_silence(audio_array)
+    # print("ADJUSTING!", target_rms, current_rms, target_rms / current_rms)
     return audio_array * (target_rms / current_rms)
 
 def peak_normalize_with_headroom(audio_array, headroom=0.025):
@@ -461,7 +482,7 @@ def peak_normalize_with_headroom(audio_array, headroom=0.025):
     scale_factor = (1 - headroom) / peak
     return audio_array * scale_factor
 
-def dynamic_limit_without_combining(base_audio, sum_reaction_audio_threshold=0.99):
+def dynamic_limit_without_combining(base_audio, base_excess_limitation, sum_reaction_audio_threshold=0.99):
     '''Dynamically limit the reactor audios in chunks to avoid exceeding the threshold.'''
     chunk_size = int(sr * 0.5)  # Using half-second chunks
 
