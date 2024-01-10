@@ -165,6 +165,16 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
 
     else:
 
+        events = [
+            # ZoomPanEvent(0,  2, start_scale=2, end_scale=3, transition='ease_out'),        
+            # ZoomPanEvent(2,  6, end_position=(1920/4, 1080/4), end_scale=3, transition='ease_out'),
+            # ZoomPanEvent(6,  9, end_position=(1920, 1080), movement='arc'),
+            # ZoomPanEvent(9, 12, end_position='original', end_scale=1, transition='ease_out') # Zoom out
+        ]
+
+        if len(events) > 0:
+            initializeZoomPanState(output_size)
+            final_clip = animateClip(final_clip, events)
 
         final_clip.write_videofile(output_path, 
                                  codec="h264_videotoolbox", 
