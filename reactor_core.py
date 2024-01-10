@@ -69,7 +69,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     # if '40' not in reaction['channel']:
     #     return
 
-    print("processing ", reaction['channel'])
+    # print("processing ", reaction['channel'])
     # Create the output video file name
 
     
@@ -79,7 +79,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
 
 
 
-    if not conf["isolate_commentary"] or compilation_exists:
+    if not conf["isolate_commentary"]:
         return []
 
 
@@ -134,7 +134,18 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
 
 current_locks = {}
 
+
+def is_locked(lock_str):
+    full_output_dir = conf.get('temp_directory')
+    lock_file = os.path.join(full_output_dir, f'locked-{lock_str}')
+    if os.path.exists( lock_file  ):
+      return True
+    return False
+
+
 def request_lock(lock_str):
+
+
     full_output_dir = conf.get('temp_directory')
     lock_file = os.path.join(full_output_dir, f'locked-{lock_str}')
     if os.path.exists( lock_file  ):
@@ -193,7 +204,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         make_conf(song_def, options, output_dir)
 
-
+        if is_locked('compilation'):
+            return []
 
         conf.setdefault("step_size", 1)
         conf.setdefault("min_segment_length_in_seconds", 3)
@@ -248,15 +260,17 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
 
         extend_by = 12
-        for i, (channel, reaction) in enumerate(conf.get('reactions').items()):
-            print_profiling()
 
+        all_reactions = list(conf.get('reactions').keys())
+        all_reactions.sort()
+
+        for i, channel in enumerate(all_reactions):
+            reaction = conf.get('reactions').get(channel)
+
+            print_profiling()
 
             if not request_lock(channel):
                 continue
-
-
-
 
 
             try:
@@ -285,6 +299,7 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         print_progress(progress)        
         compilation_exists = os.path.exists(compilation_path)
+        print("COMP EXISTS?", compilation_exists, compilation_path)
         if not compilation_exists and conf['create_compilation'] and request_lock('compilation'):
 
             # for channel, reaction in conf.get('reactions').items():
