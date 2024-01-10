@@ -265,8 +265,8 @@ def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_au
         frame = video.get_frame(t)
         cropped_frame = frame[y:y+h, x:x+w]
 
-        if w > 450: 
-            cropped_frame = cv2.resize(cropped_frame, (450, 450))
+        # if w > 450: 
+        #     cropped_frame = cv2.resize(cropped_frame, (450, 450))
 
         return cropped_frame
 
@@ -280,7 +280,7 @@ def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_au
 
     # Write the cropped video to a file
     cropped_video.write_videofile(output_file, codec="h264_videotoolbox", fps=conversion_frame_rate,
-                                ffmpeg_params=['-q:v', '40'])
+                                ffmpeg_params=['-q:v', '60'])
 
     # Close the video clip
     video.close()
@@ -347,8 +347,12 @@ def detect_faces_in_frame(reaction, react_frame, show_facial_recognition, width,
     for ((x, y, w, h), nose, all_data) in scaled_faces:
         if w > .05 * width:
             if reaction.get('fake_reactor_position', False):
-                bad_x, bad_y = reaction.get('fake_reactor_position')
-                if (x / width < bad_x < (x+w) / width and y / height < bad_y < (y + h) / height):
+                bad_match = False
+                for bad_x, bad_y in reaction.get('fake_reactor_position'):
+                  if (x / width < bad_x < (x+w) / width and y / height < bad_y < (y + h) / height):
+                    bad_match = True
+                    print(f"Found bad match: {x / width} {y / height}")
+                if bad_match:
                   continue
 
             faces_this_frame.append([x, y, w, h, nose, all_data])
@@ -508,7 +512,7 @@ def process_faces(reaction, face_matches, width, height):
     # as well as their orientation and size. 
 
     num_reactors = reaction.get('num_reactors', None)
-    print(f"LOOKING FOR {num_reactors} for {reaction.get('channel')}")
+    # print(f"LOOKING FOR {num_reactors} for {reaction.get('channel')}")
 
     coarse_reactors, _ = find_top_candidates(face_matches, width, height, num_reactors)
     reactors = []
@@ -737,10 +741,7 @@ def find_top_candidates(matches, wwidth, hheight, num_reactors):
       max_score = sorted_groups[0][1]
       accepted_groups = [grp for grp in sorted_groups if grp[1] >= .5 * max_score]
     else: 
-      if len(sorted_groups) < num_reactors:
-        print(f"\n\n\tFOUND {len(sorted_groups)} face groups, while configuration specifies {num_reactors}\n\n")
-      else: 
-        print(f"\n\n\tFOUND {len(sorted_groups)} face groups, while configuration specifies {num_reactors}\n\n")
+      print(f"\tFOUND {len(sorted_groups)} face groups, while configuration specifies {num_reactors}")
 
       accepted_groups = sorted_groups[0:num_reactors]
       
