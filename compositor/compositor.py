@@ -6,14 +6,20 @@ import math
 from PIL import Image, ImageDraw, ImageChops
 import colorsys
 
-from moviepy.video.tools.drawing import color_gradient
 
-from moviepy.editor import ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
-from moviepy.audio.AudioClip import AudioClip
+from moviepy.editor import ImageClip, TextClip, VideoFileClip, CompositeVideoClip, ImageSequenceClip
+from moviepy.editor import concatenate_videoclips, vfx, clips_array
+
 from moviepy.video.VideoClip import VideoClip, ColorClip
-from moviepy.editor import VideoFileClip
+from moviepy.audio.AudioClip import AudioClip
+
 from moviepy.audio.fx import all as audio_fx
 from moviepy.video.fx import fadeout
+from moviepy.video.fx.all import resize
+
+from moviepy.video.tools.drawing import color_gradient
+
+
 
 import soundfile as sf
 
@@ -21,6 +27,7 @@ from utilities import unload_reaction, conf, conversion_frame_rate, conversion_a
 
 from compositor.layout import create_layout_for_composition
 from compositor.mix_audio import mix_audio
+from compositor.zoom_and_pan import initializeZoomPanState, animateClip, ZoomPanEvent, create_viewport_rectangle
 
 from aligner.create_trimmed_video import check_compatibility
 
@@ -51,7 +58,8 @@ from aligner.create_trimmed_video import check_compatibility
 # be any size up to the resolution of a modern macbook pro. These constraints are soft. 
 
 
-def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
+
+def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="hexagon"):
     conf.get('load_base_video')()
 
     output_path = conf.get('compilation_path')
@@ -66,12 +74,17 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
     draft = conf.get('draft', False)
 
     base_video = VideoFileClip(base_video_path)
+    if conf.get('base_video_transformations').get('flip', False):
+        # Flip the clip horizontally
+        base_video = base_video.fx(vfx.mirror_x)
+        # base_video.write_videofile("flipped_video.mp4")
+
 
     width, height = output_size
 
-    base_video, cell_size, base_video_position = create_layout_for_composition(base_video, width, height)
+    base_video, cell_size, base_video_position = create_layout_for_composition(base_video, width, height, shape=shape)
     print("\tLayout created")
-    all_clips, audio_clips, clip_length, audio_scaling_factors = create_clips(base_video, cell_size, draft, output_size)
+    all_clips, audio_clips, clip_length, audio_scaling_factors = create_clips(base_video, cell_size, draft, output_size, shape=shape)
     print("\tClips created")
 
     if base_video_position is not None:
@@ -85,56 +98,54 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
     text_clips = create_channel_labels_video(active_segments, cell_size, output_size)
     clips += text_clips
 
+
+
+
+
     final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
     
+
     
     print("\tClips composed")
 
 
 
+    # pre_background = final_clip
 
     if conf.get('background'):
+        reversing_bg = conf.get('background.reverse', False)
         video_background_path = conf.get('background')
-        video_background = VideoFileClip(video_background_path)
+        video_background = VideoFileClip(video_background_path).without_audio()
 
-        # Loop the background video if it's shorter than the final_clip's duration
         if video_background.duration < final_clip.duration:
-            loops_required = int(np.ceil(final_clip.duration / video_background.duration))
-            video_background = concatenate_videoclips([video_background] * loops_required)
+
+            if not reversing_bg:
+                loops_required = int(np.ceil(final_clip.duration / video_background.duration))
+                video_clips = [video_background] * loops_required
+        
+            else: 
+                def reverse_clip(clip):
+                    frames = [frame for frame in clip.iter_frames()]
+                    reversed_frames = frames[::-1]
+                    return ImageSequenceClip(reversed_frames, fps=clip.fps)
+
+                loops_required = int(np.ceil(final_clip.duration / (2 * video_background.duration)))
+                
+                video_clips = []
+                reversed_clip = None
+                for _ in range(loops_required):
+                    video_clips.append(video_background)  # Forward clip
+                    if reversed_clip is None:
+                        reversed_clip = reverse_clip(video_background)
+                    video_clips.append(reversed_clip)  # Backward clip
+
+            video_background = concatenate_videoclips(video_clips)
 
         # Set the final_clip as a layer on top of the background
         final_clip = CompositeVideoClip([
-            video_background.subclip(0, final_clip.duration).resize(output_size),  # Ensure the background video is the same duration as final_clip
+            video_background.resize(output_size).set_duration(final_duration),
             final_clip
         ])
-
-    outerclips = [final_clip]
-
-    if conf.get('introduction', False):
-        outerclips.insert(0, VideoFileClip(conf.get('introduction')))
-
-    if conf.get('channel_branding', False):
-        outerclips.insert(0, VideoFileClip(conf.get('channel_branding')))
-
-    if conf.get('outro', False):
-        outerclips.append(VideoFileClip(conf.get('outro')))
-
-
-    clip_to_duration = None
-    if clip_to_duration is not None:
-        outerclips = [o.set_duration(min(clip_to_duration, o.duration)) for o in outerclips] # for testing
-
-    if len(outerclips) > 1:
-        for vid in outerclips:
-            vid = vid.set_fps(final_clip.fps)
-            vid = vid.resize(newsize=final_clip.size)
-            vid.audio.fps = sr
-            vid = fadeout.fadeout(vid, 0.1)
-
-            # if vid != final_clip:
-            #     check_compatibility(vid, final_clip)
-
-        final_clip = concatenate_videoclips(outerclips)
 
 
     # Unload a lot of the conf & reactions here to free memory
@@ -153,13 +164,27 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080)):
                                          preset='ultrafast')
 
     else:
-      final_clip.write_videofile(output_path, 
+
+
+        final_clip.write_videofile(output_path, 
                                  codec="h264_videotoolbox", 
-                                 # audio_codec="aac", 
                                  ffmpeg_params=['-q:v', '60']
                                 )
 
 
+        # try: 
+        #     pre_background.write_videofile(output_path+'.mov', 
+        #                    codec="prores_ks", 
+        #                    ffmpeg_params=['-profile:v', '4444', '-q:v', '60', '-pix_fmt', 'yuv444p10le']
+        #                   )
+        # except:
+        #     print("Could not export transparent")
+
+
+    merge_audio_and_video(output_path, audio_output)
+
+
+def merge_audio_and_video(output_path, audio_output):
     command = [
         'ffmpeg',
         '-i', output_path,
@@ -239,7 +264,7 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
 
 
 
-def find_active_segments(audio_scaling_factors, duration_threshold=3):
+def find_active_segments(audio_scaling_factors, duration_threshold=1.5):
     global sr  # Assuming sr is defined globally
     active_segments = {}
     final_segments = []
@@ -325,18 +350,24 @@ def create_progress_bar_clip(duration, width, height, start_time, bar_color=(0, 
     bar_clip = VideoClip(make_frame, duration=duration).set_start(start_time)
     return bar_clip
 
+
 def create_channel_labels_video(active_segments, cell_size, output_size):
     channel_textclips = []
     progress_bar_height = 10  # Height of the progress bar
 
     print('creating channel label video')
     for channel, start, end in active_segments:
-
         reaction = conf.get('reactions').get(channel)
-
         duration = (end - start) / sr
 
-        txt_clip = TextClip(reaction.get('channel_label'), fontsize=24, color='white', font="Fira-Sans-ExtraBold")
+        # Create shadow text clip (black and slightly offset)
+        shadow_clip = TextClip(reaction.get('channel_label'), fontsize=24, color='black', 
+                               font="Fira-Sans-ExtraBold")
+
+        # Create main text clip (white)
+        txt_clip = TextClip(reaction.get('channel_label'), fontsize=24, color='white', 
+                            font="Fira-Sans-ExtraBold")
+
         text_width, text_height = txt_clip.size
 
         # Determine text position
@@ -351,19 +382,17 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
             y = y - text_height // 2 - progress_bar_height - 4 - 4  # Place above the channel
         else:
             y += cell_size + text_height // 2 - progress_bar_height - 4 - 4 # Place below the channel
-            
-        
 
         # Adjust position if at an edge
         x = max(min(x, output_size[0] - text_width  // 2), 10)
         y = max(min(y, output_size[1] - text_height // 2 - progress_bar_height - 4), 10)
 
-        txt_clip = (txt_clip
-                    .set_position((x, y))
-                    .set_duration(duration)
-                    .set_start(start / sr))
+        # Composite the shadow and text clips
+        comp_clip = CompositeVideoClip([shadow_clip.set_position((x+1, y+1)), txt_clip.set_position((x, y))], 
+                                       size=output_size)
+        comp_clip = comp_clip.set_duration(duration).set_start(start / sr)
 
-        channel_textclips.append( txt_clip )
+        channel_textclips.append(comp_clip)
 
         # Calculate position for progress bar
         bar_position = (x, y + text_height // 2 + progress_bar_height + 4)
@@ -374,17 +403,17 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
         )
         progress_bar_clip = progress_bar_clip.set_position(bar_position)
 
-        channel_textclips.append( progress_bar_clip )
-
-    # Synthesize channel_textclips into a composite video clip
-    # composite_clip = CompositeVideoClip(channel_textclips, size=video_clip.size)
+        channel_textclips.append(progress_bar_clip)
 
     return channel_textclips
 
 
 
 
-def create_clips(base_video, cell_size, draft, output_size):
+
+
+
+def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
 
 
     reactor_colors = generate_hsv_colors(len(conf.get('reactions').keys()), 1, .6)
@@ -396,7 +425,7 @@ def create_clips(base_video, cell_size, draft, output_size):
     ###################
     # Set position
     print("\tSetting all positions")    
-    for name, reaction in conf.get('reactions').items():
+    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
         print(f"\t\tSetting position for {name}")
         reactors = reaction.get('reactors')
         if reactors is None:
@@ -429,11 +458,16 @@ def create_clips(base_video, cell_size, draft, output_size):
 
     print("\tCreating all clips")
     audio_clips = []
-    for name, reaction in conf.get('reactions').items():
+    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
         print(f"\t\tCreating clip for {name}")
         reactors = reaction.get('reactors')
         if reactors is None:
             continue
+
+        # if i > 1:
+        #     continue
+
+
 
         reaction_color = reactor_colors.pop()
 
@@ -462,7 +496,7 @@ def create_clips(base_video, cell_size, draft, output_size):
                                            border_thickness=min(30, max(5, size / 15)), 
                                            width=size, 
                                            height=size, 
-                                           as_circle=featured)
+                                           shape= 'circle' if featured else shape)
 
             position = reactor['position']
 
@@ -492,6 +526,9 @@ def create_clips(base_video, cell_size, draft, output_size):
 
 
 
+    base_opacity = conf.get('base_video_transformations').get('opacity', False)
+    if base_opacity:
+        base_video = base_video.set_opacity(base_opacity)
 
 
     audio_clips.append(base_audio_clip)
@@ -543,26 +580,6 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
     all_asides.sort(key=lambda x: x[0], reverse=True)
 
 
-    def create_countdown_timer(starting_value):
-        count_start = int(starting_value)
-        def make_frame(t):
-            countdown_time = count_start - int(t)
-            if countdown_time < 0:
-                countdown_time = 0
-            
-            text = TextClip(str(countdown_time), fontsize=28, color='white', font="Fira-Sans-ExtraBold", transparent=True)
-            
-            return text.get_frame(t)
-
-        countdown_clip = VideoClip(make_frame, duration=count_start).set_fps(conversion_frame_rate)
-
-        # countdown_clip.write_videofile(os.path.join(conf.get('temp_directory'), 'COUNTDOWN_CLIP.mp4'), 
-        #                          codec="h264_videotoolbox", 
-        #                          # audio_codec="aac", 
-        #                          ffmpeg_params=['-q:v', '40']
-        #                         )        
-        return countdown_clip
-
     def extend_for_aside(clip, insertion_point, duration, aside=None, use_countdown_timer=False):
         if clip.duration < insertion_point:
             return clip
@@ -571,15 +588,6 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             # print('insertion_point', insertion_point)
             frame = clip.get_frame(max(0,insertion_point - 1))
             extended_clip = ImageClip(frame, duration=duration) #.set_audio(AudioClip(lambda t: 0, duration=duration))
-        elif False and use_countdown_timer:
-            countdown_timer = create_countdown_timer(duration)
-            countdown_timer = countdown_timer.set_position(("center", aside.size[1] - 56))
-            extended_clip = CompositeVideoClip([aside, countdown_timer])
-            # extended_clip.write_videofile(os.path.join(conf.get('temp_directory'), f'EXTENDED_CLIP-{insertion_point}.mp4'), 
-            #                      codec="h264_videotoolbox", 
-            #                      # audio_codec="aac", 
-            #                      ffmpeg_params=['-q:v', '40']
-            #                     )               
         else:
             extended_clip = aside
 
@@ -679,34 +687,48 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
 
             for idx, reactor in enumerate(reactors): 
 
+                if rewind > 0:
+                    rewind_clip = reactor['clip'].subclip(insertion_point - rewind, insertion_point)
+                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration=rewind, aside=rewind_clip, use_countdown_timer=False)
+
                 if channel == name:
-
+                    assert( len(aside_clips), len(reactors), f"Number of aside reactors does not match the number of reactors for {channel}, check if the asides face recog found the right number."  )
                     extended_clip = aside_clips[idx].get('clip')
-
-                    if rewind > 0:
-                        reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration=rewind)
 
                     reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration, aside=extended_clip, use_countdown_timer=True)
 
                 else:
-                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration + rewind)
+                    # reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration + rewind)
+                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration)
 
 
             len_audio_before = reaction['mixed_audio'].shape[0]
 
-            if channel != name:
-                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration + rewind)                
-                middle = np.zeros(int(sr * (duration + rewind)))
+            if rewind > 0:
+                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration=rewind)
+
+                rewind_scale = audio_scaling_factors[name][round(sr * (insertion_point - rewind)):round((sr * insertion_point))]
+                # rewind_scale = np.ones( int(sr * rewind))
             else: 
-                if rewind > 0:
-                    reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration=rewind)
+                rewind_scale = np.zeros(0)
+
+
+            if channel == name:
 
                 extended_clip = aside_clips[idx].get('audio')
                 reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration, aside=extended_clip)                
-                middle = np.ones( int(sr * (duration + rewind)))
+                middle = np.ones( int(sr * duration))
+                # middle = np.ones( int(sr * (duration + rewind)))
+
+            else: 
+                # reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration + rewind)                
+                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration)
+                middle = np.zeros(int(sr * duration))
+                # middle = np.zeros(int(sr * (duration + rewind)))
+
 
             split = int(sr * insertion_point)
-            audio_scaling_factors[name] = np.concatenate([audio_scaling_factors[name][0:split], middle, audio_scaling_factors[name][split:]])
+            audio_scaling_factors[name] = np.concatenate([audio_scaling_factors[name][0:split], middle, rewind_scale, audio_scaling_factors[name][split:]])
     
 
 
@@ -721,8 +743,7 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
 # I’m using the following function to mask a video to a hexagon or circular shape, with 
 # a border that pulses with color when there is audio from the reactor. 
 
-def create_masked_video(channel, clip, audio_volume, width, height, audio_scaling_factor, border_color, border_thickness=10, as_circle=False):
-
+def create_masked_video(channel, clip, audio_volume, width, height, audio_scaling_factor, border_color, border_thickness=10, shape="hexagon"):
 
     # Create new PIL images with the same size as the clip, fill with black color
     mask_img_large = Image.new('1', (width, height), 0)
@@ -730,11 +751,24 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
     draw_large = ImageDraw.Draw(mask_img_large)
     draw_small = ImageDraw.Draw(mask_img_small)
 
-    if as_circle:
+    if shape == 'circle':
         # Draw larger and smaller circles on the mask images
         draw_large.ellipse([(0, 0), (width, height)], fill=1)
         draw_small.ellipse([(border_thickness, border_thickness), ((width - border_thickness), (height - border_thickness))], fill=1)
-    else:
+    elif shape == 'diamond':
+        def calc_diamond_vertices(cx, cy, size):
+            return [(cx, cy - size / 2),  # Top
+                    (cx + size / 2, cy),  # Right
+                    (cx, cy + size / 2),  # Bottom
+                    (cx - size / 2, cy)]  # Left
+
+        vertices_large = calc_diamond_vertices(width / 2, height / 2, min(width, height))
+        vertices_small = calc_diamond_vertices(width / 2, height / 2, min(width, height) - border_thickness)
+
+        # Draw the larger and smaller diamonds on the mask images
+        draw_large.polygon(vertices_large, fill=1)
+        draw_small.polygon(vertices_small, fill=1)
+    elif shape == 'hexagon':
         assert(height == width)
 
         def calc_hexagon_vertices(cx, cy, size):
@@ -861,9 +895,6 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
 
 
 
-
-
-
 def get_audio_volume(audio_array, fps=None):
     if fps is None:
       fps = sr
@@ -881,14 +912,6 @@ def generate_hsv_colors(n, s, v):
     return [(i/n, s, v) for i in range(n)]
 
 
-def match_audio_peak(base_audio_as_array, audio_as_array, factor=1):
-    # Compute scale factor based on peak amplitude
-    scale_factor = np.max(base_audio_as_array) / np.max(audio_as_array)
 
-    scale_factor *= factor
 
-    # Scale the target audio
-    adjusted_audio_data = audio_as_array * scale_factor
-
-    return adjusted_audio_data
 

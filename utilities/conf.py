@@ -68,7 +68,6 @@ def make_conf(song_def, options, temp_directory):
     outro_path = False
 
   background_path = os.path.join(song_directory, 'background.mp4')
-  preprocessed_background_path = os.path.join(song_directory, 'preprocessed_background.mp4')
 
   if not os.path.exists(background_path):
     background_path = None
@@ -95,7 +94,6 @@ def make_conf(song_def, options, temp_directory):
 
     'search_tester': search_testers.get(song, None),
     'background': background_path,
-    'preprocessed_background': preprocessed_background_path if background_path is not None else None,
     'convert_videos': song_def.get('convert_videos', []),
     'base_video_transformations': song_def.get('base_video_transformations', {}),
     'disable_backchannel_backgrounding': song_def.get('disable_backchannel_backgrounding', False),
