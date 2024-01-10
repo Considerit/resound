@@ -5,8 +5,8 @@ from itertools import groupby
 
 
 
-def create_layout_for_composition(base_video, width, height):
-    base_video_proportion = conf.get('base_video_proportion', .45)
+def create_layout_for_composition(base_video, width, height, shape="hexagon"):
+    base_video_proportion = conf.get('base_video_proportion')
     total_videos = 0
     for name, reaction in conf.get('reactions').items():
       total_videos += len(reaction.get('reactors', []))
@@ -22,12 +22,18 @@ def create_layout_for_composition(base_video, width, height):
       if base_video.audio.fps != conversion_audio_sample_rate:
           base_video = base_video.set_audio(base_video.audio.set_fps(conversion_audio_sample_rate))
 
-      x,y = (base_width / 2, base_height / 2)          # left / top
-      # x,y = (base_width / 2, height - base_height / 2) # left / bottom
-      x,y = (width / 2, height - base_height / 2)      # center / bottom
+
+
+      base_video_placement = conf.get('base_video_placement')
+      if base_video_placement == "left / top":
+        x,y = (base_width / 2, base_height / 2)          # left / top
+      elif base_video_placement == "left / bottom":
+        x,y = (base_width / 2, height - base_height / 2) # left / bottom
+      elif base_video_placement == 'center / bottom':
+        x,y = (width / 2, height - base_height / 2)      # center / bottom
 
       print(f"SETTING POSITION TO {(x - base_width / 2, y - base_height / 2)}")
-      base_video_position = (x - base_width / 2, y - base_height / 2)      
+      base_video_centroid = (x - base_width / 2, y - base_height / 2)      
 
       # upper left point of rectangle, lower right point of rectangle
       bounds = (x - base_width / 2, y - base_height / 2, 
@@ -39,9 +45,11 @@ def create_layout_for_composition(base_video, width, height):
       bounds = [0,0,width,0]
       center = [width / 2, height / 2]
       value_relative_to = [width / 2, height / 2]
-      base_video_position = None
+      base_video_centroid = None
       base_width = base_height = 0 
-    hex_grid, cell_size = generate_hexagonal_grid(width, height, total_videos, bounds, center)
+
+
+    hex_grid, cell_size = generate_grid(width, height, total_videos, bounds, center, shape=shape)
 
     # hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
     hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
@@ -53,7 +61,8 @@ def create_layout_for_composition(base_video, width, height):
                                base_video_height=base_height,
                                grid_size=(width, height))
 
-    return (base_video, cell_size, base_video_position)
+    return (base_video, cell_size, base_video_centroid)
+
 
 
 
@@ -64,9 +73,9 @@ def create_layout_for_composition(base_video, width, height):
 # centroids for this hexagonal grid, and the cell size. The centroids should be sorted by 
 # distance to the center of the grid, with the first ones the closest. 
 
-def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, center=None):
+def generate_grid(width, height, min_cells, outside_bounds=None, center=None, shape="hexagon"):
 
-    min_cells += 3
+    # min_cells += 3
 
     # Calculate a starting size for the hexagons based on the width and height
     a = min(width / ((min_cells / 2) ** 0.5), height / ((min_cells / (2 * np.sqrt(3))) ** 0.5))
@@ -88,7 +97,10 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
       # Calculate the horizontal and vertical spacing for the hexagons
       # Adjust the vertical spacing: every second row is moved up by .25 of the hexagon's height      
       dx = 2 * a
-      dy = math.ceil(.75 * 2 * a) - 1 #np.sqrt(3) * a
+      if (shape == 'hexagon' or shape == 'circle'):
+        dy = math.ceil(.75 * 2 * a) - 1 #np.sqrt(3) * a
+      elif shape == 'diamond':
+        dy = math.ceil(.5 * 2 * a) - 1 #np.sqrt(3) * a
 
       # Calculate the number of hexagons that can fit in the width and height
       nx = int(np.ceil(width / dx))
@@ -118,14 +130,43 @@ def generate_hexagonal_grid(width, height, min_cells, outside_bounds=None, cente
     
     cell_size = math.ceil(2 * a)
 
+
+    # Make sure that available grid positions are horizontally centered. This is particularly 
+    # desirable for compositions with fewer reactions and with a video that is centered horizontally.
+    # I'm not sure if it is desirable when the video isn't centered horizontally.
+    min_x = 99999999
+    max_x = 0
+    for x,y in coords:
+      if x - cell_size / 2 < min_x:
+        min_x = x - cell_size / 2
+      if x + cell_size / 2 > max_x:
+        max_x = x + cell_size / 2
+    right_padding = width - max_x
+    left_padding = min_x
+    x_adj = (right_padding - left_padding) / 2
+    coords = [ (x+x_adj, y) for x,y in coords ]
+
+
     print(f"\tLayout: len(hex_grid) = {len(coords)}  target_cells={min_cells} cell_size={cell_size}")
+
+
+
+
 
     return coords, cell_size  # return 2 * a (diameter) to match with the circle representation
 
 
 
+
+
+
+
+
+
+
+
 seat_preferences = {}
-def get_seat_preferences(reaction, grid_centroid, all_seats, base_video_width, base_video_height):
+def get_seat_preferences(reaction, grid_centroid, grid_size, all_seats, base_video_width, base_video_height):
     global seat_preferences
 
     key = f"{conf.get('song_key')}-{reaction.get('channel')}"
@@ -148,6 +189,13 @@ def get_seat_preferences(reaction, grid_centroid, all_seats, base_video_width, b
               my_value[1] += base_video_height / 2
             elif vertical_orientation == 'up':
               my_value[1] += base_video_height
+        else:
+            my_value[1] = grid_size[1] - base_video_height   # This is only correct for video placement = down center
+            if vertical_orientation == 'middle':
+              my_value[1] -= 1
+            elif vertical_orientation == 'down':
+              my_value[1] -= 2 
+
 
         seat_preferences[key] = my_value
 
@@ -254,7 +302,7 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
     reaction_preferences = {}
     total_reactors = 0
     for channel, reaction in conf.get('reactions').items():
-        reaction_preferences[channel] = get_seat_preferences(reaction, grid_centroid, seats, base_video_width, base_video_height)
+        reaction_preferences[channel] = get_seat_preferences(reaction, grid_centroid, grid_size, seats, base_video_width, base_video_height)
         total_reactors += len(reaction.get('reactors'))
 
     ########################
@@ -304,7 +352,7 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
             seating_by_seat[str(chosen_seat)] = (reaction, reactor)
             reactor['grid_assignment'] = chosen_seat
 
-            print(f"\t\tASSIGNED {chosen_seat} to {chosen_channel} / {i}. Target position={reaction_preferences[chosen_channel]}")
+            print(f"\t\tASSIGNED {chosen_seat} to {chosen_channel} / {i}. Priority={reaction.get('priority')} Target position={reaction_preferences[chosen_channel]}")
 
         # remove choice from consideration
         for chosen_seat in chosen_seats:
@@ -359,7 +407,9 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
                             score *= .1
 
                 priority = reaction.get('priority')
-                if score > highest_score or (score == highest_score and priority > highest_priority):
+                score *= priority / 100
+
+                if score > highest_score or ( score == highest_score and priority > highest_priority):
 
                     chosen_channel = channel
                     if num_reactors > 1:
@@ -413,4 +463,152 @@ def distance(point, point2):
     dy = y2 - y
 
     return (dx ** 2 + dy ** 2) ** 0.5
+
+
+
+
+
+
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
+def create_perturbed_hexagon(center, size, perturbations):
+    """ Create a hexagon and perturb its vertices """
+    points = []
+    for i, angle in enumerate(range(0, 360, 60)):
+        x = center[0] + (size + perturbations[i]) * np.cos(np.radians(angle))
+        y = center[1] + (size + perturbations[i]) * np.sin(np.radians(angle))
+        points.append((x, y))
+    return points
+
+def generate_hex_grid(rows, cols, hex_size):
+    """ Generate a regular hexagonal grid """
+    grid = []
+    for row in range(rows):
+        for col in range(cols):
+            x = col * 1.5 * hex_size
+            y = row * np.sqrt(3) * hex_size + (col % 2) * np.sqrt(3)/2 * hex_size
+            grid.append((x, y, col, row))  # Include col and row for perturbation reference
+    return grid
+
+def generate_irregular_hex_layout(ax, aspect_ratio=16/9, hex_size=0.1, rows=10, cols=10):
+    """ Generate an irregular hexagonal layout """
+    np.random.seed(0)  # For reproducible results
+    grid = generate_hex_grid(rows, cols, hex_size)
+    perturbations = {}
+
+    for x, y, col, row in grid:
+        # Create unique perturbations for each vertex
+        if (col, row) not in perturbations:
+            perturbations[(col, row)] = [np.random.rand() * hex_size * 0.3 - hex_size * 0.15 for _ in range(6)]
+
+        # Ensure shared edges have the same perturbation
+        hex_perturbations = perturbations[(col, row)]
+        # ... (same as previous script for shared edge perturbations)
+
+        # Plot the perturbed hexagon
+        plot_hexagon(ax, (x, y), hex_size, 'black', hex_perturbations)
+
+def plot_hexagon(ax, center, size, edge_color, perturbations):
+    """ Plot a single hexagon on the given axes """
+    hexagon = patches.Polygon(create_perturbed_hexagon(center, size, perturbations), closed=True, fill=False, edgecolor=edge_color)
+    ax.add_patch(hexagon)
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.spatial import Voronoi, voronoi_plot_2d
+
+def compute_centroids(vor):
+    """Compute centroids of Voronoi cells."""
+    centroids = []
+    for region in vor.regions:
+        if not -1 in region and len(region) > 0:
+            polygon = [vor.vertices[i] for i in region]
+            polygon = np.array(polygon)
+            centroid = np.mean(polygon, axis=0)
+            centroids.append(centroid)
+    return np.array(centroids)
+
+def generate_voronoi_diagram(width, height, num_points, num_large_cells, iterations=5):
+    # Initial random points
+    points = np.random.rand(num_points, 2) * [width, height]
+    large_cell_points = np.random.rand(num_large_cells, 2) * [width * 0.2, height * 0.2] + [width * 0.4, height * 0.4]
+    all_points = np.vstack((points, large_cell_points))
+
+    for _ in range(iterations):
+        vor = Voronoi(all_points)
+        centroids = compute_centroids(vor)
+        all_points = centroids  # Update points to centroids for next iteration
+
+    return vor
+
+
+
+
+if __name__ == "__main__":
+
+
+  ### Experiment 1
+  # # Set up plot
+  # fig, ax = plt.subplots()
+  # ax.set_aspect('equal')
+  # ax.set_xlim(0, 16/9)
+  # ax.set_ylim(0, 1)
+  # ax.axis('off')
+
+  # # Generate and plot layout
+  # generate_irregular_hex_layout(ax)
+
+  # plt.show()
+
+
+
+  # ### Experiment 2
+  # # Parameters
+  # width, height = 16, 9
+  # num_points = 95
+  # num_large_cells = 5
+
+  # # Generate Voronoi diagram with Lloyd's Algorithm
+  # vor = generate_voronoi_diagram(width, height, num_points, num_large_cells)
+
+  # # Plot
+  # fig, ax = plt.subplots()
+  # voronoi_plot_2d(vor, ax=ax, show_vertices=False, line_colors='black', line_width=2)
+  # ax.set_xlim([0, width])
+  # ax.set_ylim([0, height])
+  # ax.set_aspect('equal')
+  # plt.show()
+
+
+
+  # Experiment 3
+
+  # Example circle data (centroids and radii)
+  circle_centroids = np.array([[0.2, 0.5], [0.4, 0.7], [0.6, 0.3], [0.8, 0.5]])  # Replace with your data
+  circle_radii = np.array([0.05, 0.07, 0.06, 0.08])  # Replace with your data
+
+  # Create Voronoi diagram from circle centroids
+  vor = Voronoi(circle_centroids)
+
+  # Plotting
+  fig, ax = plt.subplots()
+  voronoi_plot_2d(vor, ax=ax, show_vertices=False, line_colors='black', line_width=2)
+
+  # Plot original circles for comparison
+  for centroid, radius in zip(circle_centroids, circle_radii):
+      circle = plt.Circle(centroid, radius, edgecolor='red', facecolor='none')
+      ax.add_patch(circle)
+
+  ax.set_xlim([0, 1])
+  ax.set_ylim([0, 1])
+  ax.set_aspect('equal')
+  plt.show()
+
+
+
 
