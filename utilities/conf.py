@@ -15,6 +15,10 @@ from library import channel_labels
 
 
 
+# from guppy import hpy
+# h = hpy()
+
+
 conf = {} # global conf
 
 constrain_to = []
@@ -22,6 +26,9 @@ constrain_to = []
 
 from library import search_testers
 
+
+def get_song_directory(song):
+  return os.path.join('Media', song)
 
 def make_conf(song_def, options, temp_directory): 
   global conf
@@ -34,7 +41,7 @@ def make_conf(song_def, options, temp_directory):
 
   song = f"{song_def['artist']} - {song_def['song']}"
 
-  song_directory = os.path.join('Media', song)
+  song_directory = get_song_directory(song)
   reaction_directory = os.path.join(song_directory, 'reactions')
 
   compilation_path = os.path.join(song_directory, f"{song} (compilation).mp4")
@@ -61,6 +68,8 @@ def make_conf(song_def, options, temp_directory):
     outro_path = False
 
   background_path = os.path.join(song_directory, 'background.mp4')
+  preprocessed_background_path = os.path.join(song_directory, 'preprocessed_background.mp4')
+
   if not os.path.exists(background_path):
     background_path = None
 
@@ -86,9 +95,15 @@ def make_conf(song_def, options, temp_directory):
 
     'search_tester': search_testers.get(song, None),
     'background': background_path,
+    'preprocessed_background': preprocessed_background_path if background_path is not None else None,
     'convert_videos': song_def.get('convert_videos', []),
-    'copyright_sensitive': song_def.get('copyright_sensitive', False),
+    'base_video_transformations': song_def.get('base_video_transformations', {}),
     'disable_backchannel_backgrounding': song_def.get('disable_backchannel_backgrounding', False),
+
+
+    'audio_mixing': song_def.get('audio_mixing', {}),
+    'base_video_proportion': song_def.get('base_video_proportion', .45),
+    "base_video_placement": song_def.get('base_video_placement', 'center / bottom'),
 
   })
 
@@ -130,9 +145,13 @@ def make_conf(song_def, options, temp_directory):
 
 
 
-    for reaction_video_path in reaction_videos:
+    for i, reaction_video_path in enumerate(reaction_videos):
       print_profiling()
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
+
+      # if i > 20:
+      #   continue
+
 
       if len(constrain_to) > 0 and channel not in constrain_to:
         continue

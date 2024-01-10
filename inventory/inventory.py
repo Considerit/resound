@@ -126,7 +126,7 @@ def search_recommended_channels(artist, song, search, reactions, test):
         if channel.get('searched_for', {}).get(song_string, False):
             continue
 
-        print(f"[{idx / len(channels):.1f}%] Checking {channel.get('title')}")
+        print(f"[{100 * idx / len(channels):.1f}%] Checking {channel.get('title')}")
 
         items = YoutubeSearch(song_string, max_results=1, channel=channel).to_dict()
         
@@ -241,21 +241,16 @@ def create_manifest(song_def, artist, song_title, song_search, search, test = No
 
     if test is None: 
         def test(title):
-            if isinstance(search, str):
-                song_present = search.lower() in title.lower()
-            else:
-                song_present = any(s.lower() in title.lower() for s in search)
-
+            song_present = any(s.lower() in title.lower() for s in search)
             artist_present = artist.lower() in title.lower()
             return artist_present and song_present
 
 
-    # search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
 
-    # manifest_json = json.dumps(manifest, indent = 4) 
-    # jsonfile = open(manifest_file, "w")
-    # jsonfile.write(manifest_json)
-    # jsonfile.close()
+            
+    search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
+
+    save_reactions_manifest(manifest, artist, song_title)
 
     if not song_def.get('search_channel_id', None):
         search_recommended_channels(artist, song_title, search, manifest['reactions'], test)
@@ -457,12 +452,14 @@ def filter_and_augment_manifest(artist, song):
 
             search = f"{prepare_title(reaction.get('title'))} \"{reaction.get('id')}\""
 
-            print(f'\t[{idx / len(reaction_inventory.keys()):.1f}%] {search}', end='\r')
+            print(f'\t[{100 * idx / len(reaction_inventory.keys()):.1f}%] {search}', end='\r')
 
             # search = f"\"{reaction.get('reactor')}\" \"{artist}\"  \"{song.get('title')}\"  "
 
             results = YoutubeSearch(search, max_results=3, channel=get_channel(reaction.get('channelId'))).to_dict()
-
+            if results is None: 
+                continue
+                
             result = None
             for r in results:
                 if r['id'] == reaction.get('id'):

@@ -100,7 +100,7 @@ def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[
 
     # Concatenate the clips together
     final_clip = concatenate_videoclips(clips)
-    final_clip = final_clip.set_fps(30)
+    final_clip = final_clip.set_fps(conversion_frame_rate)
 
     # Get the duration of each clip
     final_clip_duration = final_clip.duration
