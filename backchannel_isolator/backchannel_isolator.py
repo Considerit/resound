@@ -639,7 +639,6 @@ def confirm_via_correlation(reaction, segments, threshold=.9):
     return confirmed_segments
 
 
-
 def isolate_reactor_backchannel(reaction, extended_by=0):
 
     conf.get('load_base_video')()
@@ -668,12 +667,18 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
     if not os.path.exists( reaction_vocals_path ):
         separate_vocals(react_separation_path, reaction_audio, vocal_path_filename, duration=song_length)
 
+
+
     if not os.path.exists( song_vocals_path ):
+        print(f"\tIsolating backchannel from {reaction_audio} to {backchannel_path}")
+
         separate_vocals(song_separation_path, base_audio, vocal_path_filename, duration=song_length)
 
 
-    print(f"Separating commentary from {reaction_audio} to {backchannel_path}")
-    mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)
+    if not os.path.exists( backchannel_audio_path ):
+        print(f"\tWriting backchannel to {backchannel_audio_path}")
+
+        mute_by_deviation(reaction, song_vocals_path, reaction_vocals_path, backchannel_path)
 
 
     return backchannel_audio_path
