@@ -103,6 +103,7 @@ dom.CHANNELS = ->
   mentioned_in_options = [' '].concat(songs.slice())
 
   @local.mentioned_in ?= ' '
+  @local.included_in ?= ' '
 
   DIV null,
 
@@ -183,11 +184,31 @@ dom.CHANNELS = ->
             style: {}
             n
 
+    DIV null, 
+      SPAN null,
+        'included in: '
+
+      SELECT 
+        style: 
+          fontSize: 18
+        value: @local.included_in
+        onChange: (e) => 
+          @local.included_in = e.target.value
+          save @local 
+
+        for n,idx in mentioned_in_options
+          OPTION 
+            value: n
+            style: {}
+            n
+
+
     for channel_info in all
 
       if @local.filters[ channel_info.auto or ''  ]
 
-        if @local.mentioned_in == ' ' or @local.mentioned_in in channel_info.mentioned_in
+        if (@local.mentioned_in == ' ' or @local.mentioned_in in channel_info.mentioned_in) and 
+           (@local.included_in == ' ' or @local.included_in in channel_info.included_in)
           CHANNEL
             key: channel_info.channelId
             channel_info: channel_info
@@ -314,7 +335,7 @@ dom.SONGS = ->
 dom.SONG = -> 
   song = @props.song
 
-  tasks = ['inventory', 'alignment', 'asides', 'reactors', 'backchannels']
+  tasks = ['inventory', 'alignment', 'asides', 'reactors', 'backchannels', 'composition']
 
   loc = retrieve('location')
 
@@ -366,13 +387,28 @@ dom.SONG = ->
         backgroundColor: 'white'
         padding: '24px 18px'
 
-      if task != 'inventory'
+      if task == 'composition'
+        COMPOSITION
+          song: @props.song
+      else if task == 'inventory'
+        INVENTORY
+          song: @props.song
+      else
         ALIGNMENT
           song: @props.song   
           task: task   
-      else
-        INVENTORY
-          song: @props.song
+
+dom.COMPOSITION = ->
+  song = @props.song
+
+
+  DIV null,
+
+    VIDEO
+      src: "/media/#{song}/#{song} (composition)21.mp4"
+      controls: true
+      playsinline: true
+      width: 600
 
 
 dom.INVENTORY = ->
@@ -502,7 +538,7 @@ dom.INVENTORY = ->
         listStyle: 'none'
 
       for reaction in reactions
-        if @local.channel_recommendation_filters[ channels[reaction.channelId].auto or '' ] && @local.included_filters[ reaction.download or false ]
+        if @local.channel_recommendation_filters[ channels[reaction.channelId]?.auto or '' ] && @local.included_filters[ reaction.download or false ]
 
           MANIFEST_ITEM
             song: song
@@ -528,7 +564,7 @@ dom.MANIFEST_ITEM = ->
   channels = retrieve('/channels').channels
   my_channel = channels[reaction.channelId]
 
-  channel_warning = my_channel.auto == 'exclude'
+  channel_warning = my_channel?.auto == 'exclude'
 
   LI 
     'data-receive-viewport-visibility-updates': 1
@@ -646,11 +682,26 @@ dom.ALIGNMENT = ->
       downloaded_reactions.push o
 
 
+  downloaded_reactions.sort( (a,b) -> if a.reactor < b.reactor then -1 else 1     )
+
+
   # downloaded_reactions = [downloaded_reactions[0]]
 
   task = @props.task
 
-  @registered_synchronized_video ?= {}
+  @registered_media ?= {}
+
+
+  if @force_selection
+    select_all = true
+    @force_selection = false
+  if @force_deselection
+    deselect_all = true
+    @force_deselection = false
+
+
+  @local.page ?= 0
+  @local.per_page = 25
 
   DIV null,
 
@@ -664,32 +715,44 @@ dom.ALIGNMENT = ->
         zIndex: 9
         display: 'flex'
 
-      if task == 'alignment'
-
-        BUTTON 
-          onClick: => 
-            @local.play_all = !@local.play_all
-            root = @getDOMNode()
-            all_vids = Array.from(root.getElementsByTagName('video'))
-
-            song_playing = false
-            for v in all_vids
-              if v.dataset.isSelected == 'true'
-                if @local.play_all
-                  v.play()
-                  if song_playing
-                    v.mute = true
-                  if v.dataset.isSong == 'true'
-                    song_playing = true
-                else
-                  v.pause()
-                  v.muted = false
-          if @local.play_all
-            'Pause all'
-          else
-            'Play selected'
+      # if task == 'alignment'
 
       BUTTON 
+        key: "play_all #{@local.play_all}"
+        onClick: => 
+          @local.play_all = !@local.play_all
+          song_playing = false
+
+          selected = @getDOMNode().querySelector('[data-is-selected=true]')
+
+          for k,v of @registered_media
+            is_song = v.is_song
+            mute = is_song && song_playing
+            v.play(@local.play_all, mute, !selected)
+            song_playing ||= is_song
+
+        if @local.play_all
+          'Pause all'
+        else
+          'Play selected'
+
+      BUTTON 
+        key: "select_all #{@local.all_selected}"
+        onClick: => 
+          @local.all_selected = !@local.all_selected
+          if @local.all_selected
+            @force_selection = true
+          else
+            @force_deselection = true
+          save @local
+
+        if !@local.all_selected
+          'Select all'
+        else
+          'Unselect all'
+
+      BUTTON 
+        key: 'hide_unselected'
         onClick: => 
           @local.hide_unselected = !@local.hide_unselected
           save @local
@@ -703,20 +766,51 @@ dom.ALIGNMENT = ->
       if task == 'asides'
         ASIDE_MAKER()
 
+      if task == 'alignment'
+        BUTTON 
+          key: 'show reactions'
+          onClick: => 
+            @local.show_reaction = !@local.show_reaction
+            save @local
+          
+          if @local.show_reaction
+            'Hide reactions'
+          else
+            'Show reactions'
+
     
     UL 
       style:
         listStyle: 'none'
+        paddingLeft: 24
 
-      for reaction in downloaded_reactions
+      for reaction, i in downloaded_reactions
         metadata = retrieve("/reaction_metadata/#{song}/#{reaction.id}")
-        if metadata.alignment
+        if metadata.alignment and i >= @local.per_page * @local.page and i <= @local.per_page * (@local.page + 1)
           REACTION_ALIGNMENT
             song: song
             reaction: reaction
             task: task
-            synchronization_registry: @registered_synchronized_video
+            registered_media: @registered_media
             hide_unselected: @local.hide_unselected
+            show_reaction: @local.show_reaction
+            force_selection: select_all
+            force_deselection: deselect_all
+
+    if @local.page > 0
+      BUTTON 
+        onClick: => 
+          @local.page -= 1
+          if @local.page < 0
+            @local.page = 0
+          save @local
+        'previous'
+
+    BUTTON
+      onClick: =>
+        @local.page += 1
+        save @local
+      'next page'
 
 
 
@@ -742,12 +836,22 @@ dom.REACTION_ALIGNMENT = ->
 
   isolated_backchannel = [meta_dir, "#{reaction_file_prefix}-isolated_backchannel.wav" ].join('/')
 
-  if task == 'alignment' || task == 'backchannels'
-    vids = [song_video, aligned_video]
+  if @props.force_selection
+    @local.selected = true
+  else if @props.force_deselection
+    @local.selected = false
+
+  if task == 'alignment'
+    if @props.show_reaction
+      vids = [song_video, aligned_video, reaction_video]      
+    else
+      vids = [song_video, aligned_video]
+  else if task == 'backchannels'
+    vids = [isolated_backchannel]    
   else if task == 'asides'
     vids = [song_video, reaction_video]
   else if task == 'reactors'
-    vids = [reaction_video]
+    vids = [aligned_video]
     for v in metadata.reactors or [] 
       vids.push [meta_dir, v ].join('/')
   else
@@ -755,8 +859,12 @@ dom.REACTION_ALIGNMENT = ->
 
 
   retrieve("/action/#{reaction.id}") # subscribe to actions on this reaction
+
+  if hide_unselected and !@local.selected
+    return LI null
+
   LI 
-    key: "#{@local.key} #{task}"
+    key: "#{reaction.id} #{@local.key} #{task}"
     style: 
       backgroundColor: if @local.selected then '#dadada' else 'transparent'
       padding: '4px 12px'
@@ -766,42 +874,99 @@ dom.REACTION_ALIGNMENT = ->
 
     DIV 
       style: 
-        display: 'inline-block'
-        width: 130
+        display: 'flex'
+        width: 250
         overflow: 'hidden'
-        height: 200
+        # height: 200
+
+      BUTTON 
+        title: 'Sync media for this reaction'
+        style:
+          backgroundColor: 'transparent'
+          border: 'none'
+          outline: 'none'
+          cursor: 'pointer'
+          opacity: if @local.disable_sync then .5 else 1
+
+        onClick: => 
+          @local.disable_sync = !@local.disable_sync
+          save @local
+
+        I 
+          className: 'glyphicon glyphicon-link'
+
+
+      if task in ['alignment', 'reactors', 'backchannels', 'asides']
+        BUTTON
+          style:
+            cursor: 'pointer'
+            border: 'none'
+            backgroundColor: 'transparent'
+            outline: 'none'
+            margin: '0 4px'
+          onClick: =>
+            if task == 'alignment'
+              if confirm('Reset will delete all processed metadata for this reaction. You sure?')
+                action = 
+                  key: "/action/#{reaction.id}"
+                  action: 'delete'
+                  scope: 'alignment'
+                  reaction_id: reaction.id
+                  song: song
+                save action
+            else if task == 'reactors'
+              if confirm('Reset will delete all cropped reactor videos. You sure?')
+                action = 
+                  key: "/action/#{reaction.id}"
+                  action: 'delete'
+                  scope: 'cropped reactors'
+                  reaction_id: reaction.id
+                  song: song
+                save action
+            else if task == 'backchannels'
+              if confirm('Reset will delete isolated backchannel files. You sure?')
+                action = 
+                  key: "/action/#{reaction.id}"
+                  action: 'delete'
+                  scope: 'isolated backchannel'
+                  reaction_id: reaction.id
+                  song: song
+                save action
+            else if task == 'asides'
+              if confirm('Reset will delete all asides files for this reaction. You sure?')
+                action = 
+                  key: "/action/#{reaction.id}"
+                  action: 'delete'
+                  scope: 'asides'
+                  reaction_id: reaction.id
+                  song: song
+                save action
+
+          I
+            className: 'glyphicon glyphicon-refresh'
+
+
 
       BUTTON
         onClick: =>
           @local.selected = !@local.selected
           save @local
+
+          navigator.clipboard.writeText(reaction.reactor)
+
         style: 
           border: 'none'
           backgroundColor: 'transparent'
           outline: 'none'
           cursor: 'pointer'
           display: 'block'
-          padding: "40px 10px"
+          padding: "8px 10px"
+          textAlign: 'left'
 
         reaction.reactor
 
 
-      BUTTON 
-        style:
-          padding: "12px 18px"
-          backgroundColor: 'transparent'
-          border: '1px solid #ddd'
-          outline: 'none'
-          cursor: 'pointer'
 
-        onClick: => 
-          @local.disable_sync = !@local.disable_sync
-          save @local
-
-        if @local.disable_sync
-          'Not syncing'
-        else
-          'Syncing'
 
 
 
@@ -811,20 +976,46 @@ dom.REACTION_ALIGNMENT = ->
 
       for video, idx in vids
         DIV
-          key: "#{idx} #{reaction_video == video} #{song_video == video}"
+          key: "#{idx} #{reaction_video == video} #{song_video == video} #{aligned_video == video}"
           style: 
             marginRight: 12
 
-          SYNCHRONIZED_VIDEO
-            keep_synced: !@local.disable_sync
-            selected: @local.selected
-            playback_key: "#{song}/playback"
-            video: video
-            alignment_data: metadata.alignment.best_path
-            is_reaction: reaction_video == video
-            is_song: song_video == video
-            synchronization_registry: @props.synchronization_registry
-            soundfile: if aligned_video == video then isolated_backchannel
+
+          if task == 'backchannels'
+            SYNCHRONIZED_AUDIO
+              keep_synced: !@local.disable_sync
+              selected: @local.selected
+              audio: isolated_backchannel
+              alignment_data: metadata.alignment.best_path
+              is_reaction: false
+              is_song: false
+              registered_media: @props.registered_media   
+              task: task  
+              song: song   
+              reaction_file_prefix: reaction_file_prefix       
+          else
+            SYNCHRONIZED_VIDEO
+              keep_synced: !@local.disable_sync
+              selected: @local.selected
+              video: video
+              alignment_data: metadata.alignment.best_path
+              is_reaction: reaction_video == video
+              is_song: song_video == video
+              registered_media: @props.registered_media
+              soundfile: if aligned_video == video then isolated_backchannel
+              task: task
+              song: song
+              reaction_file_prefix: reaction_file_prefix
+              onVideoClicked: (e) => 
+                if task == 'reactors'
+                  x = event.offsetX
+                  y = event.offsetY
+                  w = e.target.clientWidth
+                  h = e.target.clientHeight
+
+                  @local.clicked_at = [x / w, y / h]
+                  save @local
+
 
     if task == 'alignment'
       A
@@ -838,76 +1029,106 @@ dom.REACTION_ALIGNMENT = ->
             height: 240
           src: alignment_painting
 
-    if task == 'alignment'
-      BUTTON
-        style:
-          cursor: 'pointer'
-        onClick: =>
-          if confirm('Reset will delete all processed metadata for this reaction. You sure?')
-            action = 
-              key: "/action/#{reaction.id}"
-              action: 'delete'
-              scope: 'alignment'
-              reaction_id: reaction.id
-              song: song
-            save action
-        'reset'
 
 
-    else if task == 'reactors'
-      BUTTON
-        style:
-          cursor: 'pointer'
-        onClick: =>
-          if confirm('Reset will delete all cropped reactor videos. You sure?')
-            action = 
-              key: "/action/#{reaction.id}"
-              action: 'delete'
-              scope: 'cropped reactors'
-              reaction_id: reaction.id
-              song: song
-            save action
-        'reset'
+    if task == 'reactors' and (metadata.reactors or []).length > 0
+      song_config = retrieve("/song_config/#{@props.song}")
+      config = song_config.config
 
-    else if task == 'backchannels'
-      BUTTON
-        style:
-          cursor: 'pointer'
-        onClick: =>
-          if confirm('Reset will delete isolated backchannel files. You sure?')
-            action = 
-              key: "/action/#{reaction.id}"
-              action: 'delete'
-              scope: 'isolated backchannel'
-              reaction_id: reaction.id
-              song: song
-            save action
-        'reset'
+      fname = metadata.reactors[0]
+      parts = fname.split('-')
+      vert = parts[parts.length - 1]
+      hori = parts[parts.length - 2]
 
-    else if task == 'asides'
-      BUTTON
+      override = config?.face_orientation?[reaction_file_prefix]
+
+      sel_hori = override?[0] or hori
+      sel_vert = override?[1] or vert
+
+      num_reactors = config?.multiple_reactors?[reaction_file_prefix] or metadata.reactors.length
+
+      DIV 
         style:
-          cursor: 'pointer'
-        onClick: =>
-          if confirm('Reset will delete all asides files for this reaction. You sure?')
-            action = 
-              key: "/action/#{reaction.id}"
-              action: 'delete'
-              scope: 'asides'
-              reaction_id: reaction.id
-              song: song
-            save action
-        'reset'
+          fontSize: 16
+          display: 'flex'
+          flexDirection: 'column'
+
+        DIV
+          style: 
+            display: 'flex'
+          DIV null,
+
+            SELECT 
+              style: 
+                fontSize: 18
+              value: sel_hori
+              onChange: (e) => 
+                config.face_orientation ?= {}
+                config.face_orientation[reaction_file_prefix] = [e.target.value, sel_vert]
+                save song_config
+
+              for val in ['left', 'right', 'center']
+                OPTION 
+                  value: val
+                  style: {}
+                  val
+
+          DIV null,
+            SELECT  
+              style: 
+                fontSize: 18
+              value: sel_vert
+              onChange: (e) => 
+                config.face_orientation ?= {}
+                config.face_orientation[reaction_file_prefix] = [sel_hori, e.target.value]
+                save song_config
+
+              for val in ['up', 'down', 'middle']
+                OPTION 
+                  value: val
+                  style: {}
+                  val
+
+
+        if @local.clicked_at
+          DIV null,
+            SPAN null,
+              "#{Math.round(@local.clicked_at[0] * 100)}% / #{Math.round(@local.clicked_at[1] * 100)}%"
+            BUTTON 
+              onClick: => 
+                config.fake_reactor_position ?= {}
+                config.fake_reactor_position[reaction_file_prefix] ?= []
+                config.fake_reactor_position[reaction_file_prefix].push @local.clicked_at
+                save song_config
+
+              'Exclude as false positive reactor'
+
+        SELECT
+          style: 
+            fontSize: 18
+          value: num_reactors
+          onChange: (e) =>
+            config.multiple_reactors ?= {}
+            config.multiple_reactors[reaction_file_prefix] = parseInt(e.target.value)
+            save song_config
+
+          for val in ['1','2','3','4','5']
+            OPTION 
+              value: val
+              style: {}
+              val
+
+
+
+
 
 dom.SYNCHRONIZED_VIDEO = ->
 
   video = @props.video
   alignment_data = @props.alignment_data
   is_reaction = @props.is_reaction
-  playback_state = retrieve @props.playback_key
-  if !playback_state.base_time?
-    playback_state.base_time = 0
-    save playback_state
+
+
 
   DIV null,
 
@@ -916,7 +1137,7 @@ dom.SYNCHRONIZED_VIDEO = ->
       height: 240
       controls: true
       ref: 'video'
-      'data-video': video
+      'data-media': video
       'data-receive-viewport-visibility-updates': 2
       "data-component": @local.key
       "data-is-song": @props.is_song
@@ -932,6 +1153,10 @@ dom.SYNCHRONIZED_VIDEO = ->
         src: video + '.webm'
         type: "video/webm"
 
+
+      onClick: (e) =>
+        @props.onVideoClicked?(e)
+
     if is_reaction
       BEST_PATH_BAR
         alignment_data: alignment_data
@@ -942,13 +1167,14 @@ dom.SYNCHRONIZED_VIDEO = ->
           height: 10
           width: '100%'
 
-    if !is_reaction and !@props.is_song
+    if false and !is_reaction and !@props.is_song
       DIV
         ref: 'wavesurfer'
         style:
           height: 18
           width: 'calc(100% - 34px)'
           margin: '0 17px'
+
 
 
     TIME_DISPLAY
@@ -1023,14 +1249,14 @@ dom.BEST_PATH_BAR = ->
           border: 'none'
           padding: 0
         onClick: do(segment) => (ev) =>
-          video = document.querySelector("[data-video='#{@props.video}']")
+          video = document.querySelector("[data-media=\"#{@props.video}\"]")
           video.currentTime = segment.start
 
 
 
 dom.BEST_PATH_BAR.refresh = ->
   if !@initialized
-    video = document.querySelector("[data-video='#{@props.video}']")
+    video = document.querySelector("[data-media=\"#{@props.video}\"]")
     if video
       @initialized = true
       if video.duration and !isNaN(video.duration)
@@ -1049,11 +1275,15 @@ dom.TIME_DISPLAY = ->
     style:
       color: 'black'
       cursor: 'pointer'
+      display: 'flex'
+      alignItems: 'center'
 
     onClick: (ev) =>
       active = retrieve('active_number')
       active.number = time
       save active
+
+      navigator.clipboard.writeText(active.number)
 
     "#{time}"
 
@@ -1137,42 +1367,47 @@ get_reaction_time = (base_time, alignment_data) ->
 
 
 dom.SYNCHRONIZED_VIDEO.down = ->
-  delete @props.synchronization_registry[@local.key]
+  delete @props.registered_media[@local.key]
 
 dom.SYNCHRONIZED_VIDEO.refresh = ->
 
-  # console.log("[#{@local.key}] SYNCHRONIZING VIDEO REFRESH")
-  playback_state = retrieve @props.playback_key
   vid = @refs.video.getDOMNode()
   is_reaction = @props.is_reaction
   alignment_data = @props.alignment_data
-
-
-  synchronize_vid = (base_time) =>
-    if !@props.keep_synced
-      return
-
-    if is_reaction
-      currentTime = get_base_time(vid.currentTime, alignment_data)
-      # console.log('reaction time', playback_state.base_time, vid.currentTime, currentTime )
-
-      if Math.abs(base_time - currentTime) > .00001
-        # console.log("[#{@local.key}] REACTING TO SEEK CONVERTING", playback_state.base_time)
-        translated_time = get_reaction_time(base_time, alignment_data)
-
-        @ignore_seek = translated_time
-        vid.currentTime = translated_time
-    else
-      if base_time != vid.currentTime
-        @ignore_seek = base_time
-        vid.currentTime = base_time
 
 
 
   if !@initialized
     @initialized = true
 
-    @props.synchronization_registry[@local.key] = synchronize_vid
+
+    @props.registered_media[@local.key] = 
+      is_song: @props.is_song
+      play: (play, mute) =>
+
+        if !play
+          vid.pause()
+          vid.muted = false
+        else if @props.selected
+          vid.play()
+          vid.muted = mute 
+
+      synchronize: (base_time) =>
+        if !@props.keep_synced
+          return
+
+        if is_reaction
+          currentTime = get_base_time(vid.currentTime, alignment_data)
+
+          if Math.abs(base_time - currentTime) > .00001
+            translated_time = get_reaction_time(base_time, alignment_data)
+
+            @ignore_seek = translated_time
+            vid.currentTime = translated_time
+        else
+          if base_time != vid.currentTime
+            @ignore_seek = base_time
+            vid.currentTime = base_time
 
     if is_reaction
       vid.currentTime = get_reaction_time(0, alignment_data) # initialize to beginning of base video in the reaction
@@ -1186,11 +1421,11 @@ dom.SYNCHRONIZED_VIDEO.refresh = ->
       if is_reaction
         ts = get_base_time(ts, alignment_data)
 
-      syncers = Object.keys(@props.synchronization_registry)
+      syncers = Object.keys(@props.registered_media)
       syncers.sort( (a,b) -> (if bus.cache[b]?.in_viewport then 1 else 0) - (if bus.cache[a]?.in_viewport then 1 else 0)  )
       for k in syncers 
         if k != @local.key
-          @props.synchronization_registry[k](ts)
+          @props.registered_media[k].synchronize(ts)
 
     vid.addEventListener 'seeked', handle_seek
 
@@ -1225,6 +1460,130 @@ dom.SYNCHRONIZED_VIDEO.refresh = ->
     wavesurfer.on 'dblclick', =>
       if wavesurfer.isPlaying()
         wavesurfer.pause()
+
+
+
+
+
+
+
+
+
+dom.SYNCHRONIZED_AUDIO = ->
+
+  audio = @props.audio
+  alignment_data = @props.alignment_data
+
+
+  console.log(audio)
+
+  DIV   
+    style: 
+      display: 'flex'
+      style:
+        'align-items': 'center'
+
+    DIV
+      'data-media': audio
+      'data-receive-viewport-visibility-updates': 2
+      "data-component": @local.key
+      "data-is-song": @props.is_song
+      "data-is-reaction": @props.is_reaction
+      "data-is-selected": @props.selected
+      "data-keep-synced": @props.keep_synced
+
+      ref: 'wavesurfer'
+      style:
+        height: 32
+        width: 600
+        # width: 'calc(100% - 34px)'
+        margin: '0 17px'
+
+
+    TIME_DISPLAY
+      time_state: "time-#{@local.key}"
+
+
+dom.SYNCHRONIZED_AUDIO.down = ->
+  delete @props.registered_media[@local.key]
+
+dom.SYNCHRONIZED_AUDIO.refresh = ->
+  if !@refs.wavesurfer?
+    return
+
+  if !@initialized
+    synchronize_wavesurfer = (base_time) =>
+
+      if !@props.keep_synced
+        return
+
+      if base_time != wavesurfer.getCurrentTime
+        @ignore_seek = base_time
+        wavesurfer.setTime base_time
+
+    wavesurfer = WaveSurfer.create
+      container: @refs.wavesurfer.getDOMNode()
+      waveColor: 'rgb(200, 0, 200)'
+      progressColor: 'rgb(100, 0, 100)'
+      url: encodeURI(@props.audio)
+      height: 'auto'
+      normalize: true
+
+
+    # wavesurfer.on 'click', =>
+    #   if !wavesurfer.isPlaying()
+    #     wavesurfer.play()
+
+    # wavesurfer.on 'dblclick', =>
+    #   if wavesurfer.isPlaying()
+    #     wavesurfer.pause()
+
+
+    @initialized = true
+
+    @props.registered_media[@local.key] = 
+      is_song: @props.is_song
+      play: (play, mute, force) =>
+        if play && (force || @props.selected)
+          wavesurfer.play()
+          wavesurfer.setMuted(mute)
+        else if !play
+          wavesurfer.pause()
+          wavesurfer.setMuted(false)
+      synchronize: synchronize_wavesurfer
+
+    handle_seek = (ts) =>
+
+      if Math.abs(@ignore_seek - ts) < .00001
+        return
+
+      syncers = Object.keys(@props.registered_media)
+      syncers.sort( (a,b) -> (if bus.cache[b]?.in_viewport then 1 else 0) - (if bus.cache[a]?.in_viewport then 1 else 0)  )
+      for k in syncers 
+        if k != @local.key
+          @props.registered_media[k].synchronize(ts)
+
+    wavesurfer.on 'seeking', handle_seek
+
+
+    handle_time = (currentTime) =>
+      time_state = retrieve("time-#{@local.key}")
+      time_state.time = currentTime
+      save time_state
+
+    wavesurfer.on 'timeupdate', handle_time
+
+    if @props.is_song
+      wavesurfer.setVolume = .2
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1294,4 +1653,35 @@ dom.ASIDE_MAKER = ->
         marginLeft: 10
 
       "[ #{@refs.start?.getDOMNode().value or ""}, #{@refs.end?.getDOMNode().value or ""}, #{@refs.insert?.getDOMNode().value or ""}#{if @local.repeat then ", #{@local.repeat}" else ''}]"
+
+
+
+
+# JSONEditorTextArea          
+#   id: 'json'
+#   key: md5(subdomain.customizations) # update text area if subdomain.customizations changes elsewhere
+#   json: subdomain.customizations
+#   onChange: (val) => 
+#     @local.stringified_current_value = val
+
+
+
+dom.JSONEditorTextArea = ->
+
+    DIV 
+      ref: 'json_editor'
+      style: 
+        height: '100vh'
+
+dom.JSONEditorTextArea.up = ->
+  editor = new JSONEditor ReactDOM.findDOMNode(@), 
+    mode: 'code'
+    modes: ['tree', 'code']
+    onChange: =>
+      try 
+        @props.onChange? editor.getText()
+      catch e 
+        console.log 'Got error', e
+
+  editor.set @props.json
 

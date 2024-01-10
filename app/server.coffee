@@ -3,7 +3,7 @@ path = require('path')
 fs = require('fs')
 
 songsPath = path.join( __dirname, '..', 'Media')
-
+libraryPath = path.join( __dirname, '..', 'library')
 bus = require('statebus').serve
   port: port,
   client: (client) ->
@@ -34,6 +34,36 @@ bus = require('statebus').serve
         key: key,
         manifest: manifest_json
       }      
+
+    client('song_config/*').to_fetch = (key) ->
+      console.log()
+      song = key.split('/')
+      song = song[song.length - 1]
+
+      config_path = path.join( libraryPath, "#{song}.json" )
+      config_json = JSON.parse(fs.readFileSync(config_path))
+
+      return {
+        key: key,
+        config: config_json
+      }      
+
+
+    client('song_config/*').to_save = (obj) ->
+      if obj.config        
+
+        song = obj.key.split('/')
+        song = song[song.length - 1]
+
+        config_path = path.join( libraryPath, "#{song}.json" )
+
+        fs.writeFileSync(config_path, JSON.stringify(obj.config, null, 2))
+        bus.dirty(obj.key)     
+
+      else
+        console.error("object incorrect")
+
+
 
     client('reaction/*').to_save = (obj) ->
       vid = obj.reaction.id
@@ -171,40 +201,39 @@ bus = require('statebus').serve
       bus.dirty "channels"
 
 
-
-
-
 deleteMatchingFilesAndDirsSync = (name, dir) ->
-  files = fs.readdirSync(dir, { withFileTypes: true })
-
+  files = fs.readdirSync dir, withFileTypes: true
   for file in files
-      fullPath = path.join(dir, file)
-
-      if fs.lstatSync( fullPath   ).isDirectory()
-          if file == name
-              fs.rmdirSync(fullPath, { recursive: true })
-              console.log("Deleted directory: #{fullPath}")
-          else
-              deleteMatchingFilesAndDirsSync(name, fullPath)
+    continue if !file.name?    
+    fullPath = path.join dir, file.name
+    if fs.lstatSync(fullPath).isDirectory()
+      if file.name == name
+        fs.rmdirSync fullPath, recursive: true, force: true
+        console.log "Deleted directory: #{fullPath}"
       else
-          if (path.basename(file, path.extname(file)) == name)
-              fs.unlinkSync(fullPath);
-              console.log("Deleted file: #{fullPath}") 
+        deleteMatchingFilesAndDirsSync name, fullPath
+    else
+      if path.basename(file.name, path.extname(file.name)) == name
+        fs.unlinkSync fullPath
+        console.log "Deleted file: #{fullPath}"
 
 deleteFilesAndDirsStartingWithSync = (beginning, dir) ->
-  files = fs.readdirSync(dir, { withFileTypes: true })
+  console.log("DELETING #{beginning} from #{dir}, recursively")
+  files = fs.readdirSync dir, withFileTypes: true
   for file in files
-      fullPath = path.join(dir, file)
-      if fs.lstatSync( fullPath   ).isDirectory()
-          if file.startsWith(beginning)
-              fs.rmdirSync(fullPath, { recursive: true })
-              console.log("Deleted directory: #{fullPath}")
-          else
-              deleteMatchingFilesAndDirsSync(beginning, fullPath)
+    continue if !file.name?
+
+    fullPath = path.join dir, file.name
+    if fs.lstatSync(fullPath).isDirectory()
+      if file.name.startsWith beginning
+        fs.rmdirSync fullPath, recursive: true, force: true
+        console.log "Deleted directory: #{fullPath}"
       else
-          if path.basename(file, path.extname(file)).startsWith(beginning)
-              fs.unlinkSync(fullPath)
-              console.log("Deleted file: #{fullPath}") 
+        deleteMatchingFilesAndDirsSync beginning, fullPath
+    else
+      if path.basename(file.name, path.extname(file.name)).startsWith beginning
+        fs.unlinkSync fullPath
+        console.log "Deleted file: #{fullPath}"
 
 
 
@@ -231,6 +260,8 @@ bus.http.get '/*', (r,res) =>
       window.statebus_server="#{server}";
     </script>
 
+    <script src="#{prefix}/vendor/jsoneditor.min.js"></script>
+
     <script src="#{prefix}/vendor/wavesurfer.js"></script>
     <script src="#{prefix}/vendor/wavesurfer.regions.min.js"></script>
 
@@ -244,6 +275,9 @@ bus.http.get '/*', (r,res) =>
     <script history-aware-links root="/" src="#{prefix}/client/earl.coffee"></script>
     <script src="#{prefix}/client/viewport_visibility_sensor.coffee"></script>
     <script src="#{prefix}/client/client.coffee"></script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.3.7/dist/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+
 
     <style>
       .fa {

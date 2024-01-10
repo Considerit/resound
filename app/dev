@@ -1,0 +1,4 @@
+#!/bin/sh
+
+nvm use
+node_modules/nodemon/bin/nodemon.js server.coffee
