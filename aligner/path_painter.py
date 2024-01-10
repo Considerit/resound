@@ -67,7 +67,7 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, attempts=0):
 
     print("PRUNE UNREACHABLE")
 
-    __ = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
+    consolidated_segments, __ = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
 
     # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
@@ -98,22 +98,22 @@ def paint_paths(reaction, peak_tolerance=.4, allowed_spacing=None, attempts=0):
 
     # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
-    print("THIN CLUSTERS")
+    # print("THIN CLUSTERS")
 
-    prune_low_quality_segments(reaction, consolidated_segments)
+    # consolidated_segments = prune_low_quality_segments(reaction, consolidated_segments)
 
     # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     # if attempts % 3 == 0:
-    print("PRUNE NEIGHBORS")
+    # print("PRUNE NEIGHBORS")
 
-    prune_neighbors(reaction, consolidated_segments, allowed_spacing)
+    # prune_neighbors(reaction, consolidated_segments, allowed_spacing)
 
     # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
 
     print("PRUNE UNREACHABLE2")
 
-    joinable_segment_map = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
+    consolidated_segments, joinable_segment_map = prune_unreachable_segments(reaction, consolidated_segments, allowed_spacing, prune_links = False)
 
     splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=False, chunk_size=chunk_size)
 
@@ -1173,8 +1173,12 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
     song_length = len(conf.get('song_audio_data'))
     partial_paths = []
 
+    start_time = time.perf_counter()
+    time_of_last_best_score = start_time
 
     def complete_path(path):
+        nonlocal time_of_last_best_score
+
         completed_path = copy.deepcopy(path)
 
         fill_len = song_length - path[-1][3]
@@ -1193,6 +1197,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
 
             print("\nNew best score!")
             print_path(path, reaction)
+            time_of_last_best_score = time.perf_counter()
 
         if score > .9 * best_score_cache['best_overall_score']:
             paths.append(completed_path)
@@ -1216,13 +1221,22 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
                 complete_path(start_path)
 
     i = 0 
-    start_time = time.perf_counter()
+
     was_prune_eligible = False 
     backlog = []
     while len(partial_paths) > 0:
 
         i += 1
         prune_eligible = time.perf_counter() - start_time > 3 * 60 #True #len(partial_paths) > 100 #or len(paths) > 10000
+
+        if time.perf_counter() - time_of_last_best_score > 30 * 60:
+            return paths
+        
+        if time.perf_counter() - time_of_last_best_score < 15 * 60:
+            threshold_base = .7
+        else:
+            threshold_base = .85
+
 
         if i < 50000:
             sort_every = 2500
@@ -1250,7 +1264,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
                         partial_path = []
                         for segment in partial[0]:
                             partial_path.append(segment)
-                            should_prune, score = should_prune_path(reaction, partial_path, song_length)
+                            should_prune, score = should_prune_path(reaction, partial_path, song_length, threshold_base=threshold_base)
                             if should_prune:
                                 partial_paths.pop(iii)
                                 break
@@ -1276,12 +1290,12 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
 
         # print(len(partial_paths), end='\r')
 
-        should_prune, score = should_prune_path(reaction, partial_path[0], song_length, score)
+        should_prune, score = should_prune_path(reaction, partial_path[0], song_length, score, threshold_base=threshold_base)
         
         if should_prune: # and prune_eligible:
             continue
 
-        print(i, len(partial_paths) + len(backlog), len(paths), len(partial_path[0]), end='\r')
+        print(f"{(time.perf_counter() - time_of_last_best_score) / 60:.1f}", len(partial_paths) + len(backlog), len(paths), len(partial_path[0]), end='\r')
 
         if partial_path[1]['key'] in joinable_segment_map:
             next_partials = branch_from( reaction, partial_path, joinable_segment_map[partial_path[1]['key']], allowed_spacing  )
@@ -1292,7 +1306,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
                     complete_path(path)
 
 
-                should_prune, score = should_prune_path(reaction, path, song_length)
+                should_prune, score = should_prune_path(reaction, path, song_length, threshold_base=threshold_base)
                 if not should_prune and prune_eligible and is_path_quality_poor(reaction, path):
                     prune_cache['poor_path'] += 1
                     should_prune = True
@@ -1325,13 +1339,13 @@ def initialize_paint_caches():
         'segment_quality': 0,
     })
 
-def should_prune_path(reaction, path, song_length, score = None):
+def should_prune_path(reaction, path, song_length, score = None, threshold_base=0.7):
 
     reaction_end = path[-1][1]
 
     score = path_score_by_mfcc_cosine_similarity(path, reaction) #path_score(path, reaction, end=reaction_end)
 
-    prune_for_location = should_prune_for_location(reaction, path, song_length, score)
+    prune_for_location = should_prune_for_location(reaction, path, song_length, score, threshold_base=threshold_base)
 
     if prune_for_location:
         prune_cache['location'] += 1
@@ -1339,28 +1353,28 @@ def should_prune_path(reaction, path, song_length, score = None):
 
     return False, score
 
-    if reaction_end / sr > 20 and best_score_cache['best_overall_path'] is not None:
+    # if reaction_end / sr > 20 and best_score_cache['best_overall_path'] is not None:
         
-        __, truncated_path = truncate_path(best_score_cache['best_overall_path'], end=reaction_end)
-        # print(best_score_cache['best_overall_path'], truncated_path, reaction_end)
-        best_score_here = path_score_by_mfcc_cosine_similarity(truncated_path, reaction)  # path_score(best_score_cache['best_overall_path'], reaction, end=reaction_end)
+    #     __, truncated_path = truncate_path(best_score_cache['best_overall_path'], end=reaction_end)
+    #     # print(best_score_cache['best_overall_path'], truncated_path, reaction_end)
+    #     best_score_here = path_score_by_mfcc_cosine_similarity(truncated_path, reaction)  # path_score(best_score_cache['best_overall_path'], reaction, end=reaction_end)
 
-        prune_threshold = .7 + path[-1][3] / song_length * .2
+    #     prune_threshold = threshold_base + path[-1][3] / song_length * (1 - threshold_base)
 
-        prune = best_score_here * prune_threshold > score
+    #     prune = best_score_here * prune_threshold > score
 
-        if prune: 
-            prune_cache['best_score'] += 1
-            return True, score
+    #     if prune: 
+    #         prune_cache['best_score'] += 1
+    #         return True, score
 
-    return False, score
-
-
+    # return False, score
 
 
 
 
-def should_prune_for_location(reaction, path, song_length, score):
+
+
+def should_prune_for_location(reaction, path, song_length, score, threshold_base=.7):
     global location_cache
 
     last_segment = path[-1]
@@ -1375,7 +1389,7 @@ def should_prune_for_location(reaction, path, song_length, score):
                 has_bad_segment = True
                 break
 
-    location_prune_threshold = .7 #.7 + .25 * last_segment[3] / song_length
+    location_prune_threshold = threshold_base #.7 + .25 * last_segment[3] / song_length
     if has_bad_segment: 
         location_prune_threshold = .99
 
@@ -1516,7 +1530,7 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links 
 
     print(f"Pruned unreachable segments: {len(segments)} remaining of {starting_segment_num} to start")
 
-    return joinable_segments
+    return segments,joinable_segments
 
 
 
@@ -2058,7 +2072,9 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
         os.makedirs(cache_dir)
 
     cache_file_name = f"{reaction.get('channel')}-start_cache-{seg_cache_key}.json"
-    candidate_cache_file = os.path.join( cache_dir, cache_file_name )    
+    candidate_cache_file = os.path.join( cache_dir, cache_file_name )  
+
+    print(f"LOOKING FOR {cache_file_name} {os.path.exists(candidate_cache_file)}")  
 
     if os.path.exists(candidate_cache_file):
         candidate_cache = read_object_from_file(candidate_cache_file)
@@ -2089,7 +2105,8 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
         reaction_start = max( minimums[0] + start, candidate_lower_bound - chunk_size)
 
         upper_bound = len(reaction_audio) - len(base_audio)
-        if start not in candidate_cache:
+        if str(start) not in candidate_cache:
+            # print(f"START NOT IN CACHE {str(start) in candidate_cache} {start} {str(start)}")
             upper_bound = get_bound(alignment_bounds, start, reaction_span - (len(base_audio) - start))
 
             signals, evaluate_with = get_signals(reaction, start, reaction_start, chunk_size)
@@ -2105,7 +2122,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
                 continue
 
         else: 
-            candidates = candidate_cache[start]
+            candidates = candidate_cache[str(start)]
 
         
 
