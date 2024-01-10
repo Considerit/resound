@@ -166,7 +166,7 @@ def create_reaction_alignment_bounds(reaction, first_n_samples, seconds_per_chec
         for mbound in manual_bounds:
             ts, upper = mbound
             ts = int(ts*sr); upper = int(upper*sr)
-            bounds.append([ts, [upper - ts - grace + int(.5*sr)]])
+            bounds.append([ts, [upper + sr * 1 - ts - grace + int(.5*sr)]])
             print(f"Inserted upper bound {(upper - ts)/sr} for {ts/sr}")
 
     if reaction.get('end_reaction_search_at', False):
