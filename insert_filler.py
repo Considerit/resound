@@ -53,36 +53,33 @@ def insert_filler(video_path, insertion_point, filler_length, output_path):
 
 
 
-# note: this will not work anymore because we've moved to JSON storage of song configuration
 if __name__=="__main__":
-    from utilities import conf, make_conf
+    from utilities import conf, make_conf, get_song_directory
     from library import songs, drafts, refresh_manifest, finished
     from reactor_core import results_output_dir
-    import os 
+    import os, shutil
 
+    song = 'Ren x Chinchilla - Chalk Outlines'
+    song_directory = get_song_directory(song)
+    reaction = "HarriBest Reactions"
+    base = os.path.join(song_directory, 'reactions', reaction)
 
-    all_defs = songs + drafts + refresh_manifest + finished
-    options = {}
+    insertion = 12
+    length = 80
+    input_path = base + ".webm"
 
-    for song_def in all_defs:
-        make_conf(song_def, options, results_output_dir)
-        conf.get('load_reactions')()
-        for channel, reaction in conf.get('reactions').items():
+    output_path = f"{base}-original.mp4"
 
-            if reaction.get('insert_filler', False):
-                # conf['load_reaction'](reaction['channel'])
+    insert_filler(input_path, insertion, length, output_path)
 
-                insertion, length = reaction.get('insert_filler')
-                input_path = reaction.get('video_path')
+    os.remove(input_path)
+    os.rename(output_path, input_path.replace('.webm', '.mp4'))
 
-                base, ext = os.path.splitext(input_path)
-                output_path = f"{base}-original.mp4"
+    if os.path.exists( base + ".wav"   ):
+        os.remove( base+".wav"   )
 
-                print("OUTPUT", output_path)
-                insert_filler(input_path, insertion, length, output_path)
-
-                os.remove(input_path)
-                os.rename(output_path, input_path.replace('.webm', '.mp4'))
+    if os.path.exists( base ):
+        shutil.rmtree( base )
 
 
 
