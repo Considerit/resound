@@ -236,20 +236,10 @@ def create_manifest(song_def, artist, song_title, song_search, search, test = No
         search = [search]
 
     if manifest['main_song'] is None:
-        manifest['main_song'] = search_for_song(artist, song_title, song_search)
+        manifest['main_song'] = search_for_song(artist, song_title, song_search)        
 
-
-    if test is None: 
-        def test(title):
-            song_present = any(s.lower() in title.lower() for s in search)
-            artist_present = artist.lower() in title.lower()
-            return artist_present and song_present
-
-
-
-            
     search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
-
+    print('DONE SEARCHING REACTIONS')
     save_reactions_manifest(manifest, artist, song_title)
 
     if not song_def.get('search_channel_id', None):
@@ -430,6 +420,9 @@ def filter_and_augment_manifest(artist, song):
     manifest_file = get_manifest_path(artist, song)
     song_data = json.load(open(manifest_file))
 
+    f = os.path.join(f'library/{artist} - {song}.json')
+    song_def = json.load( open(f))
+
     song = song_data["main_song"]
     if not song.get('duration', False):
         search = f"{artist} {prepare_title(song.get('title'))}"
@@ -447,7 +440,20 @@ def filter_and_augment_manifest(artist, song):
     print("Filtering and augmenting manifest")
 
     to_delete = []
+
+    test = conf.get('search_tester', None)
+
+
+
     for idx, (vid, reaction) in enumerate(reaction_inventory.items()):
+
+
+        if reaction.get('id') not in song_def.get('include_videos', []) and not test(reaction.get('title')):
+
+            print("DELETING", reaction.get('id'), song_def.get('include_videos', []))
+            to_delete.append(reaction.get('id'))
+            continue
+
         if not reaction.get('duration', False):
 
             search = f"{prepare_title(reaction.get('title'))} \"{reaction.get('id')}\""

@@ -73,6 +73,12 @@ def make_conf(song_def, options, temp_directory):
     background_path = None
 
 
+
+  def reaction_title_tester(title):
+    song_present = any(s.lower() in title.lower() for s in search)
+    artist_present = artist.lower() in title.lower()
+    return artist_present and song_present
+
   conf.update({
     "artist": song_def['artist'],
     "song_name": song_def['song'],
@@ -92,7 +98,7 @@ def make_conf(song_def, options, temp_directory):
     'introduction': intro_path,
     'outro': outro_path,
 
-    'search_tester': search_testers.get(song, None),
+    'search_tester': search_testers.get(song, reaction_title_tester),
     'background': background_path,
     'convert_videos': song_def.get('convert_videos', []),
     'base_video_transformations': song_def.get('base_video_transformations', {}),
@@ -103,6 +109,7 @@ def make_conf(song_def, options, temp_directory):
     'base_video_proportion': song_def.get('base_video_proportion', .45),
     "base_video_placement": song_def.get('base_video_placement', 'center / bottom'),
 
+    "zoom_pans": song_def.get('zoom_pans', None),
   })
 
 
@@ -147,7 +154,9 @@ def make_conf(song_def, options, temp_directory):
       print_profiling()
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
 
-      # if i > 20:
+
+      continue
+      # if i > 2:
       #   continue
 
 
