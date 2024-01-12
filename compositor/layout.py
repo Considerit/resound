@@ -76,6 +76,7 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
 def generate_grid(width, height, min_cells, outside_bounds=None, center=None, shape="hexagon"):
 
     # min_cells += 3
+    min_cells = max(1, min_cells)
 
     # Calculate a starting size for the hexagons based on the width and height
     a = min(width / ((min_cells / 2) ** 0.5), height / ((min_cells / (2 * np.sqrt(3))) ** 0.5))
@@ -113,7 +114,9 @@ def generate_grid(width, height, min_cells, outside_bounds=None, center=None, sh
           y = center[1] + dy * j
           
           # Add the hexagon to the list if it's fully inside the width x height area
-          if x - a >= 0 and y - a >= 0 and x + a <= width and y + a <= height and distance_from_region((x,y), outside_bounds) > a - (outside_bounds[3] - outside_bounds[1]) / 10:
+          fully_inside_grid = x - a >= 0 and y - a >= 0 and x + a <= width and y + a <= height
+          not_covering_base = distance_from_region((x,y), outside_bounds) > a - (outside_bounds[3] - outside_bounds[1]) / 10
+          if fully_inside_grid and not_covering_base:
             coords.append((x, y))
 
       # Reduce the size of the hexagons and try again if we don't have enough
@@ -439,13 +442,55 @@ def distance_from_region(point, bounds):
     x, y = point
     x1, y1, x2, y2 = bounds
 
-    if x1 <= x and x <= x2 and y1 <= y and y <= y2: 
+    # Point is inside the rectangle
+    if x1 <= x <= x2 and y1 <= y <= y2:
+        return 0
+
+    # Point is to the left of the rectangle
+    elif x < x1:
+        if y < y1:  # Top left corner
+            return math.hypot(x1 - x, y1 - y)
+        elif y > y2:  # Bottom left corner
+            return math.hypot(x1 - x, y - y2)
+        else:  # Directly to the left
+            return x1 - x
+
+    # Point is to the right of the rectangle
+    elif x > x2:
+        if y < y1:  # Top right corner
+            return math.hypot(x - x2, y1 - y)
+        elif y > y2:  # Bottom right corner
+            return math.hypot(x - x2, y - y2)
+        else:  # Directly to the right
+            return x - x2
+
+    # Point is directly above or below the rectangle
+    else:
+        if y < y1:  # Directly above
+            return y1 - y
+        else:  # Directly below
+            return y - y2
+
+
+def distance_to_corner(point, bounds):
+    """
+    Calculates the Euclidean distance from a point to a rectangle.
+    Parameters:
+    - point: Tuple (x, y) for the point.
+    - bounds: Tuple (x1, y1, x2, y2) for the upper left and lower right points of the rectangle.
+    Returns: distance as a float.
+    """
+    x, y = point
+    x1, y1, x2, y2 = bounds
+
+    if x1 <= x <= x2 and y1 <= y <= y2: 
       return 0
 
     dx = min(abs(x1 - x), abs(x2 - x))
     dy = min(abs(y1 - y), abs(y2 - y))
 
     return (dx ** 2 + dy ** 2) ** 0.5
+
 
 
 def distance(point, point2):
