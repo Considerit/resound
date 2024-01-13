@@ -117,16 +117,15 @@ def search_reactions(artist, song, search, reactions, test, search_channel_id=No
 def search_recommended_channels(artist, song, search, reactions, test):    
 
     channels = get_recommended_channels()
-    if isinstance(search, str):
-        song_string = f'"{search}"'
-    else:
-        song_string = '({})'.format(' OR '.join(['"{}"'.format(s) for s in search]))
 
+    song_string = f'"{artist} {song} {search[0]}"'
+
+    print("\tSearching recommended channels")
     for idx, channel in enumerate(channels):
         if channel.get('searched_for', {}).get(song_string, False):
             continue
 
-        print(f"[{100 * idx / len(channels):.1f}%] Checking {channel.get('title')}")
+        print(f"\t\t[{100 * idx / len(channels):.1f}%] Checking {channel.get('title')}")
 
         items = YoutubeSearch(song_string, max_results=1, channel=channel).to_dict()
         
@@ -143,14 +142,14 @@ def search_recommended_channels(artist, song, search, reactions, test):
         item = items[0]
 
         if (not test or not test(item['title'])):
-            print(f"\tBad result: {item['title']} for {channel.get('title')}")
+            print(f"\t\t\tBad result: {item['title']}")
             continue
 
         if item['id'] in reactions:
             # print(f"\tduplicate title {item['title']}")
             continue
 
-        print(f"\tNew reaction found: {item['title']}")
+        print(f"\t\t\t*** New reaction found: {item['title']}")
 
         reaction = {
             'song': song,
@@ -239,7 +238,7 @@ def create_manifest(song_def, artist, song_title, song_search, search, test = No
         manifest['main_song'] = search_for_song(artist, song_title, song_search)        
 
     search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
-    print('DONE SEARCHING REACTIONS')
+
     save_reactions_manifest(manifest, artist, song_title)
 
     if not song_def.get('search_channel_id', None):

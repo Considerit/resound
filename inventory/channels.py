@@ -120,6 +120,8 @@ def get_recommended_channels(include_eligible=True):
                       if r.get('auto', None) == 'include' or \
                          (include_eligible and r.get('auto', None) == 'eligible')]
 
+    recommended.sort( key=lambda x: x.get('title') )
+
     return recommended
 
 
