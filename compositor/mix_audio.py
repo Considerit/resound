@@ -85,9 +85,9 @@ def mix_audio(base_video, output_size):
         reaction['mixed_audio'] = pan_audio_stereo(reaction['mixed_audio'], pan_position, max_pan=stereo_pan_max)
         # write_audio_to_file(reaction, reaction['mixed_audio'], 'after_panning')
 
-
-    # Apply dynamic limiting on the collected reactor audios
-    dynamic_limit_without_combining(base_audio_as_array, base_excess_limitation, sum_reaction_audio_threshold)
+    if len(conf.get('reactions').items()) > 0:
+        # Apply dynamic limiting on the collected reactor audios
+        dynamic_limit_without_combining(base_audio_as_array, base_excess_limitation, sum_reaction_audio_threshold)
 
 
     # def convert_dict_for_json(input_dict):
@@ -378,6 +378,9 @@ from matplotlib.colors import LinearSegmentedColormap
 def plot_scaling_factors(scaling_factors, hop_length=5096, show=False):
     # Determine the number of channels and the maximum length of the arrays
     n_channels = len(scaling_factors)
+    if n_channels == 0:
+        return
+
     max_length = max(len(v) for v in scaling_factors.values())
 
     channels = list(scaling_factors.keys())

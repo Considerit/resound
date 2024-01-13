@@ -109,7 +109,7 @@ def make_conf(song_def, options, temp_directory):
     'base_video_proportion': song_def.get('base_video_proportion', .45),
     "base_video_placement": song_def.get('base_video_placement', 'center / bottom'),
 
-    "zoom_pans": song_def.get('zoom_pans', None),
+    "zoom_pans": song_def.get('zoom_pans', []),
   })
 
 
@@ -155,7 +155,7 @@ def make_conf(song_def, options, temp_directory):
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
 
 
-      continue
+      # continue
       # if i > 2:
       #   continue
 

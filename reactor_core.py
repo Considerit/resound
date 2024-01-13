@@ -240,8 +240,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
             if conf.get('refresh_manifest', False) or (not compilation_exists and (conf.get('download_and_parse', False))):
                 download_and_parse_reactions(song_def, song_def['artist'], song_def['song'], song_def.get('song_search', f"{song_def.get('artist')} {song_def.get('song')}"), song_def['search'], refresh_manifest=conf.get('refresh_manifest', False))
         
-            print("Filtering and augmenting manifest", song_directory, "Outputting to", output_dir)
-            filter_and_augment_manifest(song_def['artist'], song_def['song'])
+                print("Filtering and augmenting manifest", song_directory, "Outputting to", output_dir)
+                filter_and_augment_manifest(song_def['artist'], song_def['song'])
 
         else:
             print(f"...Skipping {song_def['song']} because another process is already working on this video")
