@@ -502,6 +502,12 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
 
             position = reactor['position']
 
+            # Flip the clip horizontally if reactor was placed on the wrong side
+            horiz_gaze, vert_gaze = reaction.get('face_orientation')
+            if (horiz_gaze ==  'left' and reactor['position'][0] < output_size[0] / 2) or 
+               (horiz_gaze == 'right' and reactor['position'][0] > output_size[0] / 2):
+                clip = clip.fx(vfx.mirror_x)
+
             clip = clip.set_position(position)
 
             if clip_length < clip.duration:
