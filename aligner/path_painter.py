@@ -1343,7 +1343,9 @@ def should_prune_path(reaction, path, song_length, score = None, threshold_base=
 
     reaction_end = path[-1][1]
 
+
     score = path_score_by_mfcc_cosine_similarity(path, reaction) #path_score(path, reaction, end=reaction_end)
+
 
     prune_for_location = should_prune_for_location(reaction, path, song_length, score, threshold_base=threshold_base)
 
@@ -1376,6 +1378,14 @@ def should_prune_path(reaction, path, song_length, score = None, threshold_base=
 
 def should_prune_for_location(reaction, path, song_length, score, threshold_base=.7):
     global location_cache
+
+
+    # prune based on path length
+    path_length = len(path)
+    if path_length > 20 and path_length > 2 * len(best_score_cache['best_overall_path']):
+        print('prune by path!')
+        return True, score
+
 
     last_segment = path[-1]
     location_key = str(last_segment)
