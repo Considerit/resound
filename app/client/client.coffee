@@ -341,6 +341,8 @@ dom.SONG = ->
 
   parts = loc.path.split('/')
 
+  song_config = retrieve("/song_config/#{song}")
+
   if parts.length < 4
 
     loc.path = loc.path + "/#{tasks[0]}"
@@ -366,6 +368,7 @@ dom.SONG = ->
         backgroundColor: '#68c4f5'
         padding: '0px 0px'
 
+
       SPAN
         style: 
           padding: '0 24px'
@@ -381,11 +384,20 @@ dom.SONG = ->
           avail
 
 
+      BUTTON
+        onClick: =>
+          editor = retrieve('json_editor')
+          editor.active = !editor.active
+          if editor.active
+            editor.song = @props.song
+          save editor
+        'JSON'
 
     DIV
       style:
         backgroundColor: 'white'
         padding: '24px 18px'
+        display: 'flex'
 
       if task == 'composition'
         COMPOSITION
@@ -398,6 +410,39 @@ dom.SONG = ->
           song: @props.song   
           task: task   
 
+      if retrieve('json_editor').active and song_config.config
+        DIV
+          onMouseEnter: (evt) ->
+            document.body.style.overflow = 'hidden'
+          onMouseLeave: (evt) ->
+            document.body.style.overflow = ''
+
+          style: 
+            resize: 'horizontal'
+            overflowY: 'auto'
+            flexGrow: 1
+            # flexShrink: 1
+            padding: '0 10px'
+            minWidth: 450
+            position: 'sticky';
+            top: 0
+            alignSelf: 'flex-start'
+
+          JSONEditorTextArea
+            json: song_config.config
+            key: "#{JSON.stringify(song_config.config).length}" # update text area if it changes elsewhere
+            onChange: (txt) => 
+              @local.updated_json = JSON.parse(txt)
+              save @local
+            onSave: =>
+              if @local.updated_json
+                song_config.config = @local.updated_json
+                save song_config
+                @local.updated_json = null
+          # JSONEditorWithSchema()
+
+
+
 dom.COMPOSITION = ->
   song = @props.song
 
@@ -405,7 +450,7 @@ dom.COMPOSITION = ->
   DIV null,
 
     VIDEO
-      src: "/media/#{song}/#{song} (composition)21.mp4"
+      src: "/media/#{song}/#{song} (composition).mp4"
       controls: true
       playsinline: true
       width: 600
@@ -703,19 +748,39 @@ dom.ALIGNMENT = ->
   @local.page ?= 0
   @local.per_page = 25
 
+
+  pagination = =>
+    DIV null,
+
+      if @local.page > 0
+        BUTTON 
+          onClick: => 
+            @local.page -= 1
+            if @local.page < 0
+              @local.page = 0
+            save @local
+          'previous'
+
+      BUTTON
+        onClick: =>
+          @local.page += 1
+          save @local
+        'next page'
+
+
   DIV null,
 
 
     DIV
-      'data-receive-viewport-visibility-updates': 1
-      "data-component": @local.key
+      className: 'process-actions'
       style: 
-        position: if !@local.in_viewport then 'fixed' else 'relative'
+        position: 'sticky'
         top: 0
         zIndex: 9
         display: 'flex'
+        alignSelf: 'flex-start'
+        backgroundColor: 'white'
 
-      # if task == 'alignment'
 
       BUTTON 
         key: "play_all #{@local.play_all}"
@@ -728,8 +793,8 @@ dom.ALIGNMENT = ->
           for k,v of @registered_media
             is_song = v.is_song
             mute = is_song && song_playing
-            v.play(@local.play_all, mute, !selected)
-            song_playing ||= is_song
+            is_audible = v.play(@local.play_all, mute, !selected)
+            song_playing ||= is_song && is_audible
 
         if @local.play_all
           'Pause all'
@@ -770,15 +835,28 @@ dom.ALIGNMENT = ->
         BUTTON 
           key: 'show reactions'
           onClick: => 
-            @local.show_reaction = !@local.show_reaction
+            @local.show_reactions = !@local.show_reactions
             save @local
           
-          if @local.show_reaction
+          if @local.show_reactions
             'Hide reactions'
           else
             'Show reactions'
 
-    
+      if task == 'alignment'
+        BUTTON 
+          key: 'show paintings'
+          onClick: => 
+            @local.show_paintings = !@local.show_paintings
+            save @local
+          
+          if @local.show_paintings
+            'Hide paintings'
+          else
+            'Show paintings'
+
+      pagination()
+
     UL 
       style:
         listStyle: 'none'
@@ -793,25 +871,10 @@ dom.ALIGNMENT = ->
             task: task
             registered_media: @registered_media
             hide_unselected: @local.hide_unselected
-            show_reaction: @local.show_reaction
+            show_reaction: @local.show_reactions
+            show_painting: @local.show_paintings
             force_selection: select_all
             force_deselection: deselect_all
-
-    if @local.page > 0
-      BUTTON 
-        onClick: => 
-          @local.page -= 1
-          if @local.page < 0
-            @local.page = 0
-          save @local
-        'previous'
-
-    BUTTON
-      onClick: =>
-        @local.page += 1
-        save @local
-      'next page'
-
 
 
 dom.REACTION_ALIGNMENT = ->
@@ -948,11 +1011,14 @@ dom.REACTION_ALIGNMENT = ->
 
 
       BUTTON
-        onClick: =>
+        onClick: => 
+          navigator.clipboard.writeText(reaction.reactor)
+
+        onDoubleClick: =>
+          console.log('HI!')
           @local.selected = !@local.selected
           save @local
 
-          navigator.clipboard.writeText(reaction.reactor)
 
         style: 
           border: 'none'
@@ -1017,7 +1083,7 @@ dom.REACTION_ALIGNMENT = ->
                   save @local
 
 
-    if task == 'alignment'
+    if task == 'alignment' and @props.show_painting
       A
         href: alignment_painting
         target: '_blank'
@@ -1390,7 +1456,9 @@ dom.SYNCHRONIZED_VIDEO.refresh = ->
           vid.muted = false
         else if @props.selected
           vid.play()
-          vid.muted = mute 
+          vid.muted = mute
+          return mute
+        return false 
 
       synchronize: (base_time) =>
         if !@props.keep_synced
@@ -1657,6 +1725,37 @@ dom.ASIDE_MAKER = ->
 
 
 
+dom.JSONEditorWithSchema = ->
+  state = retrieve('json_editor')
+  song_config = retrieve("/song_config/#{state.song}")
+
+  DIV 
+    ref: 'editor_holder'
+
+dom.JSONEditorWithSchema.up = dom.JSONEditorWithSchema.refresh = ->
+  element = @refs.editor_holder.getDOMNode()
+
+  state = retrieve('json_editor')
+
+  song_config = retrieve("/song_config/#{state.song}")
+
+  if !song_config.config
+    return
+
+
+  if !@initialized
+
+    editor = new JSONEditor element,
+      theme: 'spectre'
+      iconlib: 'spectre'
+      schema:
+        $ref: "/library/library_schema.json"
+        format: "categories"
+      startval: song_config.config
+      ajax: true
+
+    @initialized = true
+
 # JSONEditorTextArea          
 #   id: 'json'
 #   key: md5(subdomain.customizations) # update text area if subdomain.customizations changes elsewhere
@@ -1667,21 +1766,55 @@ dom.ASIDE_MAKER = ->
 
 
 dom.JSONEditorTextArea = ->
+  DIV
+    style: 
+      height: '90vh'
+      position: 'relative'
+
+    if @local.has_changes
+      BUTTON
+        style:
+          postion: 'fixed'
+          left: 0
+          top: 0
+        onClick: =>
+          @props.onSave?()
+          @local.has_changes = false
+          save @local
+        'Save'
 
     DIV 
       ref: 'json_editor'
       style: 
-        height: '100vh'
+        height: '90vh'
 
-dom.JSONEditorTextArea.up = ->
-  editor = new JSONEditor ReactDOM.findDOMNode(@), 
-    mode: 'code'
-    modes: ['tree', 'code']
-    onChange: =>
-      try 
-        @props.onChange? editor.getText()
-      catch e 
-        console.log 'Got error', e
 
-  editor.set @props.json
+
+
+
+dom.JSONEditorTextArea.up = dom.JSONEditorTextArea.refresh = ->
+
+  if !@initialized
+    editor = new JSONEditor @refs.json_editor.getDOMNode(), 
+      mode: 'code'
+      modes: ['tree', 'code']
+      sortObjectKeys: true
+      mainMenuBar: false
+
+      onChange: =>
+        try 
+          @props.onChange? editor.getText()
+          @props.onChangeJSON?()
+          @local.has_changes = true
+          save @local
+
+
+        catch e 
+          console.log 'Got error', e
+
+
+
+    editor.set @props.json
+
+    @initialized = true
 

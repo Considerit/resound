@@ -36,7 +36,6 @@ bus = require('statebus').serve
       }      
 
     client('song_config/*').to_fetch = (key) ->
-      console.log()
       song = key.split('/')
       song = song[song.length - 1]
 
@@ -245,6 +244,7 @@ bus.http.use('/node_modules', express.static('node_modules'))
 bus.http.use('/frontend', express.static('frontend'))
 bus.http.use('/media', express.static('../Media'))
 bus.http.use('/vendor', express.static('vendor'))
+bus.http.use('/library', express.static('../library'))
 
 prefix = ''
 bus.http.get '/*', (r,res) => 
@@ -260,7 +260,18 @@ bus.http.get '/*', (r,res) =>
       window.statebus_server="#{server}";
     </script>
 
+
+    <link rel="stylesheet" href="#{prefix}/vendor/spectre.css">
+    <link rel="stylesheet" href="#{prefix}/vendor/spectre-exp.css">
+    <link rel="stylesheet" href="#{prefix}/vendor/spectre-icons.css">
+
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jsoneditor/9.5.3/jsoneditor.min.css">
     <script src="#{prefix}/vendor/jsoneditor.min.js"></script>
+
+    <!--
+    <script src="#{prefix}/vendor/jsoneditor-schema.min.js"></script>
+    -->
 
     <script src="#{prefix}/vendor/wavesurfer.js"></script>
     <script src="#{prefix}/vendor/wavesurfer.regions.min.js"></script>
@@ -283,6 +294,38 @@ bus.http.get '/*', (r,res) =>
       .fa {
         font-family: FontAwesome;  
       }
+
+      video::-webkit-media-controls-fullscreen-button
+      {
+              display: none !important;
+      }
+
+
+      button {
+        border-radius: 8px; 
+        border: 1px solid #bbb;
+        outline: none;
+        padding: 4px 8px;
+      }
+      button:hover {
+        border-color: black;
+      }
+
+      .ace-jsoneditor .ace_gutter {
+        display: none;
+      }
+
+      .ace-jsoneditor .ace_scroller {
+        position: static;
+      }
+
+
+      .process-actions button {
+        display: inline-block;
+        margin-left: 10px;
+      }
+
+
 
     </style>
 
