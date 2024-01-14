@@ -504,7 +504,7 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
 
             # Flip the clip horizontally if reactor was placed on the wrong side
             horiz_gaze, vert_gaze = reaction.get('face_orientation')
-            if (horiz_gaze ==  'left' and reactor['position'][0] < output_size[0] / 2) or 
+            if (horiz_gaze ==  'left' and reactor['position'][0] < output_size[0] / 2) or \
                (horiz_gaze == 'right' and reactor['position'][0] > output_size[0] / 2):
                 clip = clip.fx(vfx.mirror_x)
 
@@ -513,10 +513,7 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
             if clip_length < clip.duration:
               clip_length = clip.duration
 
-            if featured:
-              priority = 100
-            else: 
-              priority = reaction.get('priority')
+            priority = reaction.get('priority')
 
             clip_info = {
               'channel': name,
