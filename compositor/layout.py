@@ -172,6 +172,10 @@ seat_preferences = {}
 def get_seat_preferences(reaction, grid_centroid, grid_size, all_seats, base_video_width, base_video_height):
     global seat_preferences
 
+    base_video_placement = conf.get('base_video_placement')
+    if base_video_placement != "center / bottom":
+      raise(f"Please update this function to support {base_video_placement}")
+
     key = f"{conf.get('song_key')}-{reaction.get('channel')}"
     if key not in seat_preferences:
         orientation = reaction.get('face_orientation')
@@ -180,96 +184,70 @@ def get_seat_preferences(reaction, grid_centroid, grid_size, all_seats, base_vid
             orientation=("left", "down")
         horizontal_orientation, vertical_orientation = orientation
 
-        my_value = list(grid_centroid)
+
+        vw = base_video_width
+        vh = base_video_height
+        w,h = grid_size
+
+        ideal_seat = list(grid_centroid)
 
         if horizontal_orientation == 'left':
-          my_value[0] += base_video_width / 2
+          ideal_seat[0] += vw / 2
         elif horizontal_orientation == 'right':
-          my_value[0] -= base_video_width / 2
+          ideal_seat[0] -= vw / 2
 
         if horizontal_orientation != 'center':
             if vertical_orientation == 'middle':
-              my_value[1] += base_video_height / 2
+              ideal_seat[1] += vh / 2
             elif vertical_orientation == 'up':
-              my_value[1] += base_video_height
+              ideal_seat[1] += vh
         else:
-            my_value[1] = grid_size[1] - base_video_height   # This is only correct for video placement = down center
+            ideal_seat[1] = h - vh   # This is only correct for video placement = down center
             if vertical_orientation == 'middle':
-              my_value[1] -= 1
+              ideal_seat[1] -= 1
             elif vertical_orientation == 'down':
-              my_value[1] -= 2 
+              ideal_seat[1] -= 2 
+
+        # This is only correct for video placement = down center
+        if horizontal_orientation == 'center':
+          left = w / 2 - vw / 2
+          right = w / 2 + vw / 2
+          top = 0
+          bottom = h - vh
+        else:
+          if horizontal_orientation == 'right':
+            left = 0 
+            right = w / 2 - vw / 2
+          elif horizontal_orientation == 'left':
+            left = w / 2 + vw / 2
+            right = w
+
+          if vertical_orientation == 'middle':
+            top = h - vh
+            bottom = h - vh / 4
+          elif vertical_orientation == 'up':
+            top = h - vh / 2
+            bottom = h
+          elif vertical_orientation == 'down':
+            top = 0
+            bottom = h - vh
 
 
-        seat_preferences[key] = my_value
+        my_section = (left, top, right, bottom)
+
+        seat_preferences[key] = [ideal_seat, my_section]
 
     return seat_preferences[key]
 
 
-def position_score(orientation, seat, grid_target, base_size):
 
-    seat_x, seat_y = seat
-    grid_center, grid_middle = grid_target
-    (base_video_width, base_video_height) = base_size
+def seat_score(reaction, seat, grid_centroid, max_distance, ideal_seat, section_preference, base_size):
 
-    horizontal_orientation, vertical_orientation = orientation
+    closeness_score = 1 + (max_distance - distance(seat, ideal_seat)) / max_distance
 
-    vscore = hscore = 1
+    section_score = (max_distance - distance_from_region(seat, section_preference)) / max_distance
 
-    if (horizontal_orientation == 'center'):
-      if grid_center - base_video_width / 4 <= seat_x and seat_x <= grid_center + base_video_width / 4:
-        hscore = 1.7
-      elif grid_center - base_video_width / 2 <= seat_x and seat_x <= grid_center + base_video_width / 2:
-        hscore = 1.2
-      else: 
-        hscore = .9
-
-    elif (horizontal_orientation == 'right'):
-      if seat_x <= grid_center * .25 or seat_x <= grid_center:
-        hscore = 1.7
-      elif seat_x <= grid_center * .5:
-        hscore = 1.2
-      elif seat_x <= grid_center * .65:
-        hscore = .9
-      elif seat_x <= grid_center * .75:
-        hscore = .7
-      else: 
-        hscore = .5
-
-    else:  # left
-      if seat_x >= grid_center * .75 or seat_x >= grid_center:
-        hscore = 1.7
-      elif seat_x >= grid_center * .5:
-        hscore = 1.2
-      elif seat_x >= grid_center * .35:
-        hscore = .9
-      elif seat_x >= grid_center * .25:
-        hscore = .7
-      else: 
-        hscore = .5
-
-
-    if (vertical_orientation == 'middle'):
-      if grid_middle * .25 <= seat_y and seat_y <= grid_middle * .75:
-        vscore = 1.1
-
-    elif (vertical_orientation == 'down'):
-      if seat_y <= grid_middle * .5:
-        vscore = 1.1
-
-    else:  # up
-      if seat_y >= grid_middle * .5:
-        vscore = 1.1
-
-    return hscore, vscore
-
-
-def seat_score(reaction, seat, grid_centroid, my_value, max_distance, base_size):
-
-    closeness_score = 1 + (max_distance - distance(seat, my_value)) / max_distance
-
-    horizontal_pos_score, vertical_pos_score = position_score(reaction.get('face_orientation'), seat, grid_centroid, base_size)   
-
-    return horizontal_pos_score * vertical_pos_score * closeness_score
+    return closeness_score * section_score * section_score
 
 
 
@@ -302,10 +280,10 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
 
     ###############################
     # get reaction seat preferences
-    reaction_preferences = {}
+    seat_preferences = {}
     total_reactors = 0
     for channel, reaction in conf.get('reactions').items():
-        reaction_preferences[channel] = get_seat_preferences(reaction, grid_centroid, grid_size, seats, base_video_width, base_video_height)
+        seat_preferences[channel] = get_seat_preferences(reaction, grid_centroid, grid_size, seats, base_video_width, base_video_height)
         total_reactors += len(reaction.get('reactors'))
 
     ########################
@@ -317,8 +295,8 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
         seat_key = str(seat)
         seat_scores[seat_key] = {}
         for channel, reaction in conf.get('reactions').items():
-            my_value = reaction_preferences[channel]
-            seat_scores[seat_key][channel] = seat_score(reaction, seat, grid_centroid, my_value, max_distance, (base_video_width, base_video_height))
+            ideal_seat, my_section = seat_preferences[channel]
+            seat_scores[seat_key][channel] = seat_score(reaction, seat, grid_centroid, max_distance, ideal_seat=ideal_seat, section_preference=my_section, base_size=(base_video_width, base_video_height))
 
 
     ##############
@@ -338,8 +316,10 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
                     seat_key = str(seat)
                     if seat_key not in seating_by_seat and seat_key not in [str(t) for t in chosen_seats]:
                         chosen_seats.append(seat)
+                        if len(chosen_seats) >= len(reactors):
+                          break
 
-        assert( len(reactors) == len(chosen_seats), f"{len(reactors)}  {len(chosen_seats)}" )
+        assert len(reactors) == len(chosen_seats), f"{len(reactors)}  {len(chosen_seats)}"
 
         # align seats and reactors by their x-position
         chosen_seats.sort( key=lambda seat: seat[0] )
@@ -355,14 +335,18 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
             seating_by_seat[str(chosen_seat)] = (reaction, reactor)
             reactor['grid_assignment'] = chosen_seat
 
-            print(f"\t\tASSIGNED {chosen_seat} to {chosen_channel} / {i}. Priority={reaction.get('priority')} Target position={reaction_preferences[chosen_channel]}")
+            print(f"\t\tASSIGNED {chosen_seat} to {chosen_channel} / {i}. Priority={reaction.get('priority')} Target position={seat_preferences[chosen_channel]}")
 
         # remove choice from consideration
+        removed = {}
+
         for chosen_seat in chosen_seats:
             del seat_scores[str(chosen_seat)]
+            removed[str(chosen_seat)] = 1
+
+        # remove reactor from remaining seat considerations
         for seat in list(seat_scores.keys()):
             del seat_scores[str(seat)][chosen_channel]
-
 
     i = 0
     while( len(seating_by_reactor.keys()) < total_reactors ):
@@ -374,7 +358,12 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
         highest_score = 0
         highest_priority = 0
 
+
+        if len(seat_scores.keys()) == 0:
+          raise Exception(f"We've seated {len(seating_by_reactor.keys())} of {total_reactors} reactors, but don't seem to have any more available.")
+
         for seat, same_row, adjacents in seats_with_adjacents:
+
             seat_key = str(seat)
             if seat_key not in seat_scores:
                 continue
@@ -410,7 +399,7 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
                             score *= .1
 
                 priority = reaction.get('priority')
-                score *= priority / 100
+                score *= (priority + 50) / 100
 
                 if score > highest_score or ( score == highest_score and priority > highest_priority):
 
