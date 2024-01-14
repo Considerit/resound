@@ -727,7 +727,7 @@ dom.ALIGNMENT = ->
       downloaded_reactions.push o
 
 
-  downloaded_reactions.sort( (a,b) -> if a.reactor < b.reactor then -1 else 1     )
+  downloaded_reactions.sort( (a,b) -> if a.reactor.toLowerCase().trim() < b.reactor.toLowerCase().trim() then -1 else 1     )
 
 
   # downloaded_reactions = [downloaded_reactions[0]]
@@ -1113,6 +1113,11 @@ dom.REACTION_ALIGNMENT = ->
 
       num_reactors = config?.multiple_reactors?[reaction_file_prefix] or metadata.reactors.length
 
+      featured = 'reaction_file_prefix' in (config?.featured or [])
+
+      priority = config?.priority?[reaction_file_prefix] or (if featured then 75 else 50)
+
+
       DIV 
         style:
           fontSize: 16
@@ -1154,6 +1159,18 @@ dom.REACTION_ALIGNMENT = ->
                   value: val
                   style: {}
                   val
+          
+        DIV null,
+
+          INPUT
+            type: 'range'
+            min: 0
+            max: 100
+            value: priority
+            onChange: (e) =>
+              config.priority ?= {} 
+              config?.priority[reaction_file_prefix] = parseInt(e.target.value)
+              save song_config
 
 
         if @local.clicked_at
