@@ -51,8 +51,8 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
 
     hex_grid, cell_size = generate_grid(width, height, total_videos, bounds, center, shape=shape)
 
-    # hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
-    hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
+    hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
+    # hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
 
     assign_seats_to_reactors(  seats=hex_grid, 
                                grid_centroid=value_relative_to,
@@ -167,6 +167,58 @@ def generate_grid(width, height, min_cells, outside_bounds=None, center=None, sh
 
 
 
+def get_seat_preferences_for_gaze_direction(horizontal_orientation, vertical_orientation, base_video_width, base_video_height, grid_size, grid_centroid): 
+    vw = base_video_width
+    vh = base_video_height
+    w,h = grid_size
+
+    ideal_seat = list(grid_centroid)
+
+    if horizontal_orientation == 'left':
+      ideal_seat[0] += vw / 2
+    elif horizontal_orientation == 'right':
+      ideal_seat[0] -= vw / 2
+
+    if horizontal_orientation != 'center':
+        if vertical_orientation == 'middle':
+          ideal_seat[1] += vh / 2
+        elif vertical_orientation == 'up':
+          ideal_seat[1] += vh
+    else:
+        ideal_seat[1] = h - vh   # This is only correct for video placement = down center
+        if vertical_orientation == 'middle':
+          ideal_seat[1] -= 1
+        elif vertical_orientation == 'down':
+          ideal_seat[1] -= 2 
+
+    # This is only correct for video placement = down center
+    if horizontal_orientation == 'center':
+      left = w / 2 - vw / 2
+      right = w / 2 + vw / 2
+      top = 0
+      bottom = h - vh
+    else:
+      if horizontal_orientation == 'right':
+        left = 0 
+        right = w / 2 - vw / 2
+      elif horizontal_orientation == 'left':
+        left = w / 2 + vw / 2
+        right = w
+
+      if vertical_orientation == 'middle':
+        top = h - vh
+        bottom = h - vh / 4
+      elif vertical_orientation == 'up':
+        top = h - vh / 2
+        bottom = h
+      elif vertical_orientation == 'down':
+        top = 0
+        bottom = h - vh
+
+
+    my_section = (left, top, right, bottom)
+
+    return [ideal_seat, my_section]
 
 seat_preferences = {}
 def get_seat_preferences(reaction, grid_centroid, grid_size, all_seats, base_video_width, base_video_height):
@@ -184,70 +236,34 @@ def get_seat_preferences(reaction, grid_centroid, grid_size, all_seats, base_vid
             orientation=("left", "down")
         horizontal_orientation, vertical_orientation = orientation
 
+        preference = get_seat_preferences_for_gaze_direction(horizontal_orientation, vertical_orientation, base_video_width, base_video_height, grid_size, grid_centroid)
 
-        vw = base_video_width
-        vh = base_video_height
-        w,h = grid_size
+        seat_preferences[key] = [preference]
 
-        ideal_seat = list(grid_centroid)
-
-        if horizontal_orientation == 'left':
-          ideal_seat[0] += vw / 2
-        elif horizontal_orientation == 'right':
-          ideal_seat[0] -= vw / 2
-
+        # We can flip a video horizontally, so we can place people on either side
         if horizontal_orientation != 'center':
-            if vertical_orientation == 'middle':
-              ideal_seat[1] += vh / 2
-            elif vertical_orientation == 'up':
-              ideal_seat[1] += vh
-        else:
-            ideal_seat[1] = h - vh   # This is only correct for video placement = down center
-            if vertical_orientation == 'middle':
-              ideal_seat[1] -= 1
-            elif vertical_orientation == 'down':
-              ideal_seat[1] -= 2 
-
-        # This is only correct for video placement = down center
-        if horizontal_orientation == 'center':
-          left = w / 2 - vw / 2
-          right = w / 2 + vw / 2
-          top = 0
-          bottom = h - vh
-        else:
-          if horizontal_orientation == 'right':
-            left = 0 
-            right = w / 2 - vw / 2
-          elif horizontal_orientation == 'left':
-            left = w / 2 + vw / 2
-            right = w
-
-          if vertical_orientation == 'middle':
-            top = h - vh
-            bottom = h - vh / 4
-          elif vertical_orientation == 'up':
-            top = h - vh / 2
-            bottom = h
-          elif vertical_orientation == 'down':
-            top = 0
-            bottom = h - vh
-
-
-        my_section = (left, top, right, bottom)
-
-        seat_preferences[key] = [ideal_seat, my_section]
+            new_horizontal_orientation = 'left' if horizontal_orientation == 'right' else 'right'
+            flipped_preference = get_seat_preferences_for_gaze_direction(new_horizontal_orientation, vertical_orientation, base_video_width, base_video_height, grid_size, grid_centroid)
+            seat_preferences[key].append(flipped_preference)
 
     return seat_preferences[key]
 
 
 
-def seat_score(reaction, seat, grid_centroid, max_distance, ideal_seat, section_preference, base_size):
+def seat_score(reaction, seat, grid_centroid, max_distance, seat_preference, base_size):
 
-    closeness_score = 1 + (max_distance - distance(seat, ideal_seat)) / max_distance
+    best_score = 0
+    for i, (ideal_seat, section_preference) in enumerate(seat_preference):
+      closeness_score = 1 + (max_distance - distance(seat, ideal_seat)) / max_distance
 
-    section_score = (max_distance - distance_from_region(seat, section_preference)) / max_distance
+      section_score = (max_distance - distance_from_region(seat, section_preference)) / max_distance
 
-    return closeness_score * section_score * section_score
+      section_score *= (1 - .1 * i)
+      score =  closeness_score * section_score * section_score
+      if score > best_score:
+        best_score = score
+
+    return best_score
 
 
 
@@ -295,8 +311,8 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
         seat_key = str(seat)
         seat_scores[seat_key] = {}
         for channel, reaction in conf.get('reactions').items():
-            ideal_seat, my_section = seat_preferences[channel]
-            seat_scores[seat_key][channel] = seat_score(reaction, seat, grid_centroid, max_distance, ideal_seat=ideal_seat, section_preference=my_section, base_size=(base_video_width, base_video_height))
+            seat_preference = seat_preferences[channel]
+            seat_scores[seat_key][channel] = seat_score(reaction, seat, grid_centroid, max_distance, seat_preference=seat_preference, base_size=(base_video_width, base_video_height))
 
 
     ##############
