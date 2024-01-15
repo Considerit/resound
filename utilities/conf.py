@@ -232,6 +232,8 @@ def make_conf(song_def, options, temp_directory):
 
         if featured: 
           default_priority = 75
+        elif channel == 'Resound':
+          default_priority = 1
         else:
           default_priority = 50
 

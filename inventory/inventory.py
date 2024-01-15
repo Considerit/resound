@@ -251,14 +251,19 @@ def create_manifest(song_def, artist, song_title, song_search, search, test = No
             return True
 
         to_include = song_def.get('include_videos')
+        print("TRYING TO GET INCLUDED VIDEOS", to_include)
         for videoid in to_include:
             if videoid not in manifest['reactions']:
                 resp = client.videos.list(video_id=videoid)
-                if len(resp.items) > 0:
+                if len(resp.items) > 0:                    
                     item = resp.items[0].to_dict()
+                    print(f"\t{videoid} FOUND")
                     process_reaction(song_title, artist, search, item, manifest["reactions"], passes_muster)
+                    assert(videoid in manifest['reactions'])
                 else:
                     raise(Exception(f"COULD NOT FIND {videoid}"))
+            else:
+                print(f"\t{videoid} Already in manifest")
 
             manifest['reactions'][videoid]['download'] = True
 
@@ -504,6 +509,7 @@ def filter_and_augment_manifest(artist, song):
 
             reaction_duration = int(duration.split(':')[0]) * 60 + int(duration.split(':')[1])
             if song_duration > reaction_duration - 5:
+                print("DELETING for DURATION", reaction.get('id'), song_duration, reaction_duration)
                 to_delete.append(vid)
 
     for vid in to_delete:

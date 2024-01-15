@@ -275,8 +275,8 @@ def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_au
 
     if remove_audio:
       cropped_video = cropped_video.without_audio()
-
-    print("\twriting video")
+    else:
+      cropped_video = cropped_video.set_audio(video.audio)
 
     # Write the cropped video to a file
     cropped_video.write_videofile(output_file, codec="h264_videotoolbox", fps=conversion_frame_rate,
@@ -512,7 +512,7 @@ def process_faces(reaction, face_matches, width, height):
     # as well as their orientation and size. 
 
     num_reactors = reaction.get('num_reactors', None)
-    # print(f"LOOKING FOR {num_reactors} for {reaction.get('channel')}")
+    print(f"LOOKING FOR {num_reactors} for {reaction.get('channel')}")
 
     coarse_reactors, _ = find_top_candidates(face_matches, width, height, num_reactors)
     reactors = []
@@ -541,7 +541,7 @@ def process_faces(reaction, face_matches, width, height):
       other_kernels = [ r[1][2] for j,r in enumerate(reactors) if j != i ]
 
 
-      centroids = find_reactor_centroids(face_matches, group, center, avg_size, kernel, width, height, len(reactors), other_kernels)
+      centroids = find_reactor_centroids(reaction, face_matches, group, center, avg_size, kernel, width, height, len(reactors), other_kernels)
 
       centroids = smooth_and_interpolate_centroids(centroids)
 
@@ -711,20 +711,38 @@ def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_ar
 
 
 def find_top_candidates(matches, wwidth, hheight, num_reactors):
+
+
+    def get_face_groups(thresh): 
+
+        ignored_face_groups, __ = create_heat_map_from_faces( [f[2] for f in matches], hheight, wwidth, thresh=thresh )
+
+        if len(ignored_face_groups) > 0:
+          ignored_face_groups.sort(key=lambda x: x[2], reverse=True)
+          best_ignored_area = ignored_face_groups[0][0]
+        else:
+          best_ignored_area = None
+
+        face_groups, heat_map_color = create_heat_map_from_faces( [f[1] for f in matches], hheight, wwidth, best_ignored_area, thresh=thresh )
+
+        return face_groups, heat_map_color
+
+
+
     if num_reactors is None:
       thresh = 170
     else: 
-      thresh = 70
+      thresh = 85
 
-    ignored_face_groups, __ = create_heat_map_from_faces( [f[2] for f in matches], hheight, wwidth, thresh=thresh )
+    face_groups, heat_map_color = get_face_groups(thresh)
+    if num_reactors is not None and len(face_groups) < num_reactors:
+        while len(face_groups) < num_reactors and thresh >= 5: 
+          print(f"\t\t\tTrying again with thresh={thresh}")
+          face_groups, heat_map_color = get_face_groups(thresh)
+          thresh -= 10
 
-    if len(ignored_face_groups) > 0:
-      ignored_face_groups.sort(key=lambda x: x[2], reverse=True)
-      best_ignored_area = ignored_face_groups[0][0]
-    else:
-      best_ignored_area = None
 
-    face_groups, heat_map_color = create_heat_map_from_faces( [f[1] for f in matches], hheight, wwidth, best_ignored_area, thresh=thresh )
+        assert len(face_groups) >= num_reactors, f"\tFOUND {len(face_groups)} face groups, while configuration specifies {num_reactors}"
 
 
     # Calculate the score for each group based on the total area covered
@@ -741,8 +759,6 @@ def find_top_candidates(matches, wwidth, hheight, num_reactors):
       max_score = sorted_groups[0][1]
       accepted_groups = [grp for grp in sorted_groups if grp[1] >= .5 * max_score]
     else: 
-      print(f"\tFOUND {len(sorted_groups)} face groups, while configuration specifies {num_reactors}")
-
       accepted_groups = sorted_groups[0:num_reactors]
       
     # print(sorted_groups)
@@ -807,7 +823,7 @@ def calculate_center(group):
 #              coarse match.
 #    kernel:   The (x,y,w,h) bounding box of the coarse_match. 
 #    
-def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kernel, video_width, video_height, num_reactors, other_kernels):
+def find_reactor_centroids(reaction, face_matches, coarse_matches, center, avg_size, kernel, video_width, video_height, num_reactors, other_kernels):
   centroids = []
   # print(f"Finding reactor centroids {len(face_matches)}")
 
@@ -831,6 +847,17 @@ def find_reactor_centroids(face_matches, coarse_matches, center, avg_size, kerne
       faces = []
       for face in all_faces:
         (x,y,w,h,nose,all_data,hist) = face
+
+
+        if reaction.get('fake_reactor_position', False):
+            bad_match = False
+            for bad_x, bad_y in reaction.get('fake_reactor_position'):
+              if (x / video_width < bad_x < (x+w) / video_width and y / video_height < bad_y < (y + h) / video_height):
+                bad_match = True
+                print(f"Found bad match: {x / video_width} {y / video_height}")
+            if bad_match:
+              continue
+
 
         face_centroid = (x + w/2, y + h/2)
         my_centroid = (kernel[0] + kernel[2]/2, kernel[1] + kernel[3]/2)
