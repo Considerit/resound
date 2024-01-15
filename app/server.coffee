@@ -164,6 +164,11 @@ bus = require('statebus').serve
       else if obj.scope == 'cropped reactors' and obj.action == 'delete'
         deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-CROSS-EXPANDER-cropped-", metadata_dir)
 
+      else if obj.scope.startsWith('cropped reactors') and obj.action == 'delete'
+        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-CROSS-EXPANDER-cropped-", metadata_dir)
+        if obj.scope == 'cropped reactors including coarse'
+          deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-CROSS-EXPANDER-coarse_face_position_metadata", metadata_dir)
+
       else if obj.scope == 'isolated backchannel' and obj.action == 'delete'
         deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-isolated_backchannel", metadata_dir)
 

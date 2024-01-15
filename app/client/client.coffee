@@ -985,6 +985,10 @@ dom.REACTION_ALIGNMENT = ->
                   scope: 'cropped reactors'
                   reaction_id: reaction.id
                   song: song
+
+                if confirm('Redo coarse face tracking too? Cancel means just redo fine-grained tracking.')
+                  action.scope = 'cropped reactors including coarse'
+
                 save action
             else if task == 'backchannels'
               if confirm('Reset will delete isolated backchannel files. You sure?')
