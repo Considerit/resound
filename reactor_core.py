@@ -12,6 +12,8 @@ from aligner import create_aligned_reaction_video
 from face_finder import create_reactor_view
 from backchannel_isolator import isolate_reactor_backchannel
 from compositor import compose_reactor_compilation
+from compositor.asides import create_asides
+
 from aligner.scoring_and_similarity import print_path, ground_truth_overlap
 
 from aligner.path_painter import paint_paths
@@ -96,130 +98,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     reaction["reactors"], __ = create_reactor_view(reaction)
 
     if reaction['asides']:
-        from moviepy.editor import VideoFileClip, concatenate_videoclips
-
-        reaction["aside_clips"] = {}
-        # print(f"Asides: {reaction.get('channel')} has {len(reaction['asides'])}")
-
-        all_asides = reaction['asides']
-
-        def consolidate_adjacent_asides(all_asides):
-            groups = []
-            all_asides.sort(key=lambda x: x[0])  # sort by start value of the aside
-
-            group_when_closer_than = 0.1  # put asides into the same group if one's start value 
-                                          # is less than group_when_closer_than greater than the 
-                                          # end value of the previous aside 
-
-            # Initialize the first group
-            current_group = []
-
-            # Group asides
-            for aside in all_asides:
-                aside = start, end, insertion_point, rewind = get_aside_config(aside)
-
-                # If current_group is empty or the start of the current aside is close enough to the end of the last aside in the group
-                if not current_group or insertion_point - current_group[-1][2] < group_when_closer_than:
-                    current_group.append(aside)
-                else:
-                    # Current aside starts a new group
-                    groups.append(current_group)
-                    current_group = [aside]
-
-            # Add the last group if it's not empty
-            if current_group:
-                groups.append(current_group)
-
-
-            consolidated_asides = []
-            for group in groups:
-                skip_segments = []
-
-                # Get the start of the first aside and the end of the last aside in the group
-                start, end = group[0][0], group[-1][1]
-
-                # Iterate through the group and find gaps between asides
-                for i in range(len(group) - 1):
-                    current_end = group[i][1]
-                    next_start = group[i + 1][0]
-                    if next_start > current_end:
-                        skip_segments.append((current_end - start, next_start - start))
-
-                aside_conf = {
-                    'range': (start, end),
-                    'insertion_point': group[-1][2],
-                    'rewind': group[-1][3],
-                    'skip_segments': skip_segments
-                }
-                consolidated_asides.append(aside_conf)
-
-            return consolidated_asides
-
-            
-        def get_aside_config(aside):
-            if len(aside) == 4:
-                start, end, insertion_point, rewind = aside
-            else: 
-                start, end, insertion_point = aside
-                rewind = 3
-
-            return start, end, insertion_point, rewind
-
-        def remove_skipped_segments(aside_reactor_views, skip_segments):
-            skip_segments.sort( key=lambda x: x[0], reverse=True )
-
-            for reactor_view in aside_reactor_views:
-                # Initialize a list to hold the subclips
-                subclips = []
-                last_end = 0  # Keep track of the end of the last segment added to subclips
-
-                for start, end in skip_segments:
-                    # Add the segment from the last end to the current start
-                    if start > last_end:
-                        subclips.append(reactor_view['clip'].subclip(last_end, start))
-
-                    last_end = end
-
-                # Add the remaining part of the clip after the last skip segment
-                if last_end < reactor_view['clip'].duration:
-                    subclips.append(reactor_view['clip'].subclip(last_end, reactor_view['clip'].duration))
-
-                # Concatenate all the subclips together
-                reactor_view['clip'] = concatenate_videoclips(subclips)
-
-            return aside_reactor_views
-
-
-        consolidated_asides = consolidate_adjacent_asides(all_asides)
-
-        for i, aside in enumerate(consolidated_asides):
-
-            start, end = aside['range']
-            insertion_point = aside['insertion_point']
-            rewind = aside['rewind']
-            skip_segments = aside['skip_segments']
-
-            # first, isolate the correct part of the reaction video
-            aside_video_clip = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-aside-{i}.mp4")
-            
-            if not os.path.exists(aside_video_clip):            
-                react_video = VideoFileClip(reaction.get('video_path'), has_mask=True)
-                aside_clip = react_video.subclip(float(start), float(end))
-                aside_clip.set_fps(30)
-                aside_clip.write_videofile(aside_video_clip, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
-                react_video.close()
-
-            # do face detection on it
-            aside_reactor_views, __ = create_reactor_view(reaction, aside_video = aside_video_clip, show_facial_recognition=False)
-            aside_reactor_views = remove_skipped_segments(aside_reactor_views, skip_segments)
-
-            song_audio_data, _, _ = extract_audio(aside_video_clip, conf.get('temp_directory'), sr, convert_to_mono=False)            
-
-            for reactor_view in aside_reactor_views: 
-                reactor_view['audio'] = reactor_view['clip'].audio
-                reactor_view['clip']  = reactor_view['clip'].without_audio()
-
-            reaction["aside_clips"][insertion_point] = (aside_reactor_views, rewind)
+        create_asides(reaction)
 
 
 
