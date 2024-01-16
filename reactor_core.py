@@ -95,7 +95,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
         return []
 
     # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
-    reaction["reactors"], __ = create_reactor_view(reaction)
+    reaction["reactors"], __ = create_reactor_view(reaction, show_facial_recognition=False)
 
     if reaction['asides']:
         create_asides(reaction)

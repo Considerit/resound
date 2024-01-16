@@ -108,9 +108,9 @@ def apply_adjustments(layout):
         if (horiz_gaze ==  'left' and reactor['grid_assignment'][0] < base_width / 2) or \
            (horiz_gaze == 'right' and reactor['grid_assignment'][0] > base_width / 2):
 
-           if 'flip_x' not in reactor['layout_adjustments']:
+            if reactor['layout_adjustments'].get('flip-x', True):
                 print("\t\tAuto flipping", reactor['key'])
-                reactor['layout_adjustments']['flip_x'] = True
+                reactor['layout_adjustments']['flip-x'] = True
 
     base_video_adjustments = layout['adjustments'].get('base_video', {})
     for k,v in base_video_adjustments.items():
