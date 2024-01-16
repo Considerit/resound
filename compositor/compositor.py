@@ -507,16 +507,8 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
 
             position = reactor['position']
 
-            # Flip the clip horizontally if reactor was placed on the wrong side
-
-            horiz_gaze, vert_gaze = reaction.get('face_orientation')
-            if (horiz_gaze ==  'left' and reactor['position'][0] < output_size[0] / 2) or \
-               (horiz_gaze == 'right' and reactor['position'][0] > output_size[0] / 2):
-
-                if reaction.get('channel') == 'Second Hand Reactions ' and conf.get('song_name') == 'Hero':
-                    print("skipping the flip")
-                else:
-                    clip = clip.fx(vfx.mirror_x)
+            if reactor['layout_adjustments'].get('flip_x', False):
+                clip = clip.fx(vfx.mirror_x)
 
             clip = clip.set_position(position)
 

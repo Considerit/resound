@@ -1,6 +1,6 @@
 import numpy as np
-import math
-from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate
+import math, os
+from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate, save_object_to_file, read_object_from_file
 from itertools import groupby
 
 
@@ -12,6 +12,8 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
       total_videos += len(reaction.get('reactors', []))
 
     include_base_video = conf['include_base_video']
+    base_video_placement = conf.get('base_video_placement')
+
 
     if include_base_video:
       base_size = int(width * base_video_proportion)
@@ -23,47 +25,98 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
           base_video = base_video.set_audio(base_video.audio.set_fps(conversion_audio_sample_rate))
 
 
+    key = f"{total_videos}-{base_video_proportion}-{include_base_video}-{base_video_placement}".replace('/', 'x')
+    output_path = os.path.join(conf.get('temp_directory'), f"layout-{key}.json")
 
-      base_video_placement = conf.get('base_video_placement')
-      if base_video_placement == "left / top":
-        x,y = (base_width / 2, base_height / 2)          # left / top
-      elif base_video_placement == "left / bottom":
-        x,y = (base_width / 2, height - base_height / 2) # left / bottom
-      elif base_video_placement == 'center / bottom':
-        x,y = (width / 2, height - base_height / 2)      # center / bottom
+    if os.path.exists(output_path):
+      layout = read_object_from_file(output_path)
 
-      print(f"SETTING POSITION TO {(x - base_width / 2, y - base_height / 2)}")
-      base_video_centroid = (x - base_width / 2, y - base_height / 2)      
+    else:
+      if include_base_video:        
+        if base_video_placement == "left / top":
+          x,y = (base_width / 2, base_height / 2)          # left / top
+        elif base_video_placement == "left / bottom":
+          x,y = (base_width / 2, height - base_height / 2) # left / bottom
+        elif base_video_placement == 'center / bottom':
+          x,y = (width / 2, height - base_height / 2)      # center / bottom
 
-      # upper left point of rectangle, lower right point of rectangle
-      bounds = (x - base_width / 2, y - base_height / 2, 
-                x + base_width / 2, y + base_height / 2)
+        print(f"SETTING POSITION TO {(x - base_width / 2, y - base_height / 2)}")
+        base_video_centroid = (x - base_width / 2, y - base_height / 2)      
 
-      center = None
-      value_relative_to = [x, height - base_height]
-    else: 
-      bounds = [0,0,width,0]
-      center = [width / 2, height / 2]
-      value_relative_to = [width / 2, height / 2]
-      base_video_centroid = None
-      base_width = base_height = 0 
+        # upper left point of rectangle, lower right point of rectangle
+        bounds = [x - base_width / 2, y - base_height / 2, 
+                  x + base_width / 2, y + base_height / 2]
 
-
-    hex_grid, cell_size = generate_grid(width, height, total_videos, bounds, center, shape=shape)
-
-    hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
-    # hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
-
-    assign_seats_to_reactors(  seats=hex_grid, 
-                               grid_centroid=value_relative_to,
-                               seat_size=cell_size,
-                               base_video_width=base_width, 
-                               base_video_height=base_height,
-                               grid_size=(width, height))
-
-    return (base_video, cell_size, base_video_centroid)
+        center = None
+        value_relative_to = [x, height - base_height]
+      else: 
+        bounds = [0,0,width,0]
+        center = [width / 2, height / 2]
+        value_relative_to = [width / 2, height / 2]
+        base_video_centroid = None
+        base_width = base_height = 0 
 
 
+      hex_grid, cell_size = generate_grid(width, height, total_videos, bounds, center, shape=shape)
+
+      hex_grid = sorted(hex_grid, key=lambda cell: distance_from_region( cell, bounds ), reverse = False)
+      # hex_grid = sorted(hex_grid, key=lambda cell: distance( cell, value_relative_to ), reverse = False)
+
+      seating_by_reactor, seats = assign_seats_to_reactors(  
+                                      seats=hex_grid, 
+                                      grid_centroid=value_relative_to,
+                                      seat_size=cell_size,
+                                      base_video_width=base_width, 
+                                      base_video_height=base_height,
+                                      grid_size=(width, height))
+
+      ######################
+      # write layout to json
+      layout = {
+        "seats": seats,
+        "assignments": seating_by_reactor,
+        "grid_size": (width, height),
+        "seat_size": cell_size,
+        "base_size": (base_width, base_height),
+        "base_location": bounds, 
+        "base_video_centroid": base_video_centroid,
+        "adjustments": {}
+      }
+      save_object_to_file(output_path, layout)
+
+    apply_adjustments(layout)
+
+
+
+    return (base_video, layout["seat_size"], layout['base_video_centroid'])
+
+
+def apply_adjustments(layout):
+    base_width = layout['base_size'][0]
+    for channel, reaction in conf.get('reactions').items():
+      for reactor in reaction['reactors']:
+        reactor['grid_assignment'] = layout["assignments"][reactor["key"]]
+        reactor['layout_adjustments'] = layout.get("adjustments", {}).get(reactor["key"], {})
+
+        for k,v in reactor['layout_adjustments'].items():
+            if k == 'move':
+                reactor['grid_assignment'] = v
+
+        
+        # Flip the clip horizontally if reactor was placed on the wrong side
+        horiz_gaze, vert_gaze = reaction.get('face_orientation')
+        if (horiz_gaze ==  'left' and reactor['grid_assignment'][0] < base_width / 2) or \
+           (horiz_gaze == 'right' and reactor['grid_assignment'][0] > base_width / 2):
+
+           if 'flip_x' not in reactor['layout_adjustments']:
+                print("\t\tAuto flipping", reactor['key'])
+                reactor['layout_adjustments']['flip_x'] = True
+
+    base_video_adjustments = layout['adjustments'].get('base_video', {})
+    for k,v in base_video_adjustments.items():
+        if k == 'shift':
+            layout['base_location'] = (layout['base_location'][0] + v[0], layout['base_location'][1] + v[1])
+            layout['base_video_centroid'] = (layout['base_video_centroid'][0] + v[0], layout['base_video_centroid'][1] + v[1])
 
 
 # I want to create a hexagonal grid that fits a space of size width x height. There needs to be at 
@@ -258,7 +311,7 @@ def seat_score(reaction, seat, grid_centroid, max_distance, seat_preference, bas
 
       section_score = (max_distance - distance_from_region(seat, section_preference)) / max_distance
 
-      section_score *= (1 - .1 * i)
+      section_score *= (1 - .05 * i)
       score =  closeness_score * section_score * section_score
       if score > best_score:
         best_score = score
@@ -349,7 +402,6 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
             chosen_seat = chosen_seats[i]
             seating_by_reactor[reactor['key']] = chosen_seat  
             seating_by_seat[str(chosen_seat)] = (reaction, reactor)
-            reactor['grid_assignment'] = chosen_seat
 
             print(f"\t\tASSIGNED {chosen_seat} to {chosen_channel} / {i}. Priority={reaction.get('priority')} Target position={seat_preferences[chosen_channel]}")
 
@@ -430,7 +482,9 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
         if chosen_channel:
           assign_seats(chosen_seats, chosen_channel)
 
-    return seating_by_reactor
+
+
+    return seating_by_reactor, seats
 
 
 
