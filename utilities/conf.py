@@ -67,7 +67,12 @@ def make_conf(song_def, options, temp_directory):
   if not os.path.exists(outro_path):
     outro_path = False
 
-  background_path = os.path.join(song_directory, 'background.mp4')
+
+  background_extensions = ['mp4', 'png', 'jpg', 'jpeg']
+  for ext in background_extensions:
+    background_path = os.path.join(song_directory, f'background.{ext}')
+    if os.path.exists(background_path):
+      break
 
   if not os.path.exists(background_path):
     background_path = None
@@ -110,6 +115,8 @@ def make_conf(song_def, options, temp_directory):
     "base_video_placement": song_def.get('base_video_placement', 'center / bottom'),
 
     "zoom_pans": song_def.get('zoom_pans', []),
+
+    "background.reverse": song_def.get('background.reverse', False)
   })
 
 

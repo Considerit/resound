@@ -116,35 +116,39 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
     if conf.get('background'):
         reversing_bg = conf.get('background.reverse', False)
         video_background_path = conf.get('background')
-        video_background = VideoFileClip(video_background_path).without_audio()
+        if video_background_path.endswith('mp4'):
+            video_background = VideoFileClip(video_background_path).without_audio()
 
-        if video_background.duration < final_clip.duration:
+            if video_background.duration < final_clip.duration:
 
-            if not reversing_bg:
-                loops_required = int(np.ceil(final_clip.duration / video_background.duration))
-                video_clips = [video_background] * loops_required
-        
-            else: 
-                def reverse_clip(clip):
-                    frames = [frame for frame in clip.iter_frames()]
-                    reversed_frames = frames[::-1]
-                    return ImageSequenceClip(reversed_frames, fps=clip.fps)
+                if not reversing_bg:
+                    loops_required = int(np.ceil(final_clip.duration / video_background.duration))
+                    video_clips = [video_background] * loops_required
+            
+                else: 
+                    def reverse_clip(clip):
+                        frames = [frame for frame in clip.iter_frames()]
+                        reversed_frames = frames[::-1]
+                        return ImageSequenceClip(reversed_frames, fps=clip.fps)
 
-                loops_required = int(np.ceil(final_clip.duration / (2 * video_background.duration)))
-                
-                video_clips = []
-                reversed_clip = None
-                for _ in range(loops_required):
-                    video_clips.append(video_background)  # Forward clip
-                    if reversed_clip is None:
-                        reversed_clip = reverse_clip(video_background)
-                    video_clips.append(reversed_clip)  # Backward clip
+                    loops_required = int(np.ceil(final_clip.duration / (2 * video_background.duration)))
+                    
+                    video_clips = []
+                    reversed_clip = None
+                    for _ in range(loops_required):
+                        video_clips.append(video_background)  # Forward clip
+                        if reversed_clip is None:
+                            reversed_clip = reverse_clip(video_background)
+                        video_clips.append(reversed_clip)  # Backward clip
 
-            video_background = concatenate_videoclips(video_clips)
+                video_background = concatenate_videoclips(video_clips)
+        else: 
+            video_background = ImageClip(video_background_path).set_duration(final_clip.duration)
+
 
         # Set the final_clip as a layer on top of the background
         final_clip = CompositeVideoClip([
-            video_background.resize(output_size).set_duration(final_duration),
+            video_background.resize(output_size).set_duration(final_clip.duration),
             final_clip
         ])
 
@@ -504,10 +508,15 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
             position = reactor['position']
 
             # Flip the clip horizontally if reactor was placed on the wrong side
+
             horiz_gaze, vert_gaze = reaction.get('face_orientation')
             if (horiz_gaze ==  'left' and reactor['position'][0] < output_size[0] / 2) or \
                (horiz_gaze == 'right' and reactor['position'][0] > output_size[0] / 2):
-                clip = clip.fx(vfx.mirror_x)
+
+                if reaction.get('channel') == 'Second Hand Reactions ' and conf.get('song_name') == 'Hero':
+                    print("skipping the flip")
+                else:
+                    clip = clip.fx(vfx.mirror_x)
 
             clip = clip.set_position(position)
 
