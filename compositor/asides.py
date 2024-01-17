@@ -49,26 +49,16 @@ def create_asides(reaction):
         if current_group:
             groups.append(current_group)
 
-
         consolidated_asides = []
         for group in groups:
-            skip_segments = []
-
-            # Get the start of the first aside and the end of the last aside in the group
-            start, end = group[0][0], group[-1][1]
-
-            # Iterate through the group and find gaps between asides
-            for i in range(len(group) - 1):
-                current_end = group[i][1]
-                next_start = group[i + 1][0]
-                if next_start > current_end:
-                    skip_segments.append((current_end - start, next_start - start))
+            start = group[0][0]
+            end = group[-1][1]
 
             aside_conf = {
                 'range': (start, end),
                 'insertion_point': group[-1][2],
                 'rewind': group[-1][3],
-                'skip_segments': skip_segments
+                'keep_segments': [ (g[0] - start, g[1] - start) for g in group ]
             }
             consolidated_asides.append(aside_conf)
 
@@ -84,24 +74,12 @@ def create_asides(reaction):
 
         return start, end, insertion_point, rewind
 
-    def remove_skipped_segments(aside_reactor_views, skip_segments):
-        skip_segments.sort( key=lambda x: x[0], reverse=True )
+    def remove_skipped_segments(aside_reactor_views, keep_segments):
+        keep_segments.sort( key=lambda x: x[0] )
 
         for reactor_view in aside_reactor_views:
             # Initialize a list to hold the subclips
-            subclips = []
-            last_end = 0  # Keep track of the end of the last segment added to subclips
-
-            for start, end in skip_segments:
-                # Add the segment from the last end to the current start
-                if start > last_end:
-                    subclips.append(reactor_view['clip'].subclip(last_end, start))
-
-                last_end = end
-
-            # Add the remaining part of the clip after the last skip segment
-            if last_end < reactor_view['clip'].duration:
-                subclips.append(reactor_view['clip'].subclip(last_end, reactor_view['clip'].duration))
+            subclips = [ reactor_view['clip'].subclip(aside[0], aside[1]) for aside in keep_segments ]
 
             # Concatenate all the subclips together
             reactor_view['clip'] = concatenate_videoclips(subclips)
@@ -116,7 +94,7 @@ def create_asides(reaction):
         start, end = aside['range']
         insertion_point = aside['insertion_point']
         rewind = aside['rewind']
-        skip_segments = aside['skip_segments']
+        keep_segments = aside['keep_segments']
 
         # first, isolate the correct part of the reaction video
         aside_video_clip = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-aside-{i}.mp4")
@@ -130,13 +108,13 @@ def create_asides(reaction):
 
         # do face detection on it
         aside_reactor_views, __ = create_reactor_view(reaction, aside_video = aside_video_clip, show_facial_recognition=False)
-        aside_reactor_views = remove_skipped_segments(aside_reactor_views, skip_segments)
+        aside_reactor_views = remove_skipped_segments(aside_reactor_views, keep_segments)
 
         audio_data = aside_reactor_views[0]['clip'].audio.set_fps(sr).to_soundarray()
         for reactor_view in aside_reactor_views: 
-
             reactor_view['audio'] = audio_data
             reactor_view['clip']  = reactor_view['clip'].without_audio()
+
 
         reaction["aside_clips"][insertion_point] = (aside_reactor_views, rewind)
 
