@@ -746,7 +746,7 @@ dom.ALIGNMENT = ->
 
 
   @local.page ?= 0
-  @local.per_page = 25
+  @local.per_page = 10
 
 
   pagination = =>
@@ -828,9 +828,6 @@ dom.ALIGNMENT = ->
           'Hide unselected'
 
 
-      if task == 'asides'
-        ASIDE_MAKER()
-
       if task == 'alignment'
         BUTTON 
           key: 'show reactions'
@@ -878,18 +875,24 @@ dom.ALIGNMENT = ->
 
 
 dom.REACTION_ALIGNMENT = ->
+
   song = @props.song
   reaction = @props.reaction
-  task = @props.task
-  hide_unselected = @props.hide_unselected
 
   metadata = retrieve("/reaction_metadata/#{song}/#{reaction.id}")
+  song_config = retrieve("/song_config/#{@props.song}")
+  config = song_config.config
+
+  reaction_file_prefix = reaction.file_prefix or reaction.reactor
+  retrieve("/action/#{reaction.id}") # subscribe to actions on this reaction
+
+  task = @props.task
+  hide_unselected = @props.hide_unselected
 
   song_dir = ["/media", song].join('/')
   meta_dir = [song_dir, 'bounded'].join('/')
   reactions_dir = [song_dir, 'reactions'].join('/')
 
-  reaction_file_prefix = reaction.file_prefix or reaction.reactor
 
   aligned_video = [meta_dir, "#{reaction_file_prefix}-CROSS-EXPANDER" ].join('/')
   reaction_video = [reactions_dir, "#{reaction_file_prefix}" ].join('/')
@@ -912,7 +915,7 @@ dom.REACTION_ALIGNMENT = ->
   else if task == 'backchannels'
     vids = [isolated_backchannel]    
   else if task == 'asides'
-    vids = [song_video, reaction_video]
+    vids = [song_video, reaction_video, reaction_video]
   else if task == 'reactors'
     vids = [aligned_video]
     for v in metadata.reactors or [] 
@@ -1076,6 +1079,11 @@ dom.REACTION_ALIGNMENT = ->
               task: task
               song: song
               reaction_file_prefix: reaction_file_prefix
+              onInitialize: do(idx) => (key) =>
+                @local["video-#{idx}-time-key"] = key
+              onTimeClicked: do(idx) => (e, time) => 
+                @local["video-#{idx}-time"] = time
+                save @local
               onVideoClicked: (e) => 
                 if task == 'reactors'
                   x = event.offsetX
@@ -1086,6 +1094,55 @@ dom.REACTION_ALIGNMENT = ->
                   @local.clicked_at = [x / w, y / h]
                   save @local
 
+    if task == 'asides'
+
+      insert_at = @local['video-0-time']
+      start = @local['video-1-time']
+      end = @local['video-2-time']
+
+      DIV 
+        style:
+          paddingTop: 30
+
+        if (config.asides?[reaction_file_prefix] or []).length > 0
+          DIV null,
+            LABEL null, 
+              'Asides: '
+            for aside, aside_idx in (config.asides?[reaction_file_prefix] or [])
+
+              BUTTON 
+                onClick: do (aside, aside_idx) => => 
+                  @local.editing_aside = [aside, aside_idx]
+                  delete @local['video-0-time']
+                  delete @local['video-1-time']
+                  delete @local['video-2-time']
+                  save @local
+
+                "#{aside_idx}"
+
+        if @local.editing_aside
+          EDIT_ASIDE
+            key: "aside-#{aside_idx}-#{@local.editing_aside}"
+            song: @props.song
+            aside: @local.editing_aside
+            fresh: false
+            time_state_key: @local.key
+            registered_media: @props.registered_media 
+            reaction_file_prefix: reaction_file_prefix
+            on_cancel: =>
+              delete @local.editing_aside
+              delete @local['video-0-time']
+              delete @local['video-1-time']
+              delete @local['video-2-time']
+              save @local
+        
+        else if insert_at? && start? && end?
+          EDIT_ASIDE
+            song: @props.song
+            fresh: true
+            time_state_key: @local.key
+            registered_media: @props.registered_media
+            reaction_file_prefix: reaction_file_prefix
 
     if task == 'alignment' and @props.show_painting
       A
@@ -1102,111 +1159,374 @@ dom.REACTION_ALIGNMENT = ->
 
 
     if task == 'reactors' and (metadata.reactors or []).length > 0
-      song_config = retrieve("/song_config/#{@props.song}")
-      config = song_config.config
 
-      fname = metadata.reactors[0]
-      parts = fname.split('-')
-      vert = parts[parts.length - 1]
-      hori = parts[parts.length - 2]
+      REACTOR_TASKS
+        song: song
+        reaction: reaction
 
-      override = config?.face_orientation?[reaction_file_prefix]
 
-      sel_hori = override?[0] or hori
-      sel_vert = override?[1] or vert
 
-      num_reactors = config?.multiple_reactors?[reaction_file_prefix] or metadata.reactors.length
 
-      featured = 'reaction_file_prefix' in (config?.featured or [])
+dom.EDIT_ASIDE = ->
 
-      priority = config?.priority?[reaction_file_prefix] or (if featured then 75 else 50)
+  time_state = retrieve(@props.time_state_key)  
 
+  song_config = retrieve("/song_config/#{@props.song}")
+  config = song_config.config
+
+  insert_at = time_state["video-0-time"]
+  start = time_state["video-1-time"]
+  end = time_state["video-2-time"]
+
+  reaction_file_prefix = @props.reaction_file_prefix
+
+  if @props.fresh
+    @local.rewind ?= 3
+
+  else
+    [aside, aside_idx] = @props.aside
+    start ?= aside[0]  
+    end ?= aside[1]      
+    insert_at ?= aside[2]
+    if aside.length > 3
+      @local.rewind = aside[3]
+    else
+      @local.rewind = 3
+
+  sort_asides = (asides) =>
+    asides.sort (x,y) -> 
+      diff = x[2] - y[2]
+      if diff == 0
+        return x[0] - y[0]
+      return diff
+
+    return asides
+
+  split_aside = => 
+    if !(end > @local.split_at > start)
+      return # split position not between start and end
+
+    asides = config.asides[reaction_file_prefix]
+
+    split_one = aside.slice()
+    split_two = aside.slice()
+
+    split_one[1] = @local.split_at
+    split_one[3] = false
+    split_two[0] = @local.split_at
+
+
+    asides.splice(aside_idx, 1)
+    asides.push(split_one)
+    asides.push(split_two)
+
+    asides = sort_asides(asides)
+    save song_config
+
+    @local.split_at = null
+    @local.show_split = false
+    save @local
+
+
+  DIV null,
+
+    BUTTON 
+      onClick: => 
+        vid_key = time_state['video-0-time-key']
+        @props.registered_media[vid_key].set_time(insert_at)
+
+        vid_key = time_state['video-1-time-key']
+        @props.registered_media[vid_key].set_time(start)
+
+        vid_key = time_state['video-2-time-key']
+        @props.registered_media[vid_key].set_time(end)
+
+
+      '<-- apply'
+
+    DIV 
+      style: 
+        paddingTop: 20
+        display: 'flex'
+        flexDirection: 'column'
+      DIV null,
+        LABEL 
+          style: 
+            width: 80
+            display: 'inline-block' 
+          "Insert at:"
+
+        INPUT
+          value: insert_at
+          type: 'text'
+          onChange: (e) =>
+            time_state['video-0-time'] = parseFloat(e.target.value)
+            save time_state
+
+        BUTTON 
+          onClick: => 
+            vid_key = time_state['video-0-time-key']
+            @props.registered_media[vid_key].set_time(insert_at)
+
+          "Go"
+
+      DIV null,
+        LABEL
+          style: 
+            width: 80
+            display: 'inline-block'             
+          "Start:"
+
+        INPUT
+          value: start
+          type: 'text'
+          onChange: (e) =>
+            time_state['video-1-time'] = parseFloat(e.target.value)
+            save time_state
+
+        BUTTON 
+          onClick: =>
+            vid_key = time_state['video-1-time-key']
+            @props.registered_media[vid_key].set_time(start)
+          "Go"
+
+      DIV null,
+        LABEL 
+          style: 
+            width: 80
+            display: 'inline-block'             
+          "End:"
+
+        INPUT
+          value: end
+          type: 'text'
+          onChange: (e) =>
+            time_state['video-2-time'] = parseFloat(e.target.value)
+            save time_state
+
+        BUTTON 
+          onClick: => 
+            vid_key = time_state['video-2-time-key']
+            @props.registered_media[vid_key].set_time(end)
+
+          "Go"
+
+      DIV null,
+        LABEL 
+          style: 
+            width: 80
+            display: 'inline-block'             
+
+          'Rewind:'
+
+        INPUT 
+          type: 'text'
+          defaultValue: @local.rewind
+          onChange: (e) => 
+            @local.rewind = parseInt(e.target.value)
+            save @local
 
       DIV 
         style:
-          fontSize: 16
           display: 'flex'
-          flexDirection: 'column'
+          paddingTop: 12
 
-        DIV
+        BUTTON
           style: 
-            display: 'flex'
-          DIV null,
-
-            SELECT 
-              style: 
-                fontSize: 18
-              value: sel_hori
-              onChange: (e) => 
-                config.face_orientation ?= {}
-                config.face_orientation[reaction_file_prefix] = [e.target.value, sel_vert]
-                save song_config
-
-              for val in ['left', 'right', 'center']
-                OPTION 
-                  value: val
-                  style: {}
-                  val
-
-          DIV null,
-            SELECT  
-              style: 
-                fontSize: 18
-              value: sel_vert
-              onChange: (e) => 
-                config.face_orientation ?= {}
-                config.face_orientation[reaction_file_prefix] = [sel_hori, e.target.value]
-                save song_config
-
-              for val in ['up', 'down', 'middle']
-                OPTION 
-                  value: val
-                  style: {}
-                  val
-          
-        DIV null,
-
-          INPUT
-            type: 'range'
-            min: 0
-            max: 100
-            value: priority
-            onChange: (e) =>
-              config.priority ?= {} 
-              config?.priority[reaction_file_prefix] = parseInt(e.target.value)
-              save song_config
+            flexGrow: 1
+          onClick: => 
+            config.asides ?= {}
+            config.asides[reaction_file_prefix] ?= []
+            asides = config.asides[reaction_file_prefix]
 
 
-        if @local.clicked_at
-          DIV null,
-            SPAN null,
-              "#{Math.round(@local.clicked_at[0] * 100)}% / #{Math.round(@local.clicked_at[1] * 100)}%"
-            BUTTON 
-              onClick: => 
-                config.fake_reactor_position ?= {}
-                config.fake_reactor_position[reaction_file_prefix] ?= []
-                config.fake_reactor_position[reaction_file_prefix].push @local.clicked_at
-                save song_config
+            if @props.fresh
+              # possibly overwrite existing aside...
+              for aside in asides
+                [sstart, eend, iinsert_at, rrewind] = aside
+                if (sstart == start && eend == end) ||   \
+                   (iinsert_at == insert_at && eend == end) || \
+                   (iinsert_at == insert_at && start == start)
 
-              'Exclude as false positive reactor'
+                    aside[0] = start
+                    aside[1] = end
+                    aside[2] = insert_at
+                    aside[3] = @local.rewind
+                    save song_config
+                    return
 
-        SELECT
-          style: 
-            fontSize: 18
-          value: num_reactors
-          onChange: (e) =>
-            config.multiple_reactors ?= {}
-            config.multiple_reactors[reaction_file_prefix] = parseInt(e.target.value)
+              new_aside = [start, end, insert_at, @local.rewind]
+              asides.push(new_aside)
+            else
+              asides[aside_idx] = [start, end, insert_at, @local.rewind]
+
+            asides = sort_asides(asides)
             save song_config
 
-          for val in ['1','2','3','4','5']
+
+          if @props.fresh then 'Add Aside' else 'Update Aside'
+
+        if !@props.fresh
+          BUTTON
+            style: 
+              flexGrow: 1
+            onClick: => 
+              @props.on_cancel?()
+            "cancel"
+
+
+
+        if !@props.fresh
+          BUTTON 
+            style: 
+              flexGrow: 0
+              backgroundColor: 'transparent'
+              border: 'none'
+
+            onClick: => 
+              if confirm("Are you sure you want to delete this aside?")
+                asides = config.asides[reaction_file_prefix]
+                asides.splice(aside_idx, 1)
+                save song_config
+            I 
+              className: "glyphicon glyphicon-trash"
+
+        if !@props.fresh
+          BUTTON 
+            style:
+              flexGrow: 0
+              backgroundColor: 'transparent'
+              border: 'none'
+            onClick: => 
+              @local.show_split = !@local.show_split
+              save @local
+
+            I
+              className: "glyphicon glyphicon-scissors"
+
+        if @local.show_split
+          DIV null, 
+
+            INPUT
+              type: 'text'
+              onChange: (e) => 
+                @local.split_at = parseFloat(e.target.value)
+                save @local
+            BUTTON
+              onClick: (e) => 
+                split_aside()
+              'Split'
+
+dom.REACTOR_TASKS = ->
+  song = @props.song
+  reaction = @props.reaction
+
+  metadata = retrieve("/reaction_metadata/#{song}/#{reaction.id}")
+  song_config = retrieve("/song_config/#{@props.song}")
+  config = song_config.config
+
+  reaction_file_prefix = reaction.file_prefix or reaction.reactor
+  retrieve("/action/#{reaction.id}") # subscribe to actions on this reaction
+
+  fname = metadata.reactors[0]
+  parts = fname.split('-')
+  vert = parts[parts.length - 1]
+  hori = parts[parts.length - 2]
+
+  override = config?.face_orientation?[reaction_file_prefix]
+
+  sel_hori = override?[0] or hori
+  sel_vert = override?[1] or vert
+
+  num_reactors = config?.multiple_reactors?[reaction_file_prefix] or metadata.reactors.length
+
+  featured = 'reaction_file_prefix' in (config?.featured or [])
+
+  priority = config?.priority?[reaction_file_prefix] or (if featured then 75 else 50)
+
+
+  DIV 
+    style:
+      fontSize: 16
+      display: 'flex'
+      flexDirection: 'column'
+
+    DIV
+      style: 
+        display: 'flex'
+      DIV null,
+
+        SELECT 
+          style: 
+            fontSize: 18
+          value: sel_hori
+          onChange: (e) => 
+            config.face_orientation ?= {}
+            config.face_orientation[reaction_file_prefix] = [e.target.value, sel_vert]
+            save song_config
+
+          for val in ['left', 'right', 'center']
             OPTION 
               value: val
               style: {}
               val
 
+      DIV null,
+        SELECT  
+          style: 
+            fontSize: 18
+          value: sel_vert
+          onChange: (e) => 
+            config.face_orientation ?= {}
+            config.face_orientation[reaction_file_prefix] = [sel_hori, e.target.value]
+            save song_config
+
+          for val in ['up', 'down', 'middle']
+            OPTION 
+              value: val
+              style: {}
+              val
+      
+    DIV null,
+
+      INPUT
+        type: 'range'
+        min: 0
+        max: 100
+        value: priority
+        onChange: (e) =>
+          config.priority ?= {} 
+          config?.priority[reaction_file_prefix] = parseInt(e.target.value)
+          save song_config
 
 
+    if @local.clicked_at
+      DIV null,
+        SPAN null,
+          "#{Math.round(@local.clicked_at[0] * 100)}% / #{Math.round(@local.clicked_at[1] * 100)}%"
+        BUTTON 
+          onClick: => 
+            config.fake_reactor_position ?= {}
+            config.fake_reactor_position[reaction_file_prefix] ?= []
+            config.fake_reactor_position[reaction_file_prefix].push @local.clicked_at
+            save song_config
+
+          'Exclude as false positive reactor'
+
+    SELECT
+      style: 
+        fontSize: 18
+      value: num_reactors
+      onChange: (e) =>
+        config.multiple_reactors ?= {}
+        config.multiple_reactors[reaction_file_prefix] = parseInt(e.target.value)
+        save song_config
+
+      for val in ['1','2','3','4','5']
+        OPTION 
+          value: val
+          style: {}
+          val
 
 
 dom.SYNCHRONIZED_VIDEO = ->
@@ -1266,6 +1586,9 @@ dom.SYNCHRONIZED_VIDEO = ->
 
     TIME_DISPLAY
       time_state: "time-#{@local.key}"
+      onTimeClicked: @props.onTimeClicked
+      onInitialize: @props.onInitialize
+      parent_key: @local.key
 
 
 dom.BEST_PATH_BAR = ->
@@ -1372,7 +1695,12 @@ dom.TIME_DISPLAY = ->
 
       navigator.clipboard.writeText(active.number)
 
+      @props.onTimeClicked?(ev, time)
+
     "#{time}"
+
+dom.TIME_DISPLAY.up = ->
+  @props.onInitialize?(@props.parent_key)
 
 
 
@@ -1481,6 +1809,13 @@ dom.SYNCHRONIZED_VIDEO.refresh = ->
           return mute
         return false 
 
+      set_time: (base_time) => 
+        @ignore = true
+        vid.currentTime = base_time
+        setTimeout =>
+          @ignore = false
+        , 1500
+
       synchronize: (base_time) =>
         if !@props.keep_synced
           return
@@ -1502,6 +1837,8 @@ dom.SYNCHRONIZED_VIDEO.refresh = ->
       vid.currentTime = get_reaction_time(0, alignment_data) # initialize to beginning of base video in the reaction
 
     handle_seek = (ev) =>
+      if @ignore
+        return
 
       ts = ev.target.currentTime
       if Math.abs(@ignore_seek - ts) < .00001
@@ -1562,9 +1899,6 @@ dom.SYNCHRONIZED_AUDIO = ->
 
   audio = @props.audio
   alignment_data = @props.alignment_data
-
-
-  console.log(audio)
 
   DIV   
     style: 
@@ -1676,72 +2010,6 @@ dom.SYNCHRONIZED_AUDIO.refresh = ->
 
 
 
-
-
-
-dom.ASIDE_MAKER = ->
-  active = retrieve('active_number')
-  aside = retrieve('active_aside')
-  
-  @last_active_number ?= active.number * active.number / active.number
-
-  if @last_active_number != active.number && @last_selected
-    @last_selected.value = active.number
-    @last_selected = null
-    @last_active_number = active.number
-
-
-  DIV 
-    style:
-      display: 'flex'
-
-    INPUT 
-      style:
-        width: 70
-      ref: 'start'
-      onClick: (ev) =>
-        @last_selected = ev.target
-      onChange: (ev) =>
-        @local.start = ev.target.value
-        save @local
-      type: 'number'
-
-    INPUT 
-      style:
-        width: 70
-      ref: 'end'
-      onClick: (ev) =>
-        @last_selected = ev.target
-      onChange: (ev) =>
-        @local.end = ev.target.value
-        save @local
-      type: 'number'
-
-    INPUT 
-      style:
-        width: 70    
-      ref: 'insert'
-      onClick: (ev) =>
-        @last_selected = ev.target
-      onChange: (ev) =>
-        @local.insert = ev.target.value
-        save @local
-      type: 'number'
-
-    INPUT 
-      style:
-        width: 70    
-      onChange: (ev) =>
-        @local.repeat = ev.target.value
-        save @local
-      type: 'text'
-
-
-    DIV 
-      style: 
-        marginLeft: 10
-
-      "[ #{@refs.start?.getDOMNode().value or ""}, #{@refs.end?.getDOMNode().value or ""}, #{@refs.insert?.getDOMNode().value or ""}#{if @local.repeat then ", #{@local.repeat}" else ''}]"
 
 
 
