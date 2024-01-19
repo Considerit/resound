@@ -75,10 +75,6 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
     draft = conf.get('draft', False)
 
     base_video = VideoFileClip(base_video_path)
-    if conf.get('base_video_transformations').get('flip', False):
-        # Flip the clip horizontally
-        base_video = base_video.fx(vfx.mirror_x)
-        # base_video.write_videofile("flipped_video.mp4")
 
 
     width, height = output_size
@@ -507,7 +503,7 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
 
             position = reactor['position']
 
-            if reactor['layout_adjustments'].get('flip_x', False):
+            if reactor['layout_adjustments'].get('flip-x', False):
                 clip = clip.fx(vfx.mirror_x)
 
             clip = clip.set_position(position)

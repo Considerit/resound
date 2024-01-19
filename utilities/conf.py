@@ -13,7 +13,7 @@ from utilities import print_profiling
 
 from library import channel_labels
 
-
+from moviepy.editor import vfx, VideoFileClip
 
 # from guppy import hpy
 # h = hpy()
@@ -480,6 +480,20 @@ def load_base_video():
     else:
         print("ERROR! base audio not found")
         raise Exception()
+
+
+    if conf.get('base_video_transformations').get('flip', False):
+        base_name, extension = os.path.splitext(base_video_path)  
+        original_video_path = base_video_path      
+        base_video_path = f"{base_name}-flipped{extension}".replace('.webm', '.mp4')
+
+        print("HI!", not os.path.exists(base_video_path))
+        if not os.path.exists(base_video_path):
+          base_video = VideoFileClip(original_video_path)
+          base_video = base_video.fx(vfx.mirror_x)
+          base_video.write_videofile(base_video_path,
+                                     codec="h264_videotoolbox",
+                                     ffmpeg_params=['-q:v', '60'])
 
 
     song_audio_data, _, base_audio_path = extract_audio(base_video_path)

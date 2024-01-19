@@ -1022,7 +1022,6 @@ dom.REACTION_ALIGNMENT = ->
           navigator.clipboard.writeText(reaction.reactor)
 
         onDoubleClick: =>
-          console.log('HI!')
           @local.selected = !@local.selected
           save @local
 
@@ -1111,6 +1110,8 @@ dom.REACTION_ALIGNMENT = ->
             for aside, aside_idx in (config.asides?[reaction_file_prefix] or [])
 
               BUTTON 
+                style: 
+                  backgroundColor: if aside_idx == @local.editing_aside?[1] then '#ccc'
                 onClick: do (aside, aside_idx) => => 
                   @local.editing_aside = [aside, aside_idx]
                   delete @local['video-0-time']
@@ -1159,10 +1160,10 @@ dom.REACTION_ALIGNMENT = ->
 
 
     if task == 'reactors' and (metadata.reactors or []).length > 0
-
       REACTOR_TASKS
         song: song
         reaction: reaction
+        clicked_at: @local.clicked_at
 
 
 
@@ -1500,15 +1501,15 @@ dom.REACTOR_TASKS = ->
           save song_config
 
 
-    if @local.clicked_at
+    if @props.clicked_at
       DIV null,
         SPAN null,
-          "#{Math.round(@local.clicked_at[0] * 100)}% / #{Math.round(@local.clicked_at[1] * 100)}%"
+          "#{Math.round(@props.clicked_at[0] * 100)}% / #{Math.round(@props.clicked_at[1] * 100)}%"
         BUTTON 
           onClick: => 
             config.fake_reactor_position ?= {}
             config.fake_reactor_position[reaction_file_prefix] ?= []
-            config.fake_reactor_position[reaction_file_prefix].push @local.clicked_at
+            config.fake_reactor_position[reaction_file_prefix].push @props.clicked_at
             save song_config
 
           'Exclude as false positive reactor'

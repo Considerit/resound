@@ -92,7 +92,7 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
 
 
 def apply_adjustments(layout):
-    base_width = layout['base_size'][0]
+    base_width = layout['grid_size'][0]
     for channel, reaction in conf.get('reactions').items():
       for reactor in reaction['reactors']:
         reactor['grid_assignment'] = layout["assignments"][reactor["key"]]
@@ -109,7 +109,7 @@ def apply_adjustments(layout):
            (horiz_gaze == 'right' and reactor['grid_assignment'][0] > base_width / 2):
 
             if reactor['layout_adjustments'].get('flip-x', True):
-                print("\t\tAuto flipping", reactor['key'])
+                print("\t\tAuto flipping", reactor['key'], reactor['grid_assignment'], base_width)
                 reactor['layout_adjustments']['flip-x'] = True
 
     base_video_adjustments = layout['adjustments'].get('base_video', {})
