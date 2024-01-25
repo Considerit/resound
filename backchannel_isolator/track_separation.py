@@ -1,6 +1,9 @@
 import noisereduce as nr
 import soundfile as sf
 import os
+import subprocess
+import shlex
+
 from moviepy.editor import VideoFileClip
 
 
@@ -12,13 +15,29 @@ from utilities import conf, conversion_audio_sample_rate as sr
 # Track separation and high pass filtering
 
 
-spleeter_separator = None
-def get_spleeter(): 
-    global spleeter_separator
-    if spleeter_separator is None:
-        from spleeter.separator import Separator
-        spleeter_separator = Separator('spleeter:2stems')
-    return spleeter_separator
+# the spleeter python interface hangs a lot and seems to have some memory leaks, so I'm just going to call
+# it directly from the command line via subprocess
+# spleeter_separator = None
+# def get_spleeter(): 
+#     global spleeter_separator
+#     if spleeter_separator is None:
+#         from spleeter.separator import Separator
+#         spleeter_separator = Separator('spleeter:2stems')
+#     return spleeter_separator
+
+
+
+
+def run_spleeter(audio_path, output_dir, duration):
+    # audio_path = shlex.quote(audio_path)  
+    # output_dir = shlex.quote(output_dir) 
+
+    # get_spleeter().separate_to_file(audio_path, output_dir, duration=duration)
+    command = f"spleeter separate -o \"{output_dir}\" -d {duration} \"{audio_path}\""
+
+    # command = shlex.quote(command)
+    subprocess.check_output(['zsh', '-c', command], text=True)
+
 
 
 def separate_vocals(output_dir, audio_path, output_filename, duration=None):
@@ -42,8 +61,9 @@ def separate_vocals(output_dir, audio_path, output_filename, duration=None):
                     rate = f.samplerate
                     duration = frames / float(rate)
                     
+            
+            run_spleeter(audio_path, output_dir, duration)
 
-            get_spleeter().separate_to_file(audio_path, output_dir, duration=duration)
             audio_file_prefix = os.path.splitext(audio_path)[0].split('/')[-1]
             weird_spleeter_outputpath = os.path.join(output_dir, audio_file_prefix)
 
