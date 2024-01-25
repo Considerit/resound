@@ -85,7 +85,8 @@ dom.CHANNELS = ->
         bi = (b.mentioned_in or []).length
         ai - bi
 
-
+  else if @local.sort == 'alphabetical'
+    all.sort (b,a) -> alphabetical_compare(a.reactor, b.reactor)
   else
     all.sort( (b,a) -> (a.viewCount or 1) * (a.subscriberCount or 1) - (b.viewCount or 1) * (b.subscriberCount or 1)  )
 
@@ -116,7 +117,7 @@ dom.CHANNELS = ->
           margin: '8px 0'
           padding: 0
 
-        for sort in ['activity', 'inclusions']
+        for sort in ['activity', 'inclusions', 'alphabetical']
           LI
             style:
               listStyle: 'none'
@@ -202,6 +203,15 @@ dom.CHANNELS = ->
             style: {}
             n
 
+    DIV null,
+
+      INPUT 
+        key: 'filter'
+        type: 'text'
+        defaultValue: "" 
+        onChange: (e) => 
+          @local.filter_channels = e.target.value
+          save @local
 
     for channel_info in all
 
@@ -209,9 +219,12 @@ dom.CHANNELS = ->
 
         if (@local.mentioned_in == ' ' or @local.mentioned_in in channel_info.mentioned_in) and 
            (@local.included_in == ' ' or @local.included_in in channel_info.included_in)
-          CHANNEL
-            key: channel_info.channelId
-            channel_info: channel_info
+          
+          if !@local.filter_channels || (channel_info.title?.toLowerCase().indexOf(@local.filter_channels.toLowerCase()) > -1)
+
+            CHANNEL
+              key: channel_info.channelId
+              channel_info: channel_info
 
 
 dom.CHANNEL = ->
@@ -320,9 +333,28 @@ dom.SONGS = ->
   all = retrieve('/songs').songs
   return DIV null if !all
 
-  DIV null,
 
-    UL null,
+  pinned = (s for s in all when retrieve("/song_config/#{s}").config?.pinned)
+  console.log(pinned)
+  DIV null,
+    UL 
+      style:
+        marginTop: 50
+      for song in pinned
+        LI null,
+
+          A
+            href: "/songs/#{song}"
+            style:
+              fontSize: 24
+              fontWeight: 'bold'
+              backgroundColor: 'black'
+              color: 'white'
+            song
+
+    UL 
+      style:
+        marginTop: 50
       for song in all
         LI null,
 
@@ -473,8 +505,9 @@ dom.INVENTORY = ->
 
   if @local.sort == 'views'
     reactions.sort (a,b) -> b.views - a.views
+  else if @local.sort == 'alphabetical'
+    reactions.sort (a,b) -> alphabetical_compare(a.reactor, b.reactor)
   else # channel subscriptions
-
     reactions.sort( (b,a) -> channels[a.channelId].subscriberCount - channels[b.channelId].subscriberCount  )
 
   channel_recommendation_filters = ['include', 'exclude', 'eligible', '']
@@ -499,7 +532,7 @@ dom.INVENTORY = ->
           margin: '8px 0'
           padding: 0
 
-        for sort in ['views', 'subscribers']
+        for sort in ['views', 'subscribers', 'alphabetical']
           LI
             style:
               listStyle: 'none'
@@ -577,6 +610,16 @@ dom.INVENTORY = ->
 
               "#{filter}"
 
+    DIV null,
+
+      INPUT 
+        key: 'filter'
+        type: 'text'
+        defaultValue: @local.filter_channels or "" 
+        onChange: (e) => 
+          @local.filter_channels = e.target.value
+          save @local
+
 
     UL 
       style:
@@ -584,10 +627,10 @@ dom.INVENTORY = ->
 
       for reaction in reactions
         if @local.channel_recommendation_filters[ channels[reaction.channelId]?.auto or '' ] && @local.included_filters[ reaction.download or false ]
-
-          MANIFEST_ITEM
-            song: song
-            reaction: reaction
+          if !@local.filter_channels || reaction.reactor.toLowerCase().indexOf(@local.filter_channels.toLowerCase()) > -1
+            MANIFEST_ITEM
+              song: song
+              reaction: reaction
 
 dom.MANIFEST_ITEM = ->
   reaction = @props.reaction
@@ -707,6 +750,11 @@ dom.MANIFEST_ITEM = ->
           width: 560
           height: 315 
 
+alphabetical_compare = (a,b) ->
+  if a.toLowerCase().trim() < b.toLowerCase().trim() 
+    return -1 
+  else 
+    return 1
 
 
 dom.ALIGNMENT = -> 
@@ -724,11 +772,26 @@ dom.ALIGNMENT = ->
   downloaded_reactions = []
   for o in all_reactions
     if o.download
-      downloaded_reactions.push o
+      if !@local.filter_reactions || (o.reactor.toLowerCase().indexOf(@local.filter_reactions.toLowerCase()) > -1)
+        metadata = retrieve("/reaction_metadata/#{song}/#{o.id}")
+        if metadata.alignment
+          downloaded_reactions.push o
 
 
-  downloaded_reactions.sort( (a,b) -> if a.reactor.toLowerCase().trim() < b.reactor.toLowerCase().trim() then -1 else 1     )
 
+  marked_compare = (a,b) -> 
+    if a.marked == b.marked
+      return alphabetical_compare(a.reactor,b.reactor)
+    else
+      if a.marked
+        return -1
+      else
+        return 1
+
+  if @local.sort_by_marked
+    downloaded_reactions.sort( (a,b) -> marked_compare(a,b) )
+  else
+    downloaded_reactions.sort( (a,b) -> alphabetical_compare(a.reactor,b.reactor)     )
 
   # downloaded_reactions = [downloaded_reactions[0]]
 
@@ -854,6 +917,25 @@ dom.ALIGNMENT = ->
 
       pagination()
 
+      INPUT 
+        key: 'filter'
+        type: 'text'
+        defaultValue: @local.filter_reactions or "" 
+        onChange: (e) => 
+          @local.filter_reactions = e.target.value
+          @local.page = 0
+          save @local
+
+      BUTTON
+        onClick: (e) => 
+          @local.sort_by_marked = !@local.sort_by_marked
+          save @local
+
+        I
+          className: 'glyphicon glyphicon-exclamation-sign'
+
+
+        
     UL 
       style:
         listStyle: 'none'
@@ -861,6 +943,7 @@ dom.ALIGNMENT = ->
 
       for reaction, i in downloaded_reactions
         metadata = retrieve("/reaction_metadata/#{song}/#{reaction.id}")
+        retrieve("/reaction/#{reaction.id}") # subscribe to updates to reaction
         if metadata.alignment and i >= @local.per_page * @local.page and i <= @local.per_page * (@local.page + 1)
           REACTION_ALIGNMENT
             song: song
@@ -878,6 +961,9 @@ dom.REACTION_ALIGNMENT = ->
 
   song = @props.song
   reaction = @props.reaction
+
+  key = "/reaction/#{reaction.id}"
+  retrieve(key)
 
   metadata = retrieve("/reaction_metadata/#{song}/#{reaction.id}")
   song_config = retrieve("/song_config/#{@props.song}")
@@ -928,6 +1014,11 @@ dom.REACTION_ALIGNMENT = ->
 
   if hide_unselected and !@local.selected
     return LI null
+
+
+  if @local.clicked_at
+    if config.fake_reactor_position?[reaction_file_prefix] && @local.clicked_at in config.fake_reactor_position[reaction_file_prefix]
+      @local.clicked_at = null
 
   LI 
     key: "#{reaction.id} #{@local.key} #{task}"
@@ -1016,6 +1107,29 @@ dom.REACTION_ALIGNMENT = ->
             className: 'glyphicon glyphicon-refresh'
 
 
+      BUTTON 
+        title: 'Mark reaction'
+        style:
+          backgroundColor: 'transparent'
+          border: 'none'
+          outline: 'none'
+          cursor: 'pointer'
+          opacity: if !reaction.marked then .5 else 1
+
+        onClick: (e) => 
+          reaction.marked = !reaction.marked
+          save {
+            key: "/reaction/#{reaction.id}",
+            reaction: reaction, 
+            song: song
+          }
+          e.stopPropagation()
+
+        I 
+          className: 'glyphicon glyphicon-exclamation-sign'
+
+      
+
 
       BUTTON
         onClick: => 
@@ -1036,6 +1150,8 @@ dom.REACTION_ALIGNMENT = ->
           textAlign: 'left'
 
         reaction.reactor
+
+
 
 
 
