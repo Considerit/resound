@@ -15,6 +15,9 @@ from library import channel_labels
 
 from moviepy.editor import vfx, VideoFileClip
 
+from inventory.channels import get_reactors_inventory
+from inventory.inventory import get_reactions_manifest
+
 # from guppy import hpy
 # h = hpy()
 
@@ -155,17 +158,17 @@ def make_conf(song_def, options, temp_directory):
 
     mute = song_def.get('mute', None)
 
-
+    reactors_inventory = get_reactors_inventory()
+    reactions_manifest = get_reactions_manifest(song_def['artist'], song_def['song'])['reactions']
+    metrics = {}
 
     for i, reaction_video_path in enumerate(reaction_videos):
       print_profiling()
       channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
 
-
-      # continue
-      # if i > 2:
-      #   continue
-
+      target_score = song_def.get('target_scores', {}).get(channel, None)
+      if conf.get('alignment_test', False) and target_score is None:
+        continue
 
       if len(constrain_to) > 0 and channel not in constrain_to:
         continue
@@ -183,77 +186,120 @@ def make_conf(song_def, options, temp_directory):
 
             current_start += reaction_end - reaction_start
 
-      target_score = song_def.get('target_scores', {}).get(channel, None)
-
-      if not conf.get('alignment_test', False) or target_score is not None:
-        featured = channel in song_def.get('featured', [])
-
-        reactions[channel] = {
-          'channel': channel,
-          'video_path': reaction_video_path, 
-          'aligned_path': os.path.join(temp_directory, os.path.basename(channel) + f"-CROSS-EXPANDER.mp4"),
-          'featured': featured,
-          'asides': song_def.get('asides', {}).get(channel, None),
-          'ground_truth': ground_truth,
-          'ground_truth_path': ground_truth_path,
-          'target_score': target_score
-        }
-
-        if multiple_reactors is not None:
-          reactions[channel]['num_reactors'] = multiple_reactors.get(channel, None)
-
-        if foregrounded_backchannel is not None and foregrounded_backchannel.get(channel, False):
-          reactions[channel]['foregrounded_backchannel'] = foregrounded_backchannel.get(channel)
-        
-        if backgrounded_backchannel is not None and backgrounded_backchannel.get(channel, False):
-          reactions[channel]['backgrounded_backchannel'] = backgrounded_backchannel.get(channel)
-
-        if fake_reactor_position is not None and fake_reactor_position.get(channel, False): 
-          reactions[channel]['fake_reactor_position'] = fake_reactor_position.get(channel)
-
-        reactions[channel]['start_reaction_search_at'] = int(start_reaction_search_at.get(channel, 3) * sr)
-
-        if end_reaction_search_at is not None and end_reaction_search_at.get(channel, False):
-          reactions[channel]['end_reaction_search_at'] = end_reaction_search_at.get(channel) * sr
-
-        if unreliable_bounds is not None and unreliable_bounds.get(channel, False):
-          reactions[channel]['unreliable_bounds'] = unreliable_bounds.get(channel)
-
-        reactions[channel]['chunk_size'] = chunk_size.get(channel, 3)
-
-        if manual_normalization_point is not None and manual_normalization_point.get(channel, False): 
-          reactions[channel]['manual_normalization_point'] = manual_normalization_point.get(channel)
-
-        if insert_filler is not None and insert_filler.get(channel, False): 
-          reactions[channel]['insert_filler'] = insert_filler.get(channel)
-
-        if mute is not None and mute.get(channel, False): 
-          reactions[channel]['mute'] = [(int(s*sr), int(e*sr)) for s,e in mute.get(channel)]
-
-        if manual_bounds is not None and manual_bounds.get(channel, False):
-          reactions[channel]['manual_bounds'] = manual_bounds.get(channel)
-          reactions[channel]['manual_bounds'].sort(key=lambda x: x[0])
-
-        if face_orientation is not None and face_orientation.get(channel, False):
-          reactions[channel]['face_orientation'] = face_orientation.get(channel)
-
-        if featured: 
-          default_priority = 75
-        elif channel == 'Resound':
-          default_priority = 1
-        else:
-          default_priority = 50
-
-        # print("Priority", channel, priority.get(channel, default_priority))
-        reactions[channel]['priority'] = priority.get(channel, default_priority)
+      reaction_manifest = None
+      channelId = None
+      for vidID, reaction_manifest in reactions_manifest.items():
+        reaction_file_prefix =  reaction_manifest.get('file_prefix', reaction_manifest['reactor'])
+        if channel == reaction_file_prefix:
+          channelId = reaction_manifest.get('channelId')
+          break
 
 
-        if swap_grid_positions is not None and swap_grid_positions.get(channel, False):
-          reactions[channel]['swap_grid_positions'] = swap_grid_positions.get(channel)
+      assert (channelId is not None), channel
 
-        reactions[channel]['channel_label'] = channel_labels.get(channel, channel)
-        if 'Black Pegasus' in reactions[channel]['channel_label']:
-          reactions[channel]['channel_label'] = 'Black Pegasus'
+
+      channel_data = reactors_inventory.get(channelId, None)
+      assert (channel_data is not None), (channelId, reaction_manifest, channel)
+
+
+
+      featured = channel in song_def.get('featured', [])
+
+      reactions[channel] = {
+        'channel': channel,
+        'video_path': reaction_video_path, 
+        'aligned_path': os.path.join(temp_directory, os.path.basename(channel) + f"-CROSS-EXPANDER.mp4"),
+        'featured': featured,
+        'asides': song_def.get('asides', {}).get(channel, None),
+        'ground_truth': ground_truth,
+        'ground_truth_path': ground_truth_path,
+        'target_score': target_score,
+        'manifest': reaction_manifest,
+        'channel_data': channel_data
+      }
+
+      if multiple_reactors is not None:
+        reactions[channel]['num_reactors'] = multiple_reactors.get(channel, None)
+
+      if foregrounded_backchannel is not None and foregrounded_backchannel.get(channel, False):
+        reactions[channel]['foregrounded_backchannel'] = foregrounded_backchannel.get(channel)
+      
+      if backgrounded_backchannel is not None and backgrounded_backchannel.get(channel, False):
+        reactions[channel]['backgrounded_backchannel'] = backgrounded_backchannel.get(channel)
+
+      if fake_reactor_position is not None and fake_reactor_position.get(channel, False): 
+        reactions[channel]['fake_reactor_position'] = fake_reactor_position.get(channel)
+
+      reactions[channel]['start_reaction_search_at'] = int(start_reaction_search_at.get(channel, 3) * sr)
+
+      if end_reaction_search_at is not None and end_reaction_search_at.get(channel, False):
+        reactions[channel]['end_reaction_search_at'] = end_reaction_search_at.get(channel) * sr
+
+      if unreliable_bounds is not None and unreliable_bounds.get(channel, False):
+        reactions[channel]['unreliable_bounds'] = unreliable_bounds.get(channel)
+
+      reactions[channel]['chunk_size'] = chunk_size.get(channel, 3)
+
+      if manual_normalization_point is not None and manual_normalization_point.get(channel, False): 
+        reactions[channel]['manual_normalization_point'] = manual_normalization_point.get(channel)
+
+      if insert_filler is not None and insert_filler.get(channel, False): 
+        reactions[channel]['insert_filler'] = insert_filler.get(channel)
+
+      if mute is not None and mute.get(channel, False): 
+        reactions[channel]['mute'] = [(int(s*sr), int(e*sr)) for s,e in mute.get(channel)]
+
+      if manual_bounds is not None and manual_bounds.get(channel, False):
+        reactions[channel]['manual_bounds'] = manual_bounds.get(channel)
+        reactions[channel]['manual_bounds'].sort(key=lambda x: x[0])
+
+      if face_orientation is not None and face_orientation.get(channel, False):
+        reactions[channel]['face_orientation'] = face_orientation.get(channel)
+
+      if channel == 'Resound':
+        default_priority = 1
+      else:
+        default_priority = 40
+
+      if featured: 
+        default_priority += 25
+
+      # print("Priority", channel, priority.get(channel, default_priority))
+      reactions[channel]['priority'] = priority.get(channel, default_priority)
+
+
+      if swap_grid_positions is not None and swap_grid_positions.get(channel, False):
+        reactions[channel]['swap_grid_positions'] = swap_grid_positions.get(channel)
+
+      reactions[channel]['channel_label'] = channel_labels.get(channel, channel)
+      if 'Black Pegasus' in reactions[channel]['channel_label']:
+        reactions[channel]['channel_label'] = 'Black Pegasus'
+
+
+      metrics[channel] = {
+        'subs': channel_data.get('subscriberCount', 1),
+        'views': reaction_manifest.get('views', 1)
+      }
+
+    views = []
+    subscribers = []
+    for channel, reaction in reactions.items(): 
+      views.append(metrics[channel]['views'])   
+      subscribers.append(metrics[channel]['subs']) 
+
+    max_views = max(views)
+    max_subs = max(subscribers)
+    for channel, reaction in reactions.items(): 
+      my_views = metrics[channel]['views']
+      my_subs = metrics[channel]['subs']
+      
+      metrics_bonus = max(  my_subs / max_subs, my_views / max_views  ) 
+
+      metrics_bonus *= reaction['channel_data'].get('metric_bonus_multiplier', 1)
+
+      reaction['priority'] += 20 * metrics_bonus
+
+      print(f"PRIORITY BONUS: {100*metrics_bonus:.1f} for {channel}")
 
     conf['reactions'] = reactions
 
@@ -401,19 +447,20 @@ def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio
 
     print_profiling()
 
-    from backchannel_isolator.track_separation import separate_vocals
 
     vocal_path_filename = 'vocals-post-high-passed.wav'
 
     separation_path = os.path.join(output_dir, os.path.splitext(audio_path)[0].split('/')[-1] )
 
-    vocals_path = os.path.join(separation_path, vocal_path_filename)
-
-    if not os.path.exists( vocals_path ):
-        separate_vocals(separation_path, audio_path, vocal_path_filename, duration=len(audio_data) / sr + 1)
+    # vocals_path = os.path.join(separation_path, vocal_path_filename)
 
 
-    for source in [ '', 'vocals' ]: #, 'accompaniment', 'vocals' ):
+    # if not os.path.exists( vocals_path ):
+    #     from backchannel_isolator.track_separation import separate_vocals
+    #     separate_vocals(separation_path, audio_path, vocal_path_filename, duration=len(audio_data) / sr + 1)
+
+
+    for source in [ '' ]:  # 'accompaniment', 'vocals' ]:
       if source == '':
         data = audio_data
         path = audio_path
