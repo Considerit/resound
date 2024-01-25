@@ -449,6 +449,9 @@ def plot_scaling_factors(scaling_factors, hop_length=5096, show=False):
         plt.show()
 
 
+    plt.close()
+
+
 
 
 

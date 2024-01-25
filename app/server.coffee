@@ -17,6 +17,8 @@ bus = require('statebus').serve
         if fs.lstatSync( path.join(songsPath, song_dir)   ).isDirectory()
           songs.push(song_dir)
 
+
+
       return {
         key: '/songs',
         songs: songs
@@ -40,7 +42,10 @@ bus = require('statebus').serve
       song = song[song.length - 1]
 
       config_path = path.join( libraryPath, "#{song}.json" )
-      config_json = JSON.parse(fs.readFileSync(config_path))
+      if fs.existsSync(config_path)
+        config_json = JSON.parse(fs.readFileSync(config_path))
+      else
+        config_json = {}
 
       return {
         key: key,
@@ -81,6 +86,8 @@ bus = require('statebus').serve
 
           reaction['explicit'] = obj.reaction.explicit
           reaction['download'] = obj.reaction.download
+          if obj.reaction.marked?
+            reaction['marked'] = obj.reaction.marked
           break
 
       fs.writeFileSync(manifest_path, JSON.stringify(manifest_json, null, 2))

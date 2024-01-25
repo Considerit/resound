@@ -84,6 +84,19 @@ from utilities import conf, conversion_frame_rate
 
 import soundfile as sf
 
+
+def get_face_files(reaction, aside_video=None):
+  if aside_video is not None:
+    react_path = aside_video
+  else:
+    react_path = reaction.get('aligned_path')
+
+  base_reaction_path, __ = os.path.splitext(react_path)
+
+  pattern = f"{base_reaction_path}-cropped-*-*-*.mp4"
+  return glob.glob(pattern)
+
+
 def create_reactor_view(reaction, show_facial_recognition=False, aside_video=None): 
 
   if aside_video is not None:
@@ -93,11 +106,10 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
     react_path = reaction.get('aligned_path')
     frames_per_capture = 45
 
-  base_reaction_path, base_video_ext = os.path.splitext(react_path)
+  base_reaction_path, __ = os.path.splitext(react_path)
 
   face_match_output_file = f"{base_reaction_path}-coarse_face_position_metadata.pckl"
-  pattern = f"{base_reaction_path}-cropped-*-*-*.mp4"
-  output_files = glob.glob(pattern)
+  output_files = get_face_files(reaction, aside_video)
 
   # print('Getting face matches')
   face_matches, width, height = detect_faces(reaction, react_path, face_match_output_file, show_facial_recognition=show_facial_recognition, frames_per_capture=frames_per_capture)
@@ -512,7 +524,7 @@ def process_faces(reaction, face_matches, width, height):
     # as well as their orientation and size. 
 
     num_reactors = reaction.get('num_reactors', None)
-    print(f"LOOKING FOR {num_reactors} for {reaction.get('channel')}")
+    # print(f"LOOKING FOR {num_reactors} for {reaction.get('channel')}")
 
     coarse_reactors, _ = find_top_candidates(face_matches, width, height, num_reactors)
     reactors = []
@@ -654,7 +666,7 @@ def create_heat_map_from_faces(faces_over_time, hheight, wwidth, best_ignored_ar
           # Don't add to the heat map any entries that overlap with best_ignored_area
           if best_ignored_area is not None:
             if overlap_percentage( best_ignored_area, (x, y, width, height) ) > 20:
-              print('NOT ADDING FACE BECAUSE IN IGNORED AREA')
+              # print('NOT ADDING FACE BECAUSE IN IGNORED AREA')
               continue
 
 

@@ -353,6 +353,9 @@ def assign_seats_to_reactors(seats, grid_centroid, seat_size, base_video_width, 
     total_reactors = 0
     for channel, reaction in conf.get('reactions').items():
         seat_preferences[channel] = get_seat_preferences(reaction, grid_centroid, grid_size, seats, base_video_width, base_video_height)
+        
+        if reaction.get('reactors') == None:
+          raise Exception(f"Reaction has NO reactor faces found! {channel}")
         total_reactors += len(reaction.get('reactors'))
 
     ########################

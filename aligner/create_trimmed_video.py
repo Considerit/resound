@@ -86,7 +86,7 @@ def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[
             filler_end = filler_end + fill_length
             filler = False 
 
-            print(reaction.get('reaction_audio_vocals_data'), start, end, filler_end)
+            # print(reaction.get('reaction_audio_vocals_data'), start, end, filler_end)
             end_frame = min(end_frame, reaction_video.duration)
             subclip = reaction_video.subclip(float(start), float(end))
             # replace audio with the source-separated vocal track

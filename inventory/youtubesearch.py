@@ -82,6 +82,9 @@ class YoutubeSearch:
         json_str = response[start:end]
         data = json.loads(json_str)
 
+        if "contents" not in data:
+            return None
+
         head = data["contents"].get("twoColumnSearchResultsRenderer", None)
 
         if head:

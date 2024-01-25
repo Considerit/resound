@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/bin/zsh
 
+source ~/.zshrc
 nvm use
 node_modules/nodemon/bin/nodemon.js server.coffee

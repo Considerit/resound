@@ -127,6 +127,7 @@ class ZoomPanEvent:
 
                 self.end_position = [ x, y ]
             else:
+                print(end_position, zoomPanState['size'])
                 self.end_position = [round(end_position[0] * zoomPanState['size'][0]), round(end_position[1] * zoomPanState['size'][1])]
         else: 
             self.end_position = self.start_position

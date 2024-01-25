@@ -1348,7 +1348,7 @@ def should_prune_path(reaction, path, song_length, score = None, threshold_base=
 
     # prune based on path length
     path_length = len(path)
-    if path_length > 20 and path_length > 2 * len(best_score_cache['best_overall_path']):
+    if path_length > 20 and best_score_cache['best_overall_path'] and path_length > 2 * len(best_score_cache['best_overall_path']):
         print('prune by path!')
         return True, score
         
