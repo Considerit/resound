@@ -60,7 +60,7 @@ from aligner.create_trimmed_video import check_compatibility
 
 
 
-def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="hexagon"):
+def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="hexagon"): 
     conf.get('load_base_video')()
 
     output_path = conf.get('compilation_path')
@@ -87,9 +87,18 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
     if base_video_position is not None:
         all_clips[-1]['video'] = all_clips[-1]['video'].set_position(base_video_position)
         print("Setting position of base video in composition to ", base_video_position)
-    clips = [c for c in all_clips if 'video' in c]
-    clips.sort(key=lambda x: x['priority'])
-    clips = [c['video'] for c in clips]
+    my_clips = [c for c in all_clips if 'video' in c]
+    my_clips.sort(key=lambda x: x['priority'])
+    
+    clips = []
+    for clip in my_clips:
+        clip = clip['video']
+        if type(clip) == list:
+            for c in clip:
+                clips.append(c)
+        else: 
+            clips.append(clip)
+
 
     active_segments = find_active_segments(audio_scaling_factors)
     text_clips = create_channel_labels_video(active_segments, cell_size, output_size)
@@ -98,27 +107,17 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
 
 
 
-
-    final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
-    
-
-    
-    print("\tClips composed")
-
-
-
     # pre_background = final_clip
-
     if conf.get('background'):
         reversing_bg = conf.get('background.reverse', False)
         video_background_path = conf.get('background')
         if video_background_path.endswith('mp4'):
             video_background = VideoFileClip(video_background_path).without_audio()
 
-            if video_background.duration < final_clip.duration:
+            if video_background.duration < clip_length:
 
                 if not reversing_bg:
-                    loops_required = int(np.ceil(final_clip.duration / video_background.duration))
+                    loops_required = int(np.ceil(clip_length / video_background.duration))
                     video_clips = [video_background] * loops_required
             
                 else: 
@@ -127,7 +126,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
                         reversed_frames = frames[::-1]
                         return ImageSequenceClip(reversed_frames, fps=clip.fps)
 
-                    loops_required = int(np.ceil(final_clip.duration / (2 * video_background.duration)))
+                    loops_required = int(np.ceil(clip_length / (2 * video_background.duration)))
                     
                     video_clips = []
                     reversed_clip = None
@@ -139,14 +138,20 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
 
                 video_background = concatenate_videoclips(video_clips)
         else: 
-            video_background = ImageClip(video_background_path).set_duration(final_clip.duration)
+            video_background = ImageClip(video_background_path)
+
+        video_background = video_background.resize(output_size).set_duration(clip_length)
+
+        clips.insert(0, video_background)
+
+    final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
+    
+
+    
+    print("\tClips composed")
 
 
-        # Set the final_clip as a layer on top of the background
-        final_clip = CompositeVideoClip([
-            video_background.resize(output_size).set_duration(final_clip.duration),
-            final_clip
-        ])
+
 
 
 
@@ -158,18 +163,22 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
     audio_clips = []
     conf['free_conf']()
 
+
+
+    # visualize_clip_structure(final_clip)
+
     # Save the result
     if draft:
       output_path = output_path + "fast.mp4"
       if not os.path.exists(output_path):
-        final_clip.resize(.25).set_fps(12).write_videofile(output_path, 
-                                         codec="h264_videotoolbox", 
-                                         audio_codec="aac", 
-                                         ffmpeg_params=['-q:v', '10'], 
-                                         preset='ultrafast')
+        print("VISUALIZING CLIP STRUCTURE:")
+        final_clip.set_fps(15).write_videofile(output_path, 
+                                 codec="h264_videotoolbox", 
+                                 audio_codec="aac", 
+                                 ffmpeg_params=['-q:v', '60'])
 
     else:
-        final_clip.write_videofile(output_path, 
+        final_clip.resize(2).write_videofile(output_path, 
                                  codec="h264_videotoolbox", 
                                  ffmpeg_params=['-q:v', '60']
                                 )
@@ -254,11 +263,7 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
     #   final_audio = concatenate_audioclips([clip1, clip2])
 
 
-
-    # final_clip = final_clip.set_audio(final_audio)
-    final_clip = final_clip.without_audio()
-
-    final_clip = final_clip.set_fps(30)
+    final_clip = final_clip.without_audio().set_fps(30)
 
     # final_clip = final_clip.set_duration(10)
 
@@ -391,11 +396,16 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
         y = max(min(y, output_size[1] - text_height // 2 - progress_bar_height - 4), 10)
 
         # Composite the shadow and text clips
-        comp_clip = CompositeVideoClip([shadow_clip.set_position((x+1, y+1)), txt_clip.set_position((x, y))], 
-                                       size=output_size)
-        comp_clip = comp_clip.set_duration(duration).set_start(start / sr)
+        # comp_clip = CompositeVideoClip([shadow_clip.set_position((x+1, y+1)), txt_clip.set_position((x, y))], 
+        #                                size=output_size)
+        # comp_clip = comp_clip.set_duration(duration).set_start(start / sr)
+        # channel_textclips.append(comp_clip)
 
-        channel_textclips.append(comp_clip)
+        shadow_clip = shadow_clip.set_position((x+1, y+1)).set_duration(duration).set_start(start / sr)
+        txt_clip = txt_clip.set_position((x, y)).set_duration(duration).set_start(start / sr)
+
+        channel_textclips.append(shadow_clip)        
+        channel_textclips.append(txt_clip)
 
         # Calculate position for progress bar
         bar_position = (x, y + text_height // 2 + progress_bar_height + 4)
@@ -489,9 +499,9 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
             featured = reaction['featured']
 
             clip = clip.resize((size, size))
-            if not draft:
+            if True or not draft:
                 print('\t\t\t\t...masking')
-                clip = create_masked_video(channel=name,
+                clips = create_masked_video(channel=name,
                                            clip=clip, 
                                            audio_volume=audio_volume,
                                            border_color=reaction_color, 
@@ -504,9 +514,11 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
             position = reactor['position']
 
             if reactor['layout_adjustments'].get('flip-x', False):
-                clip = clip.fx(vfx.mirror_x)
+                clips[1] = clips[1].fx(vfx.mirror_x)
 
-            clip = clip.set_position(position)
+
+            clips[0] = clips[0].set_position(position)
+            clips[1] = clips[1].set_position(position)
 
             if clip_length < clip.duration:
               clip_length = clip.duration
@@ -517,7 +529,8 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
               'channel': name,
               'reaction': reaction,
               'priority': priority,
-              'video': clip,
+              # 'video': CompositeVideoClip(clips).set_position(position), # still not sure which of these 'video' lines are faster
+              'video': clips, 
               'position': position,
               'reactor_idx': idx
             }
@@ -544,7 +557,7 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
     all_clips.append(base_clip)
 
 
-    if draft or not conf['include_base_video']:
+    if not conf['include_base_video']: # draft or 
         del base_clip['video']
 
 
@@ -671,14 +684,14 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
 
         return color_func
 
-    border_func = colorize_when_backchannel_active(border_color, clip)
+    border_color_func = colorize_when_backchannel_active(border_color, clip)
 
 
     def make_frame(t):
         img = np.zeros((height, width, 3))
 
         # Convert the color from HSV to RGB, then scale from 0-1 to 0-255
-        color_rgb = np.array(border_func(t)) * 255
+        color_rgb = np.array(border_color_func(t)) * 255
         img[border_mask_np > 0] = color_rgb  # apply color to border
 
         return img
@@ -707,8 +720,14 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
     # Create video clip by applying the smaller mask to the original video clip
     clip = clip.set_mask(ImageClip(mask_img_small_np, ismask=True))
 
+
+    return [border_clip, clip]
+
     # Overlay the video clip on the border clip
-    final_clip = CompositeVideoClip([border_clip, clip])
+    # final_clip = CompositeVideoClip([border_clip, clip])
+
+
+
 
     return final_clip
 
@@ -733,5 +752,20 @@ def generate_hsv_colors(n, s, v):
 
 
 
+
+
+
+
+
+def visualize_clip_structure(clip, depth=0):
+    indent = "  " * depth  # Indentation to represent depth
+
+    if isinstance(clip, CompositeVideoClip):
+        print(f"{indent}CompositeVideoClip:")
+        for subclip in clip.clips:
+            visualize_clip_structure(subclip, depth + 1)
+    else:
+        # Handle other clip types here
+        print(f"{indent}{type(clip).__name__}")
 
 
