@@ -9,7 +9,7 @@ from utilities import prepare_reactions, extract_audio, conf, make_conf, unload_
 from utilities import conversion_audio_sample_rate as sr
 from inventory import download_and_parse_reactions, get_manifest_path, filter_and_augment_manifest
 from aligner import create_aligned_reaction_video
-from face_finder import create_reactor_view
+from face_finder.face_finder import create_reactor_view, get_face_files
 from backchannel_isolator import isolate_reactor_backchannel
 from compositor import compose_reactor_compilation
 from compositor.asides import create_asides
@@ -23,17 +23,24 @@ import pstats
 
 from utilities import print_profiling
 
-def clean_up(song_def: dict):
+
+
+def remove_unneeded_files(song_def):
     song = f"{song_def['artist']} - {song_def['song']}"
     song_directory = os.path.join('Media', song)
 
     print(f"Cleaning up {song}...")
 
-    wav_files = glob.glob(f"{song_directory}/**/*.wav", recursive=True)
+    wav_files  = glob.glob(f"{song_directory}/reactions/**/vocals-post-high-passed.wav", recursive=True)
+    wav_files += glob.glob(f"{song_directory}/reactions/**/accompaniment.wav", recursive=True)
+    wav_files += glob.glob(f"{song_directory}/reactions/**/vocals.wav", recursive=True)
 
     # Delete each .wav file
     for wav_file in wav_files:
-        if 'isolated_backchannel' in wav_file:
+        # if 'isolated_backchannel' in wav_file:
+        #     continue
+
+        if f"/reactions/{song}" in wav_file:
             continue
 
         try:
@@ -43,10 +50,38 @@ def clean_up(song_def: dict):
             print(f"Error occurred while deleting file {wav_file}: {e}")
 
 
-    mp4_files = glob.glob(f"{song_directory}/**/*CROSS-EXPANDER*.mp4", recursive=True)
+
+def clean_up(song_def, on_ice=False):
+    song = f"{song_def['artist']} - {song_def['song']}"
+    song_directory = os.path.join('Media', song)
+
+    print(f"Cleaning up {song}...")
+
+    wav_files = glob.glob(f"{song_directory}/**/*.wav", recursive=True)
+
+    # Delete each .wav file
+    for wav_file in wav_files:
+        # if 'isolated_backchannel' in wav_file:
+        #     continue
+
+        try:
+            os.remove(wav_file)
+            print(f"\tDeleted: {wav_file}")
+        except Exception as e:
+            print(f"Error occurred while deleting file {wav_file}: {e}")
+
+    if on_ice:
+        return 
+
+
+    mp4_files = glob.glob(f"{song_directory}/bounded/*CROSS-EXPANDER*.mp4", recursive=True)
+    mp4_files = mp4_files + glob.glob(f"{song_directory}/reactions/*.mp4", recursive=True)
 
     for mp4 in mp4_files:
-        if 'cropped' in mp4:
+        # if 'cropped' in mp4:
+        #     continue
+
+        if 'Resound' in mp4:
             continue
 
         try:
@@ -64,7 +99,10 @@ def clean_up(song_def: dict):
         except Exception as e:
             print(f"Error occurred while deleting file {webm}: {e}")
 
-def handle_reaction_video(reaction, compilation_exists, extend_by=15):
+def handle_reaction_video(reaction, return_if_ready_for_compilation, extend_by=15):
+
+    if return_if_ready_for_compilation and len(get_face_files(reaction)) > 0:
+        return 
 
     output_file = reaction.get('aligned_path')
 
@@ -74,16 +112,10 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
     # print("processing ", reaction['channel'])
     # Create the output video file name
 
-    
-
-
     create_aligned_reaction_video(reaction, extend_by=extend_by)
-
-
 
     if not conf["isolate_commentary"]:
         return []
-
 
     _,_,aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
 
@@ -95,7 +127,7 @@ def handle_reaction_video(reaction, compilation_exists, extend_by=15):
         return []
 
     # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
-    reaction["reactors"], __ = create_reactor_view(reaction, show_facial_recognition=False)
+    reaction["reactors"], __ = create_reactor_view(reaction)
 
     if reaction['asides']:
         create_asides(reaction)
@@ -222,10 +254,6 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
         free_lock('downloading')
 
 
-
-
-
-        conf.get('load_reactions')()
         
         if conf.get('only_manifest', False):
             return []
@@ -233,50 +261,52 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         extend_by = 12
 
-        all_reactions = list(conf.get('reactions').keys())
-        all_reactions.sort()
+        def handle_all_reaction_videos(return_if_ready_for_compilation):
+            conf.get('load_reactions')()
+            all_reactions = list(conf.get('reactions').keys())
+            all_reactions.sort()
 
-        for i, channel in enumerate(all_reactions):
-            reaction = conf.get('reactions').get(channel)
+            for i, channel in enumerate(all_reactions):
+                reaction = conf.get('reactions').get(channel)
 
-            print_profiling()
+                print_profiling()
 
-            if not request_lock(channel):
-                continue
+                if not request_lock(channel):
+                    continue
 
 
-            try:
-                # profiler = cProfile.Profile()
-                # profiler.enable()
+                try:
+                    # profiler = cProfile.Profile()
+                    # profiler.enable()
 
-                handle_reaction_video(reaction, compilation_exists=compilation_exists, extend_by=extend_by)
+                    handle_reaction_video(reaction, return_if_ready_for_compilation=return_if_ready_for_compilation, extend_by=extend_by)
 
-                # profiler.disable()
-                # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
-                # stats.print_stats()
+                    # profiler.disable()
+                    # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+                    # stats.print_stats()
 
-            except Exception as e: 
-                traceback.print_exc()
-                print(e)
-                traceback_str = traceback.format_exc()
-                failed_reactions.append((reaction.get('channel'), e, traceback_str))
-                conf['remove_reaction'](reaction.get('channel'))
-                if conf.get('break_on_exception'):
-                    raise(e)
+                except Exception as e: 
+                    traceback.print_exc()
+                    print(e)
+                    traceback_str = traceback.format_exc()
+                    failed_reactions.append((reaction.get('channel'), e, traceback_str))
+                    conf['remove_reaction'](reaction.get('channel'))
+                    if conf.get('break_on_exception'):
+                        raise(e)
 
-            log_progress(progress)
+                log_progress(progress)
 
-            unload_reaction(channel)
-            free_lock(channel)
+                unload_reaction(channel)
+                free_lock(channel)
+
+        handle_all_reaction_videos(True)
 
         print_progress(progress)        
         compilation_exists = os.path.exists(compilation_path)
         print("COMP EXISTS?", compilation_exists, compilation_path)
         if not compilation_exists and conf['create_compilation'] and request_lock('compilation'):
 
-            # for channel, reaction in conf.get('reactions').items():
-            #     conf['load_reaction'](channel) # make sure all reactions are loaded
-
+            handle_all_reaction_videos(False)
             compose_reactor_compilation(extend_by=extend_by)
             free_lock('compilation')
     
@@ -383,17 +413,25 @@ if __name__ == '__main__':
             loaded.append( defn  )
         return loaded
 
-    from library import songs, drafts, refresh_manifest, finished
+    from library import songs, drafts, refresh_manifest, finished, put_on_ice
 
     songs = load_songs(songs)
     drafts = load_songs(drafts)
     refresh_manifest = load_songs(refresh_manifest)
     finished = load_songs(finished)
+    put_on_ice = load_songs(put_on_ice)
 
     progress = {}
 
     for song in finished:
         clean_up(song)
+
+    for song in put_on_ice:
+        clean_up(song, on_ice=True)
+
+    for song in load_songs(['Ren - Humble', 'Ren - Ocean', 'Ren x Chinchilla - Chalk Outlines', 'Ren - Crutch']):
+        remove_unneeded_files(song)
+
 
     manifest_options = {
         "only_manifest": True,
@@ -435,9 +473,7 @@ if __name__ == '__main__':
         if(len(failed) > 0):
             failures.append((song, failed)) 
 
-
-
-
+    
     print(f"\n\nDone! {len(failures)} songs did not finish")
 
     for song, failed in failures:
