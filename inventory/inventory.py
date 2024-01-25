@@ -38,10 +38,6 @@ def process_reaction(song, artist, search, item, reactions, test):
     reactor_name = item['snippet']['channelTitle']
     channel_id = item['snippet']['channelId']
     
-    if (not test or not test(item['snippet']['title'])):
-        print(f"Bad result: {item['snippet']['title']}", item['snippet']['title'].lower())
-        return False
-    
     if isinstance(item['id'], str):
         video_id = item['id']
     else: 
@@ -49,6 +45,11 @@ def process_reaction(song, artist, search, item, reactions, test):
             print(f"{reactor_name} doesn't have a videoid")
             return False
         video_id = item['id']['videoId'] 
+
+    if (not test or not test(item['snippet']['title'])):
+        print(f"Bad result: [{video_id}] {item['snippet']['title']}", item['snippet']['title'].lower())
+        return False
+    
 
     
     if video_id in reactions:
@@ -95,14 +96,14 @@ def search_reactions(artist, song, search, reactions, test, search_channel_id=No
             params['pageToken'] = page_token
 
         search_results = client.search.list(**params, return_json=True)
-        print(params, len(search_results['items']))
+        next_page_token = search_results.get('nextPageToken', None)        
+        print(f"\n{params['q']} found {len(search_results['items'])} results, next token = {next_page_token}\n")
         # print("results:", search_results)
         found_at_least_one_relevant = True #False
         for item in search_results['items']:
             found_at_least_one_relevant = process_reaction(song, artist, search, item, reactions, test) or found_at_least_one_relevant
 
         # Check for next page and fetch it
-        next_page_token = search_results.get('nextPageToken')
         if next_page_token and found_at_least_one_relevant:
             time.sleep(5)  # Pause to avoid hitting rate limits
             search_reactions(artist, song, search, reactions, test, search_channel_id, next_page_token)
@@ -116,7 +117,7 @@ def search_reactions(artist, song, search, reactions, test, search_channel_id=No
 
 def search_recommended_channels(artist, song, search, reactions, test):    
 
-    channels = get_recommended_channels()
+    channels = get_recommended_channels() #include_all=True)
 
     song_string = f'"{artist} {song} {search[0]}"'
 
@@ -127,7 +128,7 @@ def search_recommended_channels(artist, song, search, reactions, test):
 
         print(f"\t\t[{100 * idx / len(channels):.1f}%] Checking {channel.get('title')}")
 
-        items = YoutubeSearch(song_string, max_results=1, channel=channel).to_dict()
+        items = YoutubeSearch(song_string, max_results=3, channel=channel).to_dict()
         
         if 'searched_for' not in channel:
             channel['searched_for'] = {}
@@ -135,36 +136,36 @@ def search_recommended_channels(artist, song, search, reactions, test):
         update_channel(channel)
 
 
-        if len(items) == 0:
+        if not items or len(items) == 0:
             # print(f"\tNo results for {channel.get('title')}")
             continue
 
-        item = items[0]
+        for item in items:
 
-        if (not test or not test(item['title'])):
-            print(f"\t\t\tBad result: {item['title']}")
-            continue
+            if (not test or not test(item['title'])):
+                print(f"\t\t\tBad result: {item['title']}")
+                continue
 
-        if item['id'] in reactions:
-            # print(f"\tduplicate title {item['title']}")
-            continue
+            if item['id'] in reactions:
+                # print(f"\tduplicate title {item['title']}")
+                continue
 
-        print(f"\t\t\t*** New reaction found: {item['title']}")
+            print(f"\t\t\t*** New reaction found: {item['title']}")
 
-        reaction = {
-            'song': song,
-            'reactor': item['channel'],
-            'channelId': item['channelId'],
-            'title': item['title'],
-            'description': item['long_desc'],
-            'thumbnails': item['thumbnails'],
-            'id': item['id'],
-            'duration': item['duration'],
-            'views': item['views'].replace(',', '').replace(' views', ''),
-            'download': False,
-        }
-        
-        reactions[item['id']] = reaction
+            reaction = {
+                'song': song,
+                'reactor': item['channel'],
+                'channelId': item['channelId'],
+                'title': item['title'],
+                'description': item['long_desc'],
+                'thumbnails': item['thumbnails'],
+                'id': item['id'],
+                'duration': item['duration'],
+                'views': int(item['views'].replace(',', '').replace(' views', '')),
+                'download': False,
+            }
+            
+            reactions[item['id']] = reaction
 
 
 
@@ -237,7 +238,7 @@ def create_manifest(song_def, artist, song_title, song_search, search, test = No
     if manifest['main_song'] is None:
         manifest['main_song'] = search_for_song(artist, song_title, song_search)        
 
-    search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
+    # search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
 
     save_reactions_manifest(manifest, artist, song_title)
 
@@ -319,7 +320,6 @@ def download_song(song_directory, artist, song):
 
 
 def download_included_reactions(song_directory, artist, song):
-    from backchannel_isolator.track_separation import separate_vocals
 
 
     full_reactions_path = os.path.join(song_directory, 'reactions')
@@ -373,12 +373,14 @@ def download_included_reactions(song_directory, artist, song):
             reaction_file = output
 
 
-        vocal_path_filename = 'vocals-post-high-passed.wav'
-        separation_path = os.path.splitext(reaction_file)[0]
-        vocals_path = os.path.join(separation_path, vocal_path_filename)
-        if not os.path.exists( vocals_path ):
-            reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_file)
-            separate_vocals(separation_path, reaction_audio_path, vocal_path_filename, duration=len(reaction_audio_data)/float(sr))
+        # from backchannel_isolator.track_separation import separate_vocals
+
+        # vocal_path_filename = 'vocals-post-high-passed.wav'
+        # separation_path = os.path.splitext(reaction_file)[0]
+        # vocals_path = os.path.join(separation_path, vocal_path_filename)
+        # if not os.path.exists( vocals_path ):
+        #     reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_file)
+        #     separate_vocals(separation_path, reaction_audio_path, vocal_path_filename, duration=len(reaction_audio_data)/float(sr))
 
 
 
@@ -543,6 +545,8 @@ def migrate_reactions():
 
         for ___, reaction in reaction_inventory.items():
             # migration logic here
+            if 'views' in reaction:
+                reaction['views'] = int(reaction['views'])
             continue
 
 
@@ -560,12 +564,31 @@ def migrate_reactions():
 
 
 
+def reaction_stats(song):
+    song_manifest = os.path.join('Media', song, 'manifest.json')
+    song_data = json.load(open(song_manifest))
+    reaction_inventory = song_data["reactions"]
+    reactions = list(reaction_inventory.values())
+    reactions.sort(key=lambda x: -x.get('views', 0))
+    num_views = 0
+    for reaction in reactions:
+        num_views += reaction.get('views', 0)
+        print(f"{reaction.get('views', 0)} - {reaction.get('reactor')}")
+
+    return {
+        "count": len(reaction_inventory.keys()),
+        "views": num_views
+    }
 
 if __name__ == '__main__':
 
-    migrate_reactions()
+    # migrate_reactions()
     
     # generate_description_text("Ren", "Hi Ren")
+
+
+    stats = reaction_stats('Ren - Money Game')
+    print(stats)
 
 
 

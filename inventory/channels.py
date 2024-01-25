@@ -96,10 +96,11 @@ def refresh_reactors_inventory():
         if 'subscriberCount' in channel_info:
             continue
         info = getChannelInfo(channel_id)
-        channel_info.update(info)
-        print(f"{channel_info['title']}: {info['subscriberCount']}")
+        if info: 
+            channel_info.update(info)
+            print(f"{channel_info['title']}: {info['subscriberCount']}")
 
-        write_reactors_inventory(reactors_inventory)
+            write_reactors_inventory(reactors_inventory)
 
     for channel_id, channel_info in reactors_inventory.items():
         channel_info['channelId'] = channel_id
@@ -114,11 +115,12 @@ def refresh_reactors_inventory():
     add_reactor_notations()
 
 
-def get_recommended_channels(include_eligible=True):
+def get_recommended_channels(include_eligible=True, include_all=False):
     reactors_inventory = get_reactors_inventory()
     recommended = [r for r in reactors_inventory.values() \
                       if r.get('auto', None) == 'include' or \
-                         (include_eligible and r.get('auto', None) == 'eligible')]
+                         (include_eligible and r.get('auto', None) == 'eligible') or \
+                         (include_all and 'title' in r) ]
 
     recommended.sort( key=lambda x: x.get('title') )
 
@@ -134,7 +136,12 @@ def getChannelInfo(channel_id):
         'maxResults': 1
     }
 
-    item = client.channels.list(**params, return_json=True)['items'][0]
+    item = client.channels.list(**params, return_json=True)
+
+    if not item or 'items' not in item or len(item['items']) == 0:
+        print(f"ERRRRORRRRR! COULD NOT FIND CHANNEL {channel_id}")
+        return None
+    item = item['items'][0]
 
     result = {
         "title":       item['snippet']['title'],    
