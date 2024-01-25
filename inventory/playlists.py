@@ -104,10 +104,26 @@ def find_playlist_by_title(playlist_title):
 
 
 def get_existing_video_ids(playlist_id):
+
+
     try:
-        existing_videos = client.playlistItems.list(playlist_id=playlist_id, part="contentDetails", max_results=1000).items
-        existing_video_ids = [item.contentDetails.videoId for item in existing_videos]
-        return existing_video_ids
+        existing_videos = []
+        got_first = False
+        next_page_token = None
+        while not got_first or next_page_token:
+            if next_page_token:
+                result = client.playlistItems.list(playlist_id=playlist_id, part="contentDetails", pageToken=next_page_token, max_results=50)                
+            else:
+                result = client.playlistItems.list(playlist_id=playlist_id, part="contentDetails", max_results=50)
+
+            for item in result.items:
+                existing_videos.append(item.contentDetails.videoId)
+
+            next_page_token = result.nextPageToken
+            print(f"Got {len(existing_videos)} items, next page is {next_page_token}")
+            got_first = True
+
+        return existing_videos
     except PyYouTubeException as e:
         print(f"An error occurred: {e}")
         return []
@@ -149,47 +165,73 @@ def add_videos_to_playlist(playlist_id, video_ids):
 
 
 if __name__=='__main__':
-    from utilities import conf, make_conf
-    from library import money_game1, money_game2, money_game3
-    from reactor_core import results_output_dir
     from inventory.inventory import get_manifest_path
 
 
-    playlist_title = "Reactions to Ren's Money Game Trilogy"
-    playlist_description = "Reactions to Ren's Money Game parts 1, 2, and 3 that were included in this channel's Money Game Reaction Concert."
+    # playlist_title = "Reactions to Sam Tompkins' TIME WILL FLY, HERO, and HERO (live)"
+    # playlist_description = "Reactions to Sam Tompkins' TIME WILL FLY, HERO, and HERO (live) that were included in this channel's respective Reaction Symphony."
 
-    playlist_id = get_or_create_playlist(playlist_title, playlist_description)
-    print(playlist_id)
+    # playlist_id = get_or_create_playlist(playlist_title, playlist_description)
+    # print(playlist_id)
 
     # print(get_existing_video_ids(playlist_id))
 
     # if playlist_id is not None:
 
-    for song_def in [money_game1, money_game2, money_game3]:
+    # time_will_fly = 'Sam Tompkins - Time Will Fly'
+    # hero = 'Sam Tompkins - Hero'
+    # hero_live = 'Sam Tompkins - Hero live'
 
-        song = song_def.get('song')
-        artist = song_def.get('artist')
+    # playlist_songs = [
+    #     time_will_fly,
+    #     hero,
+    #     hero_live
+    # ]
+    # songs = []
+    # for song in playlist_songs:
+    #     parts = song.split(' - ')
+    #     songs.append( get_manifest_path(parts[0], parts[1])  )
 
-        print(song)
-        make_conf(money_game3, {}, results_output_dir)
-        conf.get('load_reactions')()
-        manifest_file = get_manifest_path( artist, song )
+    # for manifest_file in songs:
 
-        song_data = json.load(open(manifest_file))
-        reaction_data = song_data['reactions']
-
-
-        song_ids = [ s.get('id') for s in reaction_data.values() if s.get('download') ]
-
-        song_ids.sort(key=lambda x: x[0])
-        # for channel, id in song_ids:
-        #     print("https://www.youtube.com/watch?v=" + id, channel)
-
-        add_videos_to_playlist(playlist_id, song_ids)
+    #     song_data = json.load(open(manifest_file))
+    #     reaction_data = song_data['reactions']
 
 
+    #     song_ids = [ s.get('id') for s in reaction_data.values() if s.get('download') ]
+
+    #     song_ids.sort(key=lambda x: x[0])
+    #     # for channel, id in song_ids:
+    #     #     print("https://www.youtube.com/watch?v=" + id, channel)
+
+    #     add_videos_to_playlist(playlist_id, song_ids)
 
 
 
+    def hi_ren_chiefaberach_gap():
+        hi_ren_chiefaberach = "PLvQ9PT7Tdzm0oWcg8u_v77mnqNIjZ3lMo"
+        aberach_vids = get_existing_video_ids(hi_ren_chiefaberach)
+        song_data = json.load(open(get_manifest_path('Ren', 'Hi Ren - BP')))
+        reactions = song_data['reactions']
 
+        missing = []
+        print('EXISTING!')
 
+        for vid in aberach_vids:
+            print(vid)
+
+        for vid, reaction in reactions.items():
+            if vid not in aberach_vids:
+                missing.append(vid)
+
+        print('MISSING!')
+
+        playlist_title = "Missing Hi Ren Reactions for Chiefaberach"
+        playlist_description = "Chief, these are reactions that I think are missing from your playlist."
+        playlist_id = get_or_create_playlist(playlist_title, playlist_description)
+
+        for vid in missing:
+            print(f"[{vid}] {reactions[vid]['reactor']} - {reactions[vid]['title']}")
+        add_videos_to_playlist(playlist_id, missing)
+
+    hi_ren_chiefaberach_gap()
