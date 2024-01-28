@@ -367,7 +367,7 @@ dom.SONGS = ->
 dom.SONG = -> 
   song = @props.song
 
-  tasks = ['inventory', 'alignment', 'asides', 'reactors', 'backchannels', 'composition']
+  tasks = ['inventory', 'alignment', 'asides', 'aside editor', 'reactors', 'backchannels', 'composition']
 
   loc = retrieve('location')
 
@@ -382,7 +382,7 @@ dom.SONG = ->
     return SPAN null
 
   else
-    task = parts[3]
+    task = decodeURI parts[3]
 
   asty = 
     color: 'black'
@@ -391,6 +391,8 @@ dom.SONG = ->
     fontWeight: 700
     display: 'inline-block'
 
+
+  console.log(task)
 
   DIV null,
 
@@ -431,14 +433,18 @@ dom.SONG = ->
         padding: '24px 18px'
         display: 'flex'
 
+
       if task == 'composition'
         COMPOSITION
           song: @props.song
       else if task == 'inventory'
         INVENTORY
           song: @props.song
+      else if task == 'aside editor'
+        ASIDE_EDITOR_LIST
+          song: @props.song
       else
-        ALIGNMENT
+        REACTION_LIST
           song: @props.song   
           task: task   
 
@@ -757,7 +763,136 @@ alphabetical_compare = (a,b) ->
     return 1
 
 
-dom.ALIGNMENT = -> 
+
+
+
+dom.LIST_TOOL_BAR = -> 
+  local = retrieve(@props.local)
+  task = @props.task
+  registered_media = @props.registered_media
+
+  DIV
+    className: 'process-actions'
+    style: 
+      position: 'sticky'
+      top: 0
+      zIndex: 9
+      display: 'flex'
+      alignSelf: 'flex-start'
+      backgroundColor: 'white'
+
+
+    if task != 'aside editor'
+      BUTTON 
+        key: "play_all #{local.play_all}"
+        onClick: => 
+          local.play_all = !local.play_all
+          song_playing = false
+
+          selected = @getDOMNode().parentNode.querySelector('[data-is-selected=true]')
+
+          for k,v of registered_media
+            console.log(k,v)
+            is_song = v.is_song
+            mute = is_song && song_playing
+            is_audible = v.play(local.play_all, mute, !selected)
+            song_playing ||= is_song && is_audible
+          save local
+
+        if local.play_all
+          'Pause all'
+        else
+          'Play selected'
+
+    if task != 'aside editor'
+      BUTTON 
+        key: "select_all #{local.all_selected}"
+        onClick: => 
+          local.all_selected = !local.all_selected
+          if local.all_selected
+            local.force_selection = true
+          else
+            local.force_deselection = true
+          save local
+
+        if !local.all_selected
+          'Select all'
+        else
+          'Unselect all'
+
+    BUTTON 
+      key: 'hide_unselected'
+      onClick: => 
+        local.hide_unselected = !local.hide_unselected
+        save local
+      
+      if local.hide_unselected
+        'Show all'
+      else
+        'Hide unselected'
+
+
+    if task == 'alignment'
+      BUTTON 
+        key: 'show reactions'
+        onClick: => 
+          local.show_reactions = !local.show_reactions
+          save local
+        
+        if local.show_reactions
+          'Hide reactions'
+        else
+          'Show reactions'
+
+    if task == 'alignment'
+      BUTTON 
+        key: 'show paintings'
+        onClick: => 
+          local.show_paintings = !local.show_paintings
+          save local
+        
+        if local.show_paintings
+          'Hide paintings'
+        else
+          'Show paintings'
+
+    DIV null,
+
+      BUTTON 
+        onClick: => 
+          local.page -= 1
+          if local.page < 0
+            local.page = 0
+          save local
+        '<'
+
+      BUTTON
+        onClick: =>
+          local.page += 1
+          save local
+        '>'
+
+    INPUT 
+      key: 'filter'
+      type: 'text'
+      defaultValue: local.filter_reactions or "" 
+      onChange: (e) => 
+        local.filter_reactions = e.target.value
+        local.page = 0
+        save local
+
+    BUTTON
+      onClick: (e) => 
+        local.sort_by_marked = !local.sort_by_marked
+        save local
+
+      I
+        className: 'glyphicon glyphicon-exclamation-sign'
+
+
+
+
+dom.REACTION_LIST = -> 
   song = @props.song
   manifest = retrieve("/manifest/#{song}")
 
@@ -777,8 +912,6 @@ dom.ALIGNMENT = ->
         if metadata.alignment
           downloaded_reactions.push o
 
-
-
   marked_compare = (a,b) -> 
     if a.marked == b.marked
       return alphabetical_compare(a.reactor,b.reactor)
@@ -793,147 +926,27 @@ dom.ALIGNMENT = ->
   else
     downloaded_reactions.sort( (a,b) -> alphabetical_compare(a.reactor,b.reactor)     )
 
-  # downloaded_reactions = [downloaded_reactions[0]]
-
   task = @props.task
 
   @registered_media ?= {}
 
-
-  if @force_selection
+  if @local.force_selection
     select_all = true
-    @force_selection = false
-  if @force_deselection
+    @local.force_selection = false
+  if @local.force_deselection
     deselect_all = true
-    @force_deselection = false
-
+    @local.force_deselection = false
 
   @local.page ?= 0
   @local.per_page = 10
 
 
-  pagination = =>
-    DIV null,
-
-      if @local.page > 0
-        BUTTON 
-          onClick: => 
-            @local.page -= 1
-            if @local.page < 0
-              @local.page = 0
-            save @local
-          'previous'
-
-      BUTTON
-        onClick: =>
-          @local.page += 1
-          save @local
-        'next page'
-
-
   DIV null,
 
-
-    DIV
-      className: 'process-actions'
-      style: 
-        position: 'sticky'
-        top: 0
-        zIndex: 9
-        display: 'flex'
-        alignSelf: 'flex-start'
-        backgroundColor: 'white'
-
-
-      BUTTON 
-        key: "play_all #{@local.play_all}"
-        onClick: => 
-          @local.play_all = !@local.play_all
-          song_playing = false
-
-          selected = @getDOMNode().querySelector('[data-is-selected=true]')
-
-          for k,v of @registered_media
-            is_song = v.is_song
-            mute = is_song && song_playing
-            is_audible = v.play(@local.play_all, mute, !selected)
-            song_playing ||= is_song && is_audible
-
-        if @local.play_all
-          'Pause all'
-        else
-          'Play selected'
-
-      BUTTON 
-        key: "select_all #{@local.all_selected}"
-        onClick: => 
-          @local.all_selected = !@local.all_selected
-          if @local.all_selected
-            @force_selection = true
-          else
-            @force_deselection = true
-          save @local
-
-        if !@local.all_selected
-          'Select all'
-        else
-          'Unselect all'
-
-      BUTTON 
-        key: 'hide_unselected'
-        onClick: => 
-          @local.hide_unselected = !@local.hide_unselected
-          save @local
-        
-        if @local.hide_unselected
-          'Show all'
-        else
-          'Hide unselected'
-
-
-      if task == 'alignment'
-        BUTTON 
-          key: 'show reactions'
-          onClick: => 
-            @local.show_reactions = !@local.show_reactions
-            save @local
-          
-          if @local.show_reactions
-            'Hide reactions'
-          else
-            'Show reactions'
-
-      if task == 'alignment'
-        BUTTON 
-          key: 'show paintings'
-          onClick: => 
-            @local.show_paintings = !@local.show_paintings
-            save @local
-          
-          if @local.show_paintings
-            'Hide paintings'
-          else
-            'Show paintings'
-
-      pagination()
-
-      INPUT 
-        key: 'filter'
-        type: 'text'
-        defaultValue: @local.filter_reactions or "" 
-        onChange: (e) => 
-          @local.filter_reactions = e.target.value
-          @local.page = 0
-          save @local
-
-      BUTTON
-        onClick: (e) => 
-          @local.sort_by_marked = !@local.sort_by_marked
-          save @local
-
-        I
-          className: 'glyphicon glyphicon-exclamation-sign'
-
+    LIST_TOOL_BAR 
+      local: @local
+      task: task
+      registered_media: @registered_media
 
         
     UL 
@@ -945,7 +958,7 @@ dom.ALIGNMENT = ->
         metadata = retrieve("/reaction_metadata/#{song}/#{reaction.id}")
         retrieve("/reaction/#{reaction.id}") # subscribe to updates to reaction
         if metadata.alignment and i >= @local.per_page * @local.page and i <= @local.per_page * (@local.page + 1)
-          REACTION_ALIGNMENT
+          REACTION_ITEM
             song: song
             reaction: reaction
             task: task
@@ -957,7 +970,7 @@ dom.ALIGNMENT = ->
             force_deselection: deselect_all
 
 
-dom.REACTION_ALIGNMENT = ->
+dom.REACTION_ITEM = ->
 
   song = @props.song
   reaction = @props.reaction
@@ -999,9 +1012,11 @@ dom.REACTION_ALIGNMENT = ->
     else
       vids = [song_video, aligned_video]
   else if task == 'backchannels'
-    vids = [isolated_backchannel]    
+    vids = [isolated_backchannel]
   else if task == 'asides'
     vids = [song_video, reaction_video, reaction_video]
+  else if task == 'aside editor'
+    vids = [reaction_video]
   else if task == 'reactors'
     vids = [aligned_video]
     for v in metadata.reactors or [] 
@@ -1180,7 +1195,23 @@ dom.REACTION_ALIGNMENT = ->
               registered_media: @props.registered_media   
               task: task  
               song: song   
-              reaction_file_prefix: reaction_file_prefix       
+              reaction_file_prefix: reaction_file_prefix  
+
+
+          else if task == 'aside editor'
+            SYNCHRONIZED_AUDIO
+              keep_synced: !@local.disable_sync
+              selected: @local.selected
+              audio: isolated_backchannel
+              alignment_data: metadata.alignment.best_path
+              is_reaction: false
+              is_song: false
+              registered_media: @props.registered_media   
+              task: task  
+              song: song   
+              reaction_file_prefix: reaction_file_prefix  
+
+
           else
             SYNCHRONIZED_VIDEO
               keep_synced: !@local.disable_sync
@@ -1283,6 +1314,101 @@ dom.REACTION_ALIGNMENT = ->
 
 
 
+sort_asides = (asides) ->
+  asides.sort (x,y) -> 
+    diff = x[2] - y[2]
+    if diff == 0
+      return x[0] - y[0]
+    return diff
+
+  return asides
+
+
+get_all_asides = (song) -> 
+  manifest = retrieve("/manifest/#{song}")
+  channels = retrieve('/channels').channels
+  song_config = retrieve("/song_config/#{song}")
+  
+  song_dir = ["/media", song].join('/')
+  meta_dir = [song_dir, 'bounded'].join('/')
+  reactions_dir = [song_dir, 'reactions'].join('/')
+
+  config = song_config.config
+
+  if !channels || !manifest.manifest?.reactions
+    return SPAN null
+
+  all_reactions = Object.values(manifest.manifest.reactions)
+
+  all_asides = []
+  for reaction in all_reactions or []
+    reaction_file_prefix = reaction.file_prefix or reaction.reactor
+    asides = config.asides[reaction_file_prefix] or []
+    sort_asides(asides)
+    for aside, idx in asides
+      all_asides.push 
+        idx: idx
+        reaction_file_prefix: reaction_file_prefix
+        reactor: reaction.reactor
+        reaction: reaction
+        aside: aside
+        media:  [reactions_dir, "#{reaction_file_prefix}" ].join('/')
+
+  all_asides.sort (a,b) -> 
+    if a.aside[2] == b.aside[2]
+      a.aside[0] - b.aside[0]
+    else 
+      a.aside[2] - b.aside[2]
+
+  return all_asides
+
+update_aside = (song, reaction_file_prefix, idx, start, end, insert_at, rewind) -> 
+  song_config = retrieve("/song_config/#{song}")
+  config = song_config.config
+  asides = config.asides[reaction_file_prefix]
+  asides[idx] = [start, end, insert_at, rewind]
+  sort_asides(asides)
+  save song_config
+
+
+split_aside = (song, aside_idx, split_at, reaction_file_prefix) -> 
+
+  song_config = retrieve("/song_config/#{song}")
+  config = song_config.config
+
+  asides = config.asides[reaction_file_prefix]
+  aside = asides[aside_idx]
+
+  start = aside[0]
+  end = aside[1]
+  if !(end > split_at > start)
+    return # split position not between start and end
+
+
+  split_one = aside.slice()
+  split_two = aside.slice()
+
+  split_one[1] = split_at
+  split_one[3] = false
+  split_two[0] = split_at
+
+
+  asides.splice(aside_idx, 1)
+  asides.push(split_one)
+  asides.push(split_two)
+
+  asides = sort_asides(asides)
+  save song_config
+
+
+delete_aside = (song, aside_idx, reaction_file_prefix) -> 
+
+  song_config = retrieve("/song_config/#{song}")
+  config = song_config.config
+
+  config.asides[reaction_file_prefix].splice(aside_idx, 1)
+  save song_config
+
 
 dom.EDIT_ASIDE = ->
 
@@ -1309,40 +1435,6 @@ dom.EDIT_ASIDE = ->
       @local.rewind = aside[3]
     else
       @local.rewind = 3
-
-  sort_asides = (asides) =>
-    asides.sort (x,y) -> 
-      diff = x[2] - y[2]
-      if diff == 0
-        return x[0] - y[0]
-      return diff
-
-    return asides
-
-  split_aside = => 
-    if !(end > @local.split_at > start)
-      return # split position not between start and end
-
-    asides = config.asides[reaction_file_prefix]
-
-    split_one = aside.slice()
-    split_two = aside.slice()
-
-    split_one[1] = @local.split_at
-    split_one[3] = false
-    split_two[0] = @local.split_at
-
-
-    asides.splice(aside_idx, 1)
-    asides.push(split_one)
-    asides.push(split_two)
-
-    asides = sort_asides(asides)
-    save song_config
-
-    @local.split_at = null
-    @local.show_split = false
-    save @local
 
 
   DIV null,
@@ -1459,23 +1551,19 @@ dom.EDIT_ASIDE = ->
 
             if @props.fresh
               # possibly overwrite existing aside...
-              for aside in asides
+              for aside, idx in asides
                 [sstart, eend, iinsert_at, rrewind] = aside
                 if (sstart == start && eend == end) ||   \
                    (iinsert_at == insert_at && eend == end) || \
                    (iinsert_at == insert_at && start == start)
 
-                    aside[0] = start
-                    aside[1] = end
-                    aside[2] = insert_at
-                    aside[3] = @local.rewind
-                    save song_config
-                    return
+                  update_aside(@props.song, reaction_file_prefix, idx, start, end, insert_at, @local.rewind)
+                  return
 
               new_aside = [start, end, insert_at, @local.rewind]
               asides.push(new_aside)
             else
-              asides[aside_idx] = [start, end, insert_at, @local.rewind]
+              update_aside(@props.song, reaction_file_prefix, idx, start, end, insert_at, @local.rewind)
 
             asides = sort_asides(asides)
             save song_config
@@ -1502,9 +1590,7 @@ dom.EDIT_ASIDE = ->
 
             onClick: => 
               if confirm("Are you sure you want to delete this aside?")
-                asides = config.asides[reaction_file_prefix]
-                asides.splice(aside_idx, 1)
-                save song_config
+                delete_aside(@props.song, aside_idx, reaction_file_prefix)
             I 
               className: "glyphicon glyphicon-trash"
 
@@ -1521,7 +1607,7 @@ dom.EDIT_ASIDE = ->
             I
               className: "glyphicon glyphicon-scissors"
 
-        if @local.show_split
+        if !@props.fresh && @local.show_split
           DIV null, 
 
             INPUT
@@ -1531,8 +1617,391 @@ dom.EDIT_ASIDE = ->
                 save @local
             BUTTON
               onClick: (e) => 
-                split_aside()
+                split_aside(config, aside_idx, @local.split_at, reaction_file_prefix)
+                @local.split_at = null
+                @local.show_split = false
+                save @local
               'Split'
+
+
+
+
+
+
+dom.ASIDE_EDITOR_LIST = -> 
+
+  song = @props.song
+  all_asides = get_all_asides(song)
+
+  DIV null,
+
+    ASIDE_SUMMARY_AND_INSERTION_EDITOR
+      song: song
+        
+    UL 
+      style:
+        listStyle: 'none'
+        paddingLeft: 24
+        marginTop: 48
+
+
+
+      for aside,idx in all_asides
+        ASIDE_EDITOR_ITEM
+          key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
+          aside: aside
+          song: song
+          my_key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
+
+
+dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
+  song = @props.song
+  all_asides = get_all_asides(song)
+
+  total_aside_duration = 0
+  for aside,idx in all_asides
+    total_aside_duration += aside.aside[1] - aside.aside[0]
+
+  @local.changes ?= {}
+
+  DIV null, 
+    LABEL 
+      style: 
+        backgroundColor: 'deepskyblue'
+        color: 'white'
+        fontSize: 24
+        marginBottom: 18
+      "#{all_asides.length} asides of #{Math.floor(total_aside_duration/60)} min #{Math.round(total_aside_duration%60)} sec total duration"
+    DIV 
+      style: 
+        display: 'grid'
+
+
+      for aside,row in all_asides
+        key = "#{aside.reaction_file_prefix}-#{aside.idx}"
+
+        do (aside, row, key) => 
+          [
+            DIV 
+              style: 
+                gridRow: row + 1
+                gridColumn: 1
+              aside.reactor
+
+
+            DIV
+              style: 
+                gridRow: row + 1
+                gridColumn: 2
+
+
+              AUDIO
+                style: 
+                  width: 100
+                controls: true
+                src: aside.media + '.wav'
+
+              
+
+
+
+            DIV 
+              style: 
+                gridRow: row + 1
+                gridColumn: 3
+              "#{Math.round(aside.aside[1] - aside.aside[0])}s"
+
+            DIV 
+              style: 
+                gridRow: row + 1
+                gridColumn: 4
+              INPUT
+                type: 'number'
+                defaultValue: aside.aside[2]
+                onChange: (e) => 
+                  @local.changes[key] ?= aside.aside.slice()
+                  @local.changes[key][2] = parseFloat(e.target.value)
+                  save @local
+
+            DIV 
+              style: 
+                gridRow: row + 1
+                gridColumn: 5
+              INPUT
+                type: 'text'
+                defaultValue: aside.aside[3]
+                onChange: (e) => 
+                  rewind = parseFloat(e.target.value)
+                  if isNaN(e.target.value)
+                    rewind = e.target.value
+                  @local.changes[key] ?= aside.aside.slice()
+                  @local.changes[key][3] = rewind
+                  save @local
+
+            if key of @local.changes
+              DIV 
+                style: 
+                  gridRow: row + 1
+                  gridColumn: 6
+
+                BUTTON null,
+                  onClick: => 
+                    updated_aside = @local.changes[key]
+                    update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3])
+
+                  I 
+                    className: "glyphicon glyphicon-floppy-save"
+
+            DIV 
+              style: 
+                gridRow: row + 1
+                gridColumn: 7
+
+              BUTTON 
+                style: 
+                  flexGrow: 0
+                  backgroundColor: 'transparent'
+                  border: 'none'
+
+                onClick: => 
+                  if confirm("Are you sure you want to delete this aside?")
+                    delete_aside(song, aside.idx, aside.reaction_file_prefix)
+                
+                I 
+                  className: "glyphicon glyphicon-trash"
+
+          ]
+
+
+
+
+
+dom.ASIDE_EDITOR_ITEM = ->
+  @local.loop_in_region ?= true
+  @width = 900
+
+  @local.changes ?= {}
+  @my_key = @props.my_key
+  song = @props.song
+  aside = @props.aside
+
+
+  @save_changes = =>
+    if @my_key of @local.changes
+      updated_aside = @local.changes[@my_key]
+      update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3])
+
+
+  LI 
+    key: @props.my_key
+    style: 
+      width: @width
+      padding: '24px 0'
+    'data-receive-viewport-visibility-updates': 1
+    "data-component": @local.key
+
+    DIV
+      style:
+        display: 'flex'
+        alignItems: 'center'
+        marginBottom: 20
+
+      DIV 
+        style: 
+          marginRight: 50
+          fontSize: 24
+          backgroundColor: 'lightsalmon'
+          color: 'white'
+          fontWeight: 'bold'
+          padding: '3px 10px'
+
+        "#{aside.reaction_file_prefix} (##{aside.idx})"
+
+
+      INPUT 
+        type: 'checkbox'
+        defaultChecked: @local.loop_in_region
+        onClick: (e) =>
+          @local.loop_in_region = e.target.checked
+          save @local
+
+      LABEL 
+        style:
+          padding: '0 8px'
+          margin:0
+        'Loop in region'
+
+
+      LABEL 
+        style:
+          padding: '0 8px'
+          margin:0
+        'Zoom:'
+
+      if @local.zoom?
+
+        INPUT 
+
+          type: 'range'
+          defaultValue: @local.zoom
+          min: 1
+          max: 1000
+          style:
+            width: 100
+
+          onInput: (e) => 
+            minPxPerSec = Number(e.target.value)
+            @ws.zoom(minPxPerSec)
+
+      if @my_key of @local.changes
+        DIV 
+          style: 
+            padding: '0 8px'
+
+          BUTTON null,
+            onClick: @save_changes
+
+            I 
+              className: "glyphicon glyphicon-floppy-save"
+
+      if @local.split_at?
+        DIV 
+          style: 
+            padding: '0 8px'
+
+          BUTTON null,
+            onClick: =>
+              if confirm("Split this aside here?")
+                @save_changes()
+
+                split_aside(song, aside.idx, @local.split_at, aside.reaction_file_prefix)
+
+            I 
+              className: "glyphicon glyphicon-scissors"
+
+
+
+
+
+    DIV
+      ref: 'wavesurfer'
+      style:
+        height: 100
+        width: 'calc(100% - 34px)'
+        margin: '0 17px'
+
+
+dom.ASIDE_EDITOR_ITEM.refresh = ->
+  return unless @refs.wavesurfer && @refs.wavesurfer && !@wavesurfer_added && @local.in_viewport
+
+  url = encodeURI(@props.aside.media) + '.wav'
+  aside = @props.aside.aside
+
+  @wavesurfer_added = true
+
+  @ws = ws = wavesurfer = WaveSurfer.create
+    container: @refs.wavesurfer.getDOMNode()
+    waveColor: 'rgb(200, 0, 200)'
+    progressColor: 'rgb(100, 0, 100)'
+    url: url
+    height: 'auto'
+    normalize: true
+
+  wsRegions = ws.registerPlugin WaveSurfer.Regions.create()
+
+  # Give regions a random color when they are created
+  random = (min, max) => Math.random() * (max - min) + min
+  randomColor = => "rgba(#{random(0, 255)}, #{random(0, 255)}, #{random(0, 255)}, 0.5)"
+  
+
+  ws.on 'decode', =>
+
+    # pixels / sec
+
+
+    # Regions
+    aside_region = wsRegions.addRegion 
+      start: aside[0]
+      end: aside[1]
+      # content: 'Resize me'
+      color: randomColor()
+      drag: false
+      resize: true
+      # minLength: 1
+      # maxLength: 10
+
+
+
+    reaction_duration = ws.getDuration()
+    aside_duration = aside[1] - aside[0]
+
+    zoom = .5 * @width / aside_duration
+
+    @local.zoom = zoom
+    save @local
+
+    ws.setTime(aside[0] + aside_duration / 2)
+    @ws.zoom(zoom)
+
+
+    setTimeout =>
+      ws.setTime aside[0]
+    , 1000
+    # Markers (zero-length regions)
+    marker_region = wsRegions.addRegion
+      start: aside[0] + (aside[1] - aside[0]) / 2
+      content: '/'
+      color: randomColor()
+
+    wsRegions.enableDragSelection
+      color: 'rgba(255, 0, 0, 0.1)'
+
+    wsRegions.on 'region-updated', (region) =>
+      if region.id == marker_region.id
+        @local.split_at = region.start
+
+      else if region.id == aside_region.id
+
+        @local.changes[@my_key] ?= aside.slice()
+        @local.changes[@my_key][0] = region.start
+        @local.changes[@my_key][1] = region.end
+
+      save @local 
+
+    @activeRegion = null
+    wsRegions.on 'region-in', (region) =>
+      @activeRegion = region
+
+    wsRegions.on 'region-out', (region) => 
+      if @activeRegion == region
+        if @local.loop
+          region.play()
+        else
+          @activeRegion = null
+
+    wsRegions.on 'region-clicked', (region, e) =>
+      return if wavesurfer.isPlaying()
+
+      e.stopPropagation() # prevent triggering a click on the waveform
+      @activeRegion = region
+      region.play()
+      region.setOptions({ color: randomColor() })
+
+    # Reset the active region when the user clicks anywhere in the waveform
+    ws.on 'interaction', =>
+      @activeRegion = null
+
+
+  wavesurfer.on 'click', =>
+    if !wavesurfer.isPlaying()
+      wavesurfer.play()
+
+  wavesurfer.on 'dblclick', =>
+    if wavesurfer.isPlaying()
+      wavesurfer.pause()
+
+
+
 
 dom.REACTOR_TASKS = ->
   song = @props.song
@@ -1915,12 +2384,12 @@ dom.SYNCHRONIZED_VIDEO.refresh = ->
 
     @props.registered_media[@local.key] = 
       is_song: @props.is_song
-      play: (play, mute) =>
+      play: (play, mute, force) =>
 
         if !play
           vid.pause()
           vid.muted = false
-        else if @props.selected
+        else if @props.selected || force
           vid.play()
           vid.muted = mute
           return mute
