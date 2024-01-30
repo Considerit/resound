@@ -297,7 +297,11 @@ bus.http.get '/*', (r,res) =>
 
     <script history-aware-links root="/" src="#{prefix}/client/earl.coffee"></script>
     <script src="#{prefix}/client/viewport_visibility_sensor.coffee"></script>
+    <script src="#{prefix}/client/shared.coffee"></script>
     <script src="#{prefix}/client/tooltips.coffee"></script>
+    <script src="#{prefix}/client/channels.coffee"></script>
+    <script src="#{prefix}/client/asides.coffee"></script>
+    <script src="#{prefix}/client/inventory.coffee"></script>
     <script src="#{prefix}/client/client.coffee"></script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.3.7/dist/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
