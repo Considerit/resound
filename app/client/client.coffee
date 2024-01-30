@@ -741,7 +741,14 @@ dom.REACTION_ITEM = ->
               delete @local['video-2-time']
               save @local
         
-        else if insert_at? && start? && end?
+        else if insert_at? && start?
+          if !end?
+            @local['video-2-time'] = start
+            save @local
+            @props.registered_media[@local['video-2-time-key']].set_time(start)
+
+
+
           EDIT_ASIDE
             song: @props.song
             fresh: true

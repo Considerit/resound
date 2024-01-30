@@ -1,15 +1,10 @@
 
 
+###########################
+# Aside data manipulation #
+###########################
 
-
-
-
-
-
-
-
-
-sort_asides = (asides) ->
+window.sort_asides = (asides) ->
   asides.sort (x,y) -> 
     diff = x[2] - y[2]
     if diff == 0
@@ -19,7 +14,7 @@ sort_asides = (asides) ->
   return asides
 
 
-get_all_asides = (song) -> 
+window.get_all_asides = (song) -> 
   manifest = retrieve("/manifest/#{song}")
   channels = retrieve('/channels').channels
   song_config = retrieve("/song_config/#{song}")
@@ -57,7 +52,7 @@ get_all_asides = (song) ->
 
   return all_asides
 
-update_aside = (song, reaction_file_prefix, idx, start, end, insert_at, rewind) -> 
+window.update_aside = (song, reaction_file_prefix, idx, start, end, insert_at, rewind) -> 
   song_config = retrieve("/song_config/#{song}")
   config = song_config.config
   asides = config.asides[reaction_file_prefix]
@@ -66,7 +61,7 @@ update_aside = (song, reaction_file_prefix, idx, start, end, insert_at, rewind) 
   save song_config
 
 
-split_aside = (song, aside_idx, split_at, reaction_file_prefix) -> 
+window.split_aside = (song, aside_idx, split_at, reaction_file_prefix) -> 
 
   song_config = retrieve("/song_config/#{song}")
   config = song_config.config
@@ -96,7 +91,7 @@ split_aside = (song, aside_idx, split_at, reaction_file_prefix) ->
   save song_config
 
 
-delete_aside = (song, aside_idx, reaction_file_prefix) -> 
+window.delete_aside = (song, aside_idx, reaction_file_prefix) -> 
 
   song_config = retrieve("/song_config/#{song}")
   config = song_config.config
@@ -104,6 +99,10 @@ delete_aside = (song, aside_idx, reaction_file_prefix) ->
   config.asides[reaction_file_prefix].splice(aside_idx, 1)
   save song_config
 
+
+##########################################
+# EDIT ASIDE (add on to a REACTION TASK) #
+##########################################
 
 dom.EDIT_ASIDE = ->
 
@@ -320,6 +319,9 @@ dom.EDIT_ASIDE = ->
 
 
 
+#########################
+# DETAILED ASIDE EDITOR #
+#########################
 
 
 
@@ -721,6 +723,9 @@ dom.ASIDE_EDITOR_ITEM.refresh = ->
       wavesurfer.pause()
 
 
+########################################
+# COMPOSITE ASIDE AND BASE VIDEO PLAYER
+########################################
 
 
 
