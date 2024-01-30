@@ -7,6 +7,16 @@ window.extend = (obj) ->
           obj[name] = s
   obj
 
+window.defaults = (o) ->
+  obj = {}
+
+  for arg, idx in arguments by -1      
+    for own name,s of arg
+      obj[name] = s
+  extend o, obj
+
+
+
 dom.BODY = -> 
   
   loc = retrieve('location')
@@ -20,6 +30,8 @@ dom.BODY = ->
   DIV 
     style: 
       fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif'
+
+    TOOLTIP()
 
     NAVBAR()
 
@@ -390,9 +402,6 @@ dom.SONG = ->
     padding: '8px 14px'
     fontWeight: 700
     display: 'inline-block'
-
-
-  console.log(task)
 
   DIV null,
 
@@ -1635,6 +1644,10 @@ dom.ASIDE_EDITOR_LIST = ->
 
   DIV null,
 
+
+    COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER
+      song: song
+
     ASIDE_SUMMARY_AND_INSERTION_EDITOR
       song: song
         
@@ -1680,7 +1693,7 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
       for aside,row in all_asides
         key = "#{aside.reaction_file_prefix}-#{aside.idx}"
 
-        do (aside, row, key) => 
+        do (aside, row, key) =>         
           [
             DIV 
               style: 
@@ -1699,9 +1712,10 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
                 style: 
                   width: 100
                 controls: true
+                "data-id": "#{aside.reactor}-#{aside.aside[0]}-#{aside.aside[1]}"
+                "data-start": aside.aside[0]
+                "data-end": aside.aside[1]
                 src: aside.media + '.wav'
-
-              
 
 
 
@@ -1773,12 +1787,32 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
           ]
 
 
+dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR.refresh = ->
+  @initialized ?= {}
+
+  audios = @getDOMNode().querySelectorAll('audio')
+  for audio in audios
+    continue if audio.dataset.id in @initialized
+
+    audio.ontimeupdate = (ev) =>
+      audio = ev.currentTarget
+      if audio.currentTime >= audio.dataset.end
+          audio.currentTime = audio.dataset.start
+          audio.pause()
+
+    audio.onplay = (ev) =>
+      audio = ev.currentTarget
+      audio.currentTime = audio.dataset.start
+      audio.play()
+
+    @initialized[audio.dataset.id] = true
+
 
 
 
 dom.ASIDE_EDITOR_ITEM = ->
   @local.loop_in_region ?= true
-  @width = 900
+  @width = Math.round(screen.width * .9)
 
   @local.changes ?= {}
   @my_key = @props.my_key
@@ -1845,9 +1879,9 @@ dom.ASIDE_EDITOR_ITEM = ->
           type: 'range'
           defaultValue: @local.zoom
           min: 1
-          max: 1000
+          max: 50
           style:
-            width: 100
+            width: 200
 
           onInput: (e) => 
             minPxPerSec = Number(e.target.value)
@@ -1886,9 +1920,30 @@ dom.ASIDE_EDITOR_ITEM = ->
     DIV
       ref: 'wavesurfer'
       style:
-        height: 100
+        height: 140
         width: 'calc(100% - 34px)'
         margin: '0 17px'
+        # min-width: 400px;
+        flex: 1
+
+
+
+random = (min, max) -> Math.random() * (max - min) + min
+randomColor = -> "rgba(#{random(0, 255)}, #{random(0, 255)}, #{random(0, 255)}, 0.5)"
+
+generateColorPalette = (numColors) ->
+  baseHue = random(0, 360);
+  colors = [];
+  hueStep = 360 / numColors;
+
+  i = 0
+  while i < numColors
+    h = (baseHue + (i * hueStep)) % 360
+    color = "hsl(#{h}, 60%, 50%)"
+    colors.push(color)
+    i += 1
+  return colors
+
 
 
 dom.ASIDE_EDITOR_ITEM.refresh = ->
@@ -1910,8 +1965,6 @@ dom.ASIDE_EDITOR_ITEM.refresh = ->
   wsRegions = ws.registerPlugin WaveSurfer.Regions.create()
 
   # Give regions a random color when they are created
-  random = (min, max) => Math.random() * (max - min) + min
-  randomColor = => "rgba(#{random(0, 255)}, #{random(0, 255)}, #{random(0, 255)}, 0.5)"
   
 
   ws.on 'decode', =>
@@ -1935,7 +1988,7 @@ dom.ASIDE_EDITOR_ITEM.refresh = ->
     reaction_duration = ws.getDuration()
     aside_duration = aside[1] - aside[0]
 
-    zoom = .5 * @width / aside_duration
+    zoom = .65 * @width / aside_duration
 
     @local.zoom = zoom
     save @local
@@ -1969,12 +2022,9 @@ dom.ASIDE_EDITOR_ITEM.refresh = ->
       save @local 
 
     @activeRegion = null
-    wsRegions.on 'region-in', (region) =>
-      @activeRegion = region
-
     wsRegions.on 'region-out', (region) => 
       if @activeRegion == region
-        if @local.loop
+        if @local.loop_in_region
           region.play()
         else
           @activeRegion = null
@@ -1983,6 +2033,7 @@ dom.ASIDE_EDITOR_ITEM.refresh = ->
       return if wavesurfer.isPlaying()
 
       e.stopPropagation() # prevent triggering a click on the waveform
+
       @activeRegion = region
       region.play()
       region.setOptions({ color: randomColor() })
@@ -1999,6 +2050,241 @@ dom.ASIDE_EDITOR_ITEM.refresh = ->
   wavesurfer.on 'dblclick', =>
     if wavesurfer.isPlaying()
       wavesurfer.pause()
+
+
+
+colors_per_reactor = {}
+
+construct_composite_base_and_aside_segments = (song) ->
+  
+  song_dir = ["/media", song].join('/')
+
+  all_asides = get_all_asides(song)
+  song_video = [song_dir, song].join('/')
+
+  segments = []
+  current_base_playhead = 0
+  duration = 0
+  last_rewind = 0
+
+  unique_reactors = {}
+  for aside in all_asides
+    unique_reactors[aside.reactor] = true
+
+  reactor_colors = generateColorPalette(Object.values(unique_reactors).length)
+  for reactor, idx in Object.keys(unique_reactors)
+    if reactor not of colors_per_reactor
+      colors_per_reactor[reactor] = reactor_colors[idx]
+
+  for aside in all_asides
+    [start, end, insertion_point, rewind] = aside.aside
+
+    if insertion_point - current_base_playhead > 0
+      segments.push 
+        video: song_video
+        start: current_base_playhead - last_rewind
+        end: insertion_point
+        is_base_video: true
+        color: '#ccc'
+
+      duration += insertion_point - current_base_playhead + last_rewind
+
+      current_base_playhead = insertion_point
+
+    # colors_per_reactor[aside.reactor] ?= randomColor()
+    segments.push
+      video: aside.media
+      start: start
+      end: end
+      is_base_video: false
+      color: colors_per_reactor[aside.reactor]
+      aside: aside
+
+    duration += end - start
+    last_rewind = rewind
+
+    # bug: we don't know how long the base video actually is. At the end, we'll try 
+    #      to add segments at times for the base video that are longer than the base video itself
+
+  return [segments, duration]
+
+
+
+
+
+dom.COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER = ->
+  return SPAN null if !@props.song
+
+  song = @props.song
+
+  [segments, total_duration] = construct_composite_base_and_aside_segments(song)
+
+  player_width = screen.width * .9
+  DIV 
+    style: 
+      marginBottom: 80
+
+    VIDEO
+      width: player_width
+      height: 480
+      controls: true
+      ref: 'video'
+
+      SOURCE
+        type: "video/mp4"
+
+      SOURCE
+        type: "video/webm"
+
+    DIV
+      style:
+        height: 50
+        width: player_width
+        display: 'flex'
+      onClick: (event) =>
+        clickX = event.clientX # X position within the viewport
+        elementX = event.currentTarget.getBoundingClientRect().left # X position of the div within the viewport
+        relativeX = clickX - elementX # X position within the div
+        clickPercent = relativeX / player_width
+        seekTo = clickPercent * total_duration
+
+        @player.seek(seekTo)
+
+
+      for segment in segments
+        segment_playing = @local.currentSegment?.video == segment.video && @local.currentSegment?.end == segment.end
+
+        DIV
+          "data-tooltip": if !segment.is_base_video then "#{segment.aside.reactor}"
+          style:
+            backgroundColor: segment.color
+            height: '100%'
+            width: "#{ 100 * (segment.end - segment.start) / total_duration}%"
+            border: if segment_playing then "1px solid #{segment.color}" else "1px solid transparent"
+            position: 'relative'
+
+          if segment_playing
+            DIV
+              style: 
+                backgroundColor: "rgba(0,0,0,.25)"
+                width: 1
+                height: '100%'
+                position: 'absolute'
+                left:"#{100 * @local.time_in_segment / (segment.end - segment.start)}%"
+
+
+
+
+
+dom.COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER.refresh = ->
+  song = @props.song
+  return if !song 
+  [segments, total_duration] = construct_composite_base_and_aside_segments(song)
+
+  key = "#{segments.length}-#{total_duration}"
+  if @initialized != key
+
+    if @player?
+      @player.tearDown()
+
+    @player = new CompositeVideoPlayer segments, @refs.video.getDOMNode(), (currentSegment, time_in_segment) =>
+      @local.currentSegment = currentSegment
+      @local.time_in_segment = time_in_segment
+      save @local
+      console.log(@local)
+
+    @initialized = key
+
+
+
+
+
+
+class CompositeVideoPlayer
+  constructor: (segments, videoElement, onTimeUpdate) ->
+    @segments = segments
+    @currentSegmentIndex = 0
+
+    # Calculate the total duration and map segments with their cumulative start time.
+    cumulativeTime = 0
+
+    @segments = segments
+
+
+
+    @videoElement = videoElement
+    @onTimeUpdate = onTimeUpdate
+
+
+
+    @handleTimeUpdate = => 
+
+      currentSegment = @segments[@currentSegmentIndex]
+      if @videoElement.currentTime >= currentSegment.end || @videoElement.duration <= @videoElement.currentTime
+        @transitionToNextSegment()
+        currentSegment = @segments[@currentSegmentIndex]
+
+      @onTimeUpdate?(currentSegment, @videoElement.currentTime - currentSegment.start)
+
+
+    @videoElement.addEventListener 'timeupdate', @handleTimeUpdate
+
+
+
+  transitionToNextSegment: ->
+    if @currentSegmentIndex < @segments.length - 1
+      @currentSegmentIndex += 1
+      @loadCurrentSegment()
+
+  loadCurrentSegment: ->
+    currentSegment = @segments[@currentSegmentIndex]
+
+    @updateSources(currentSegment)
+    @videoElement.currentTime = currentSegment.start
+    @videoElement.play()
+
+  updateSources: (segment) ->
+    sources = @videoElement.getElementsByTagName('source')
+    
+    sources[0].src = segment.video + '.mp4'
+    sources[1].src = segment.video + '.webm'
+
+    @videoElement.load()
+
+
+  seek: (timeInSeconds) ->
+    # Find the correct segment for the given time.
+    cumulativeTime = 0
+
+    for segment, idx in @segments
+      segmentDuration = segment.end - segment.start
+     
+      if timeInSeconds <= cumulativeTime + segmentDuration
+        @currentSegmentIndex = idx
+        seekTime = timeInSeconds - cumulativeTime
+        @updateSources(segment)
+        @videoElement.currentTime = segment.start + seekTime
+
+        @videoElement.play()
+        break
+      cumulativeTime += segmentDuration
+
+  tearDown: ->
+    return if !@videoElement
+    @videoElement.pause()
+    @videoElement.removeAttribute('src')
+    @videoElement.load()
+    @videoElement.removeEventListener('timeupdate', @handleTimeUpdate)
+    @videoElement = null
+
+
+
+
+
+
+
+
+
 
 
 

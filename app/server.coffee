@@ -297,6 +297,7 @@ bus.http.get '/*', (r,res) =>
 
     <script history-aware-links root="/" src="#{prefix}/client/earl.coffee"></script>
     <script src="#{prefix}/client/viewport_visibility_sensor.coffee"></script>
+    <script src="#{prefix}/client/tooltips.coffee"></script>
     <script src="#{prefix}/client/client.coffee"></script>
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.3.7/dist/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
@@ -338,6 +339,20 @@ bus.http.get '/*', (r,res) =>
       }
 
 
+      #tooltip .downward_arrow {
+        width: 0; 
+        height: 0; 
+        border-left: 10px solid transparent;
+        border-right: 10px solid transparent;  
+        border-top: 10px solid black;
+      }
+      #tooltip .upward_arrow {
+        width: 0; 
+        height: 0; 
+        border-left: 10px solid transparent;
+        border-right: 10px solid transparent;  
+        border-bottom: 10px solid black;
+      }
 
     </style>
 
