@@ -378,10 +378,13 @@ dom.REACTION_LIST = ->
       else
         return 1
 
+
+
   if @local.sort_by_marked
-    downloaded_reactions.sort( (a,b) -> marked_compare(a,b) )
-  else
-    downloaded_reactions.sort( (a,b) -> alphabetical_compare(a.reactor,b.reactor)     )
+    downloaded_reactions = (d for d in downloaded_reactions when d.marked)    
+      # downloaded_reactions.sort( (a,b) -> marked_compare(a,b) )
+    # else
+  downloaded_reactions.sort( (a,b) -> alphabetical_compare(a.reactor,b.reactor)     )
 
   task = @props.task
 
@@ -416,6 +419,7 @@ dom.REACTION_LIST = ->
         retrieve("/reaction/#{reaction.id}") # subscribe to updates to reaction
         if metadata.alignment and i >= @local.per_page * @local.page and i <= @local.per_page * (@local.page + 1)
           REACTION_ITEM
+            key: "#{reaction.id}"
             song: song
             reaction: reaction
             task: task
@@ -755,6 +759,11 @@ dom.REACTION_ITEM = ->
             time_state_key: @local.key
             registered_media: @props.registered_media
             reaction_file_prefix: reaction_file_prefix
+            on_save: =>
+              delete @local['video-0-time']
+              delete @local['video-1-time']
+              delete @local['video-2-time']
+              save @local
 
     if task == 'alignment' and @props.show_painting
       A

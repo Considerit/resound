@@ -256,6 +256,7 @@ dom.EDIT_ASIDE = ->
 
               new_aside = [start, end, insert_at, @local.rewind]
               asides.push(new_aside)
+              @props.on_save?(new_aside, insert_at)
             else
               update_aside(@props.song, reaction_file_prefix, idx, start, end, insert_at, @local.rewind)
 
@@ -319,41 +320,9 @@ dom.EDIT_ASIDE = ->
 
 
 
-#########################
-# DETAILED ASIDE EDITOR #
-#########################
-
-
-
-dom.ASIDE_EDITOR_LIST = -> 
-
-  song = @props.song
-  all_asides = get_all_asides(song)
-
-  DIV null,
-
-
-    COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER
-      song: song
-
-    ASIDE_SUMMARY_AND_INSERTION_EDITOR
-      song: song
-        
-    UL 
-      style:
-        listStyle: 'none'
-        paddingLeft: 24
-        marginTop: 48
-
-
-
-      for aside,idx in all_asides
-        ASIDE_EDITOR_ITEM
-          key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
-          aside: aside
-          song: song
-          my_key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
-
+##########################################
+# ASIDE SUMMARY AND INSERTION EDITOR
+##########################################
 
 dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
   song = @props.song
@@ -376,14 +345,17 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
     DIV 
       style: 
         display: 'grid'
+        alignItems: 'center'
+        justifyContent: 'space-evenly'
 
 
       for aside,row in all_asides
-        key = "#{aside.reaction_file_prefix}-#{aside.idx}"
+        key = "#{aside.reaction_file_prefix}-#{aside.idx}-#{aside.aside[0]}-#{aside.aside[1]}"
 
         do (aside, row, key) =>         
           [
             DIV 
+              key: "#{key}-reactor"
               style: 
                 gridRow: row + 1
                 gridColumn: 1
@@ -391,6 +363,8 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
 
 
             DIV
+              key: "#{key}-audio"
+
               style: 
                 gridRow: row + 1
                 gridColumn: 2
@@ -408,12 +382,14 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
 
 
             DIV 
+              key: "#{key}-duration"            
               style: 
                 gridRow: row + 1
                 gridColumn: 3
               "#{Math.round(aside.aside[1] - aside.aside[0])}s"
 
             DIV 
+              key: "#{key}-insertion"            
               style: 
                 gridRow: row + 1
                 gridColumn: 4
@@ -426,6 +402,7 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
                   save @local
 
             DIV 
+              key: "#{key}-rewind"            
               style: 
                 gridRow: row + 1
                 gridColumn: 5
@@ -442,6 +419,7 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
 
             if key of @local.changes
               DIV 
+                key: "#{key}-save"
                 style: 
                   gridRow: row + 1
                   gridColumn: 6
@@ -450,11 +428,13 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
                   onClick: => 
                     updated_aside = @local.changes[key]
                     update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3])
-
+                    delete @local.changes[key]
+                    save @local
                   I 
                     className: "glyphicon glyphicon-floppy-save"
 
             DIV 
+              key: "#{key}-trash"            
               style: 
                 gridRow: row + 1
                 gridColumn: 7
@@ -497,6 +477,43 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR.refresh = ->
 
 
 
+#########################
+# DETAILED ASIDE EDITOR #
+#########################
+
+
+
+dom.ASIDE_EDITOR_LIST = -> 
+
+  song = @props.song
+  all_asides = get_all_asides(song)
+
+  DIV null,
+
+
+    COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER
+      song: song
+
+    ASIDE_SUMMARY_AND_INSERTION_EDITOR
+      song: song
+        
+    UL 
+      style:
+        listStyle: 'none'
+        paddingLeft: 24
+        marginTop: 48
+
+
+
+      for aside,idx in all_asides
+        ASIDE_EDITOR_ITEM
+          key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
+          aside: aside
+          song: song
+          my_key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
+
+
+
 
 dom.ASIDE_EDITOR_ITEM = ->
   @local.loop_in_region ?= true
@@ -512,7 +529,7 @@ dom.ASIDE_EDITOR_ITEM = ->
     if @my_key of @local.changes
       updated_aside = @local.changes[@my_key]
       update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3])
-
+      delete @local.changes[@my_key]
 
   LI 
     key: @props.my_key
