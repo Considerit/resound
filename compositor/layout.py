@@ -1,8 +1,7 @@
 import numpy as np
-import math, os
+import math, os, glob
 from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate, save_object_to_file, read_object_from_file
 from itertools import groupby
-
 
 
 def create_layout_for_composition(base_video, width, height, shape="hexagon"):
@@ -26,7 +25,18 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
 
 
     key = f"{total_videos}-{base_video_proportion}-{include_base_video}-{base_video_placement}".replace('/', 'x')
-    output_path = os.path.join(conf.get('temp_directory'), f"layout-{key}.json")
+    archived_output_path = os.path.join(conf.get('temp_directory'), f"layout-{key}.json")
+    output_path = os.path.join(conf.get('temp_directory'), f"layout-current-{key}.json")
+
+
+    # Find all json files whose name starts with "layout-current" and demote them
+    temp_directory = conf.get('temp_directory')
+    for filepath in glob.glob(os.path.join(temp_directory, "layout-current*.json")):
+        new_filepath = filepath.replace("-current", "")
+        os.rename(filepath, new_filepath)
+
+    if os.path.exists(archived_output_path):
+      os.rename(archived_output_path, output_path)
 
     if os.path.exists(output_path):
       layout = read_object_from_file(output_path)
@@ -35,10 +45,16 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
       if include_base_video:        
         if base_video_placement == "left / top":
           x,y = (base_width / 2, base_height / 2)          # left / top
+          value_relative_to = [base_width, base_height]          
         elif base_video_placement == "left / bottom":
           x,y = (base_width / 2, height - base_height / 2) # left / bottom
+          value_relative_to = [base_width, height - base_height]
         elif base_video_placement == 'center / bottom':
           x,y = (width / 2, height - base_height / 2)      # center / bottom
+          value_relative_to = [x, height - base_height]
+        elif base_video_placement == 'centered':
+          x,y = (width / 2, height / 2 + base_height / 2)
+          value_relative_to = [x, y]
 
         print(f"SETTING POSITION TO {(x - base_width / 2, y - base_height / 2)}")
         base_video_centroid = (x - base_width / 2, y - base_height / 2)      
@@ -48,7 +64,7 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
                   x + base_width / 2, y + base_height / 2]
 
         center = None
-        value_relative_to = [x, height - base_height]
+        
       else: 
         bounds = [0,0,width,0]
         center = [width / 2, height / 2]
@@ -83,6 +99,7 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
         "adjustments": {}
       }
       save_object_to_file(output_path, layout)
+      print(f"** SAVED LAYOUT TO #{output_path}")
 
     apply_adjustments(layout)
 
@@ -92,6 +109,21 @@ def create_layout_for_composition(base_video, width, height, shape="hexagon"):
 
 
 def apply_adjustments(layout):
+
+    grid_adjustment = layout['adjustments'].get('grid', {}).get('shift', None)
+    if grid_adjustment is not None:
+
+      layout["seats"] = ([  seat[0] + grid_adjustment[0], seat[1] + grid_adjustment[1] ] for seat in layout["seats"])
+
+      new_assignments = {}
+      for assignment in layout["assignments"].items():
+        new_assignments[assignment[0]] = [assignment[1][0] + grid_adjustment[0], assignment[1][1] + grid_adjustment[1]]
+
+      layout["assignments"] = new_assignments
+
+
+
+
     base_width = layout['grid_size'][0]
     for channel, reaction in conf.get('reactions').items():
       for reactor in reaction['reactors']:
@@ -139,7 +171,8 @@ def generate_grid(width, height, min_cells, outside_bounds=None, center=None, sh
     # Calculate the center of the grid
     if center is None:  
       main_padding = max(0, 180 - 8 * min_cells)
-      center = (outside_bounds[2] + main_padding, outside_bounds[3] + main_padding)
+      # center = (outside_bounds[2] + main_padding, outside_bounds[3] + main_padding)
+      center = (outside_bounds[0], outside_bounds[1])
     
     # Create an empty list to hold the hexagon center coordinates
     coords = []
@@ -164,13 +197,23 @@ def generate_grid(width, height, min_cells, outside_bounds=None, center=None, sh
       for j in range(-ny, ny + 1):
         for i in range(-nx, nx + 1):
           x = center[0] + dx * (i + 0.5 * (j % 2))
-          y = center[1] + dy * j
+          y = center[1] - a + dy * j
           
+          coords.append((x, y))
+
+      # filter out hexagons overlapping too much with the base video
+      filtered_coords = []
+      for centroid in coords:
+          x,y = centroid
+
           # Add the hexagon to the list if it's fully inside the width x height area
           fully_inside_grid = x - a >= 0 and y - a >= 0 and x + a <= width and y + a <= height
           not_covering_base = distance_from_region((x,y), outside_bounds) > a - (outside_bounds[3] - outside_bounds[1]) / 10
           if fully_inside_grid and not_covering_base:
-            coords.append((x, y))
+            filtered_coords.append(centroid)
+
+
+      coords = filtered_coords
 
       # Reduce the size of the hexagons and try again if we don't have enough
       if len(coords) < min_cells:
@@ -221,6 +264,9 @@ def generate_grid(width, height, min_cells, outside_bounds=None, center=None, sh
 
 
 def get_seat_preferences_for_gaze_direction(horizontal_orientation, vertical_orientation, base_video_width, base_video_height, grid_size, grid_centroid): 
+    
+    base_video_placement = conf.get('base_video_placement')
+
     vw = base_video_width
     vh = base_video_height
     w,h = grid_size
@@ -244,16 +290,20 @@ def get_seat_preferences_for_gaze_direction(horizontal_orientation, vertical_ori
         elif vertical_orientation == 'down':
           ideal_seat[1] -= 2 
 
-    # This is only correct for video placement = down center
-    if horizontal_orientation == 'center':
+
+    if base_video_placement == "center / bottom" and horizontal_orientation == 'center':
       left = w / 2 - vw / 2
       right = w / 2 + vw / 2
       top = 0
       bottom = h - vh
-    else:
+
+    else: # Works for centered, adjustments needed above for other vid placements 
       if horizontal_orientation == 'right':
         left = 0 
         right = w / 2 - vw / 2
+      elif horizontal_orientation == 'center':
+        left = w / 2 - vw / 4
+        right = w / 2 + vw / 4     
       elif horizontal_orientation == 'left':
         left = w / 2 + vw / 2
         right = w
@@ -278,7 +328,7 @@ def get_seat_preferences(reaction, grid_centroid, grid_size, all_seats, base_vid
     global seat_preferences
 
     base_video_placement = conf.get('base_video_placement')
-    if base_video_placement != "center / bottom":
+    if base_video_placement not in ["center / bottom", 'centered']:
       raise(f"Please update this function to support {base_video_placement}")
 
     key = f"{conf.get('song_key')}-{reaction.get('channel')}"
