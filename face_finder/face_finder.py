@@ -85,16 +85,38 @@ from utilities import conf, conversion_frame_rate
 import soundfile as sf
 
 
+import os
+
 def get_face_files(reaction, aside_video=None):
-  if aside_video is not None:
-    react_path = aside_video
-  else:
-    react_path = reaction.get('aligned_path')
-
-  base_reaction_path, __ = os.path.splitext(react_path)
-
-  pattern = f"{base_reaction_path}-cropped-*-*-*.mp4"
-  return glob.glob(pattern)
+    # Determine the base reaction path
+    if aside_video is not None:
+        react_path = aside_video
+    else:
+        react_path = reaction.get('aligned_path')
+    
+    # Extract the directory and base name of the reaction path
+    react_dir = os.path.dirname(react_path)
+    base_reaction_name, _ = os.path.splitext(os.path.basename(react_path))
+    
+    # List all files in the reaction directory
+    try:
+        files = os.listdir(react_dir)
+    except FileNotFoundError:
+        return []  # Return an empty list if the directory does not exist
+    
+    # Filter files based on the pattern
+    matching_files = []
+    for file in files:
+        # Construct the expected start of the file name based on the base reaction name
+        expected_start = f"{base_reaction_name}-cropped-"
+        
+        # Check if the file matches the expected pattern
+        if file.startswith(expected_start) and file.endswith(".mp4"):
+            # Construct the full path to the file
+            full_path = os.path.join(react_dir, file)
+            matching_files.append(full_path)
+    
+    return matching_files
 
 
 def create_reactor_view(reaction, show_facial_recognition=False, aside_video=None): 
