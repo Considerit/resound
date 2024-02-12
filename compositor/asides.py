@@ -13,6 +13,7 @@ from moviepy.video.fx import fadeout
 from utilities import extract_audio, conf, conversion_frame_rate, conversion_audio_sample_rate as sr
 
 
+PAUSE_AFTER_ASIDE = .3
 
 def create_asides(reaction):
     from face_finder import create_reactor_view
@@ -129,7 +130,7 @@ def create_asides(reaction):
 # previous frame is replicated until the aside is finished, and no audio is played. 
 
 
-def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
+def incorporate_asides(base_video, video_background, base_audio_clip, audio_scaling_factors):
 
     all_asides = []
     for name, reaction in conf.get('reactions').items():
@@ -142,31 +143,47 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
                 all_asides.append([insertion_point, aside_clips, reaction.get('channel'), rewind ])
 
     if len(all_asides) == 0:
-        return base_video, base_audio_clip
+        return base_video, video_background, base_audio_clip
 
     print('INCORPORATING ASIDES')
     all_asides.sort(key=lambda x: x[0], reverse=True)
 
 
-    def extend_for_aside(clip, insertion_point, duration, aside=None, use_countdown_timer=False):
+
+    
+
+    def extend_for_aside(clip, insertion_point, duration, aside=None, use_countdown_timer=False, pause_after=None):
+        if pause_after is None:
+            pause_after = PAUSE_AFTER_ASIDE
+
         if clip.duration < insertion_point:
             return clip
-
-        if aside is None: 
-            # print('insertion_point', insertion_point)
-            frame = clip.get_frame(max(0,insertion_point - 1))
-            extended_clip = ImageClip(frame, duration=duration) #.set_audio(AudioClip(lambda t: 0, duration=duration))
-        else:
-            extended_clip = aside
 
         # Splice the aside into the current reaction clip
         before = clip.subclip(0, insertion_point)
         after = clip.subclip(insertion_point)
 
-        new_clip = concatenate_videoclips([before, extended_clip, after])
+        if aside is None: 
+            # print('insertion_point', insertion_point)
+            frame = clip.get_frame(max(0,insertion_point - 1))
+            extended_clip = ImageClip(frame, duration=duration) 
+        
+        else:
+            extended_clip = aside
+            frame = after.get_frame(0)
+
+        if pause_after > 0:
+            short_pause = ImageClip(frame, duration=PAUSE_AFTER_ASIDE)
+            new_clip = concatenate_videoclips([before, extended_clip, short_pause, after])
+        else:
+            new_clip = concatenate_videoclips([before, extended_clip, after])
+
         return new_clip
 
-    def extend_for_audio_aside(audio, insertion_point, duration, aside=None):
+    def extend_for_audio_aside(audio, insertion_point, duration, aside=None, pause_after=None):
+        if pause_after is None:
+            pause_after = PAUSE_AFTER_ASIDE
+
         insertion_point = int(insertion_point * sr)
 
         if audio.shape[0] < insertion_point:
@@ -176,8 +193,11 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             # Create a silent audio clip with the given duration
             aside = np.zeros((int(sr * duration), audio.shape[1]))
 
-        new_audio = np.concatenate([audio[0:insertion_point, :], aside, audio[insertion_point:, :]])
-
+        if pause_after > 0:
+            short_pause = np.zeros((int(PAUSE_AFTER_ASIDE * sr), audio.shape[1]))
+            new_audio = np.concatenate([audio[0:insertion_point, :], aside, short_pause, audio[insertion_point:, :]])
+        else: 
+            new_audio = np.concatenate([audio[0:insertion_point, :], aside, audio[insertion_point:, :]])
         return new_audio
 
 
@@ -191,9 +211,6 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             continue
         for idx, reactor in enumerate(reactors): 
             reaction_segments[channel].append([reactor['clip']])
-
-
-
 
     for i, (insertion_point, aside_clips, channel, rewind) in enumerate(all_asides):
         duration = aside_clips[0]['clip'].duration
@@ -220,10 +237,12 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
                                 )
             composite_rewind_clip = VideoFileClip(f).resize(rewind_clip.size)
 
-            base_video = extend_for_aside(base_video, insertion_point, duration=rewind, aside=composite_rewind_clip)
+            base_video = extend_for_aside(base_video, insertion_point, duration=rewind, aside=composite_rewind_clip, pause_after=0)
+            if video_background is not None:
+                video_background = extend_for_aside(video_background, insertion_point, duration=rewind, pause_after=0)
 
             rewind_audio_clip = base_audio_clip[int((insertion_point - rewind) * sr):int(insertion_point * sr), :] 
-            base_audio_clip = extend_for_audio_aside(base_audio_clip, insertion_point, duration=rewind, aside=rewind_audio_clip)
+            base_audio_clip = extend_for_audio_aside(base_audio_clip, insertion_point, duration=rewind, aside=rewind_audio_clip, pause_after=0)
 
         # base_video.write_videofile(os.path.join(conf.get('temp_directory'), f'{i}-before.mp4'), 
         #                                  codec="h264_videotoolbox", 
@@ -231,6 +250,8 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
         #                                 )       
 
         base_video      = extend_for_aside(base_video, insertion_point, duration)
+        if video_background is not None:
+            video_background = extend_for_aside(video_background, insertion_point, duration=duration)
 
 
 
@@ -253,7 +274,7 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
 
                 if rewind > 0:
                     rewind_clip = reactor['clip'].subclip(insertion_point - rewind, insertion_point)
-                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration=rewind, aside=rewind_clip, use_countdown_timer=False)
+                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration=rewind, aside=rewind_clip, use_countdown_timer=False, pause_after=0)
 
                 if channel == name:
                     assert( len(aside_clips), len(reactors), f"Number of aside reactors does not match the number of reactors for {channel}, check if the asides face recog found the right number."  )
@@ -266,10 +287,10 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
                     reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration)
 
 
-            len_audio_before = reaction['mixed_audio'].shape[0]
+            # len_audio_before = reaction['mixed_audio'].shape[0]
 
             if rewind > 0:
-                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration=rewind)
+                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration=rewind, pause_after=0)
 
                 rewind_scale = audio_scaling_factors[name][round(sr * (insertion_point - rewind)):round((sr * insertion_point))]
                 # rewind_scale = np.ones( int(sr * rewind))
@@ -280,13 +301,13 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
             if channel == name:
                 extended_clip = aside_clips[idx].get('audio')
                 reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration, aside=extended_clip)                
-                middle = np.ones( int(sr * duration))
+                middle = np.ones( int(sr * (duration + PAUSE_AFTER_ASIDE)  ))
                 # middle = np.ones( int(sr * (duration + rewind)))
 
             else: 
                 # reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration + rewind)                
                 reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration)
-                middle = np.zeros(int(sr * duration))
+                middle = np.zeros( int(sr * (duration + PAUSE_AFTER_ASIDE)  ))
                 # middle = np.zeros(int(sr * (duration + rewind)))
 
 
@@ -299,4 +320,4 @@ def incorporate_asides(base_video, base_audio_clip, audio_scaling_factors):
     plot_scaling_factors(audio_scaling_factors)
         
 
-    return (base_video, base_audio_clip)
+    return (base_video, video_background, base_audio_clip)
