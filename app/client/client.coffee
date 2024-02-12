@@ -97,7 +97,7 @@ dom.SONGS = ->
 dom.SONG = -> 
   song = @props.song
 
-  tasks = ['inventory', 'alignment', 'asides', 'aside editor', 'reactors', 'backchannels', 'composition']
+  tasks = ['inventory', 'alignment', 'asides', 'aside editor', 'reactors', 'backchannels', 'layout', 'composition']
 
   loc = retrieve('location')
 
@@ -170,6 +170,9 @@ dom.SONG = ->
       else if task == 'aside editor'
         ASIDE_EDITOR_LIST
           song: @props.song
+      else if task == 'layout'
+        LAYOUT
+          song: @props.song
       else
         REACTION_LIST
           song: @props.song   
@@ -205,6 +208,239 @@ dom.SONG = ->
                 save song_config
                 @local.updated_json = null
           # JSONEditorWithSchema()
+
+
+
+
+dom.LAYOUT = -> 
+  song = @props.song
+  song_config = retrieve("/song_config/#{song}")
+
+  layout = song_config.layout
+  return SPAN null unless layout
+
+  el_width = (window.innerWidth * .95)
+  grid_size = layout.grid_size
+  adjustment = el_width / grid_size[0]
+  el_height = adjustment * grid_size[1]
+
+  assigned_seats = {}
+  for k,v of layout.assignments
+    assigned_seats[v] = k
+
+  seat_size = layout.seat_size
+  @local.selected ?= {}
+
+  seats_selected = (k for k,v of @local.selected when v)
+  num_selected = seats_selected.length
+
+  base_size = layout.base_size
+  base_location = layout.base_location
+
+  @local.base_location ?= layout.base_location.slice()
+
+
+  border_size = 1
+  inner_border = 4
+
+  DIV null,
+
+
+    DIV null,
+      INPUT
+        type: 'number'
+        defaultValue: @local.base_location[0]
+        onChange: (e) => 
+          @local.base_location[0] = e.target.value
+          console.log("x translated: #{@local.base_location[0] - layout.base_location[0]}")
+          save @local
+      INPUT
+        type: 'number'
+        defaultValue: @local.base_location[1]        
+        onChange: (e) => 
+          @local.base_location[1] = e.target.value
+          console.log("y translated: #{@local.base_location[1] - layout.base_location[1]}")          
+          save @local
+
+
+      INPUT
+        type: 'range'
+        defaultValue: 60
+        min: 0
+        max: 240
+        onChange: (ev) =>
+          for vid in @getDOMNode().querySelectorAll('video')
+            vid.currentTime = ev.target.value
+
+
+    DIV 
+      style: 
+        position: 'relative'
+        width: el_width
+        height: el_height
+
+
+      DIV 
+        style:
+          position: 'absolute'
+          left: 0
+          right: 0
+          width: '100%'
+          height: '100%'
+
+        VIDEO 
+          style:
+            width: '100%'
+            height: '100%'
+          controls: false
+
+          SOURCE  
+            src: "/Media/#{song}/background.mp4"
+            type: "video/mp4"
+
+
+
+      DIV
+        style:
+          position: 'absolute'
+          left: @local.base_location[0] * adjustment
+          top: @local.base_location[1] * adjustment
+
+        VIDEO 
+          width: base_size[0] * adjustment
+          #height: base_size[1] * adjustment
+          controls: false
+          style:
+            border: '3px solid white'
+            borderRadius: 8
+
+          SOURCE  
+            src: "/Media/#{song}/#{song}.mp4"
+            type: "video/mp4"
+
+          SOURCE  
+            src: "/Media/#{song}/#{song}.webm"
+            type: "video/webm"
+
+
+
+      for seat in layout.seats 
+
+        selected = @local.selected[seat]
+        click_seat = do (seat) => => 
+          @local.selected[seat] =  !@local.selected[seat]
+          save @local 
+        DIV
+          key: "#{seat}-#{assigned_seats[seat]}"
+          style: 
+            zIndex: if selected then 10 else 1
+            position: 'absolute'
+            left: (seat[0] - seat_size / 2) * adjustment - border_size
+            top: (seat[1] - seat_size / 2) * adjustment - border_size
+
+          DIV 
+            style: 
+              position: 'relative'
+              width: seat_size * adjustment
+              height: seat_size * adjustment
+              #border: "#{inner_border}px solid transparent" 
+              #borderColor: if selected then 'magenta'
+
+              # maskImage: "url(\"/assets/hexagon.svg\")" #"radial-gradient(circle, white 100%, black 100%)"
+              # maskSize: '100%'
+              # boxShadow: if selected then '0 1px 2px magenta'
+              background: if selected then "url(\"/assets/hexagon.svg\")"
+              backgroundSize: if selected then 'contain'
+
+            DIV 
+              style: 
+                backgroundColor: if seat not of assigned_seats then '#eaeaea'
+
+                width: seat_size * adjustment - inner_border * 2
+                height: seat_size * adjustment - inner_border * 2
+                maskImage: "url(\"/assets/hexagon.svg\")" #"radial-gradient(circle, white 100%, black 100%)"
+                maskSize: '100%'
+                position: 'relative'
+                left: inner_border
+                top: inner_border
+                marginRight: inner_border
+                marginBottom: inner_border
+
+              onClick: if seat not of assigned_seats then click_seat
+
+              if seat of assigned_seats
+                src = assigned_seats[seat]
+                parts = src.split('/')
+                reaction_file_prefix = parts[parts.length - 1].split('-CROSS-')[0]
+                gaze = get_gaze_direction(song, reaction_file_prefix)
+                if gaze
+                  [sel_hori, sel_vert] = gaze
+                  flipx = (seat[0] < grid_size[0] / 2 && sel_hori == 'left' ) || (seat[0] > grid_size[0] / 2 && sel_hori == 'right' )
+                else
+                  flipx = false
+
+                VIDEO 
+                  "data-tooltip": assigned_seats[seat]
+                  width: '100%'
+                  height: '100%'                
+                  style:
+                    # borderRadius: "50%"
+                    objectFit: "cover"
+                    transform: if flipx then "scaleX(-1)"
+
+                  controls: false
+                  onClick: click_seat
+
+                  SOURCE  
+                    src: '/' + assigned_seats[seat]
+                    type: "video/mp4"
+
+          if selected && num_selected == 2
+            DIV
+              style:
+                position: 'absolute'
+                top: -20
+                left: "calc(50%-#{seat_size / 2 * adjustment}px)"
+
+              BUTTON
+                onClick: =>
+                  position_1 = seats_selected[0]
+                  assignment_1 = assigned_seats[position_1]
+
+                  position_2 = seats_selected[1]
+                  assignment_2 = assigned_seats[position_2]
+
+                  if assignment_1
+                    layout.assignments[assignment_1] = (parseFloat(f) for f in position_2.split(','))
+                  if assignment_2
+                    layout.assignments[assignment_2] = (parseFloat(f) for f in position_1.split(','))
+
+                  console.log("SWAP", {assignment_1, position_1}, {assignment_2, position_2})
+                  save song_config
+
+                  delete @local.selected[position_1]
+                  delete @local.selected[position_2]
+                  save @local
+
+                'Swap'
+
+
+
+dom.LAYOUT.refresh = ->
+  return if !@getDOMNode()
+  @loaded_videos ?= {}
+  func =  (ev) -> 
+      ev.target.currentTime = 60
+      ev.target.removeEventListener('canplaythrough', func)
+
+  for vid in @getDOMNode().querySelectorAll('video')
+    if vid.firstChild.src not of @loaded_videos
+      @loaded_videos[vid.firstChild.src] = true
+
+      if vid.readyState > 1
+        vid.currentTime = 60
+      else 
+        vid.addEventListener 'canplaythrough', func
 
 
 
@@ -787,6 +1023,45 @@ dom.REACTION_ITEM = ->
 
 
 
+get_gaze_direction = (song, reaction_file_prefix, reaction_id) ->
+  manifest = retrieve("/manifest/#{song}")
+
+  if !manifest.manifest?.reactions
+    return null
+
+  all_reactions = Object.values(manifest.manifest.reactions)
+
+  if !reaction_id
+    reaction_id = null
+    for r in all_reactions
+      if (r.file_prefix or r.reactor) == reaction_file_prefix
+        reaction_id = r.id
+        break
+
+  if !reaction_id
+    console.log("COULD NOT FIND REACTION ID FOR #{reaction_file_prefix}")
+    return null
+
+  metadata = retrieve("/reaction_metadata/#{song}/#{reaction_id}")
+  song_config = retrieve("/song_config/#{song}")
+  config = song_config.config
+
+  retrieve("/action/#{reaction_id}") # subscribe to actions on this reaction
+
+  fname = metadata.reactors[0]
+  parts = fname.split('-')
+  vert = parts[parts.length - 1]
+  hori = parts[parts.length - 2]
+
+  override = config?.face_orientation?[reaction_file_prefix]
+
+  sel_hori = override?[0] or hori
+  sel_vert = override?[1] or vert
+
+  return [sel_hori, sel_vert]
+
+
+
 dom.REACTOR_TASKS = ->
   song = @props.song
   reaction = @props.reaction
@@ -798,15 +1073,7 @@ dom.REACTOR_TASKS = ->
   reaction_file_prefix = reaction.file_prefix or reaction.reactor
   retrieve("/action/#{reaction.id}") # subscribe to actions on this reaction
 
-  fname = metadata.reactors[0]
-  parts = fname.split('-')
-  vert = parts[parts.length - 1]
-  hori = parts[parts.length - 2]
-
-  override = config?.face_orientation?[reaction_file_prefix]
-
-  sel_hori = override?[0] or hori
-  sel_vert = override?[1] or vert
+  [sel_hori, sel_vert] = get_gaze_direction(song, reaction_file_prefix, reaction.id)
 
   num_reactors = config?.multiple_reactors?[reaction_file_prefix] or metadata.reactors.length
 

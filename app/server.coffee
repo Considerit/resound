@@ -4,6 +4,67 @@ fs = require('fs')
 
 songsPath = path.join( __dirname, '..', 'Media')
 libraryPath = path.join( __dirname, '..', 'library')
+
+get_manifest_path = (song) ->
+
+  manifest_path = path.join( songsPath, song, 'manifest.json' )
+  return manifest_path
+
+read_manifest = (song) -> 
+  manifest_path = get_manifest_path(song)
+  manifest_json = JSON.parse(fs.readFileSync(manifest_path))
+  return manifest_json
+
+write_manifest = (song, updated_manifest) ->
+  manifest_path = get_manifest_path(song)
+  fs.writeFileSync(manifest_path, JSON.stringify(updated_manifest, null, 2))
+  bus.dirty "manifest/#{song}"
+  
+get_layout_path = (song) -> 
+  temp_directory = path.join( songsPath, song, 'bounded')
+  layout_path = null
+  return null unless fs.existsSync(temp_directory)
+
+  files = fs.readdirSync temp_directory
+  for file in files
+      if file.startsWith('layout-current') and path.extname(file) == '.json'
+          layout_path = path.join temp_directory, file
+          break
+  return layout_path
+
+read_layout = (song) ->
+  layout_path = get_layout_path(song)
+  if layout_path 
+    layout_json = JSON.parse(fs.readFileSync(layout_path))
+  else
+    layout_json = {}
+  return layout_json
+
+write_layout = (song, obj) ->
+  layout_path = get_layout_path(song)
+  fs.writeFileSync(layout_path, JSON.stringify(obj.layout, null, 2))
+  bus.dirty(obj.key)
+
+get_song_config_path = (song) ->
+  config_path = path.join( libraryPath, "#{song}.json" )
+  return config_path
+
+read_song_config = (song) ->
+  config_path = path.join( libraryPath, "#{song}.json" )
+  if fs.existsSync(config_path)
+    config_json = JSON.parse(fs.readFileSync(config_path))
+  else
+    config_json = {}
+  return config_json
+
+write_song_config = (song, obj) ->
+  config_path = get_song_config_path(song)
+  fs.writeFileSync(config_path, JSON.stringify(obj.config, null, 2))
+  bus.dirty(obj.key)
+
+
+
+
 bus = require('statebus').serve
   port: port,
   client: (client) ->
@@ -17,8 +78,6 @@ bus = require('statebus').serve
         if fs.lstatSync( path.join(songsPath, song_dir)   ).isDirectory()
           songs.push(song_dir)
 
-
-
       return {
         key: '/songs',
         songs: songs
@@ -27,10 +86,9 @@ bus = require('statebus').serve
 
     client('manifest/*').to_fetch = (key) ->
       song_dir = key.split('/')
-      song_dir = song_dir[song_dir.length - 1]
+      song = song_dir[song_dir.length - 1]
 
-      manifest_path = path.join( songsPath, song_dir, 'manifest.json' )
-      manifest_json = JSON.parse(fs.readFileSync(manifest_path))
+      manifest_json = read_manifest(song)
 
       return {
         key: key,
@@ -41,16 +99,14 @@ bus = require('statebus').serve
       song = key.split('/')
       song = song[song.length - 1]
 
-      config_path = path.join( libraryPath, "#{song}.json" )
-      if fs.existsSync(config_path)
-        config_json = JSON.parse(fs.readFileSync(config_path))
-      else
-        config_json = {}
+      config_json = read_song_config(song)
+      layout_json = read_layout(song)
 
       return {
         key: key,
-        config: config_json
-      }      
+        config: config_json,
+        layout: layout_json
+      }
 
 
     client('song_config/*').to_save = (obj) ->
@@ -59,24 +115,26 @@ bus = require('statebus').serve
         song = obj.key.split('/')
         song = song[song.length - 1]
 
-        config_path = path.join( libraryPath, "#{song}.json" )
+        write_song_config(song, obj)        
 
-        fs.writeFileSync(config_path, JSON.stringify(obj.config, null, 2))
-        bus.dirty(obj.key)     
+        if obj.layout
+          write_layout(song, obj)
 
       else
         console.error("object incorrect")
 
 
+      bus.dirty obj.key
+
+
 
     client('reaction/*').to_save = (obj) ->
       vid = obj.reaction.id
-      song_dir = obj.song
+      song = obj.song
 
-      manifest_path = path.join( songsPath, song_dir, 'manifest.json' )
-      manifest_json = JSON.parse(fs.readFileSync(manifest_path))
+      manifest_json = read_manifest(song) 
 
-      reactions_path = path.join( songsPath, song_dir, 'reactions' )
+      reactions_path = path.join( songsPath, song, 'reactions' )
 
       reactions = manifest_json["reactions"]
       for reaction in Object.values(reactions)
@@ -90,22 +148,23 @@ bus = require('statebus').serve
             reaction['marked'] = obj.reaction.marked
           break
 
-      fs.writeFileSync(manifest_path, JSON.stringify(manifest_json, null, 2))
+      write_manifest(song, manifest_json)
 
-      bus.dirty "manifest/#{obj.song}"
+
+      
 
     client('reaction_metadata/*').to_fetch = (key) ->
       parts = key.split('/')
-      song_dir = parts[parts.length - 2]
+      song = parts[parts.length - 2]
       reaction_id = parts[parts.length - 1]
 
-      manifest_path = path.join( songsPath, song_dir, 'manifest.json' )
-      manifest_json = JSON.parse(fs.readFileSync(manifest_path))
+      manifest_json = read_manifest(song)
 
       reaction = manifest_json.reactions[reaction_id]
+
       reaction_file_prefix = reaction.file_prefix or reaction.reactor
 
-      metadata_dir = path.join( songsPath, song_dir, 'bounded' )
+      metadata_dir = path.join( songsPath, song, 'bounded' )
 
       alignment_path = path.join(metadata_dir, "#{reaction_file_prefix}-CROSS-EXPANDER.json")
 
@@ -148,17 +207,15 @@ bus = require('statebus').serve
     client('action/*').to_save = (obj) ->
 
       reaction_id = obj.reaction_id
-      song_dir = obj.song
+      song = obj.song
 
-
-      manifest_path = path.join( songsPath, song_dir, 'manifest.json' )
-      manifest_json = JSON.parse(fs.readFileSync(manifest_path))
+      manifest_json = read_manifest(song)
 
       reaction = manifest_json.reactions[reaction_id]
       reaction_file_prefix = reaction.file_prefix or reaction.reactor
 
-      metadata_dir = path.join( songsPath, song_dir, 'bounded' )
-      cache_dir = path.join( songsPath, song_dir, '_cache' )
+      metadata_dir = path.join( songsPath, song, 'bounded' )
+      cache_dir = path.join( songsPath, song, '_cache' )
 
       # reactors_pattern = "#{reaction_file_prefix}-CROSS-EXPANDER-cropped-"
       # isolated_backchannel = "#{reaction_file_prefix}-isolated_backchannel.json"      
@@ -257,6 +314,7 @@ bus.http.use('/frontend', express.static('frontend'))
 bus.http.use('/media', express.static('../Media'))
 bus.http.use('/vendor', express.static('vendor'))
 bus.http.use('/library', express.static('../library'))
+bus.http.use('/assets', express.static('assets'))
 
 prefix = ''
 bus.http.get '/*', (r,res) => 
