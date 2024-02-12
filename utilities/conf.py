@@ -16,7 +16,6 @@ from library import channel_labels
 from moviepy.editor import vfx, VideoFileClip
 
 from inventory.channels import get_reactors_inventory
-from inventory.inventory import get_reactions_manifest
 
 # from guppy import hpy
 # h = hpy()
@@ -87,12 +86,18 @@ def make_conf(song_def, options, temp_directory):
     artist_present = artist.lower() in title.lower()
     return artist_present and song_present
 
+
+  include_base_video = song_def.get('include_base_video', True)
+
+  default_placement = 'center / bottom' if song_def.get('include_base_video') else 'centered' 
+
+
   conf.update({
     "artist": song_def['artist'],
     "song_name": song_def['song'],
     "song_key": song, 
     "base_audio_path": base_audio_path,
-    "include_base_video": song_def.get('include_base_video', True),
+    "include_base_video": include_base_video,
     "song_directory": song_directory,
     "reaction_directory": reaction_directory,
     "compilation_path": compilation_path,
@@ -115,7 +120,7 @@ def make_conf(song_def, options, temp_directory):
 
     'audio_mixing': song_def.get('audio_mixing', {}),
     'base_video_proportion': song_def.get('base_video_proportion', .45),
-    "base_video_placement": song_def.get('base_video_placement', 'center / bottom'),
+    "base_video_placement": song_def.get('base_video_placement', default_placement),
 
     "zoom_pans": song_def.get('zoom_pans', []),
 
@@ -124,6 +129,8 @@ def make_conf(song_def, options, temp_directory):
 
 
   def load_reactions():
+    from inventory.inventory import get_reactions_manifest
+
     global channel_labels
 
     from inventory import get_manifest_path
@@ -186,13 +193,18 @@ def make_conf(song_def, options, temp_directory):
 
             current_start += reaction_end - reaction_start
 
-      reaction_manifest = None
-      channelId = None
-      for vidID, reaction_manifest in reactions_manifest.items():
-        reaction_file_prefix =  reaction_manifest.get('file_prefix', reaction_manifest['reactor'])
-        if channel == reaction_file_prefix:
-          channelId = reaction_manifest.get('channelId')
-          break
+
+      if channel == 'Resound':
+
+        channelId = 'XXXXXX'
+      else:
+        reaction_manifest = None
+        channelId = None
+        for vidID, reaction_manifest in reactions_manifest.items():
+          reaction_file_prefix =  reaction_manifest.get('file_prefix', reaction_manifest['reactor'])
+          if channel == reaction_file_prefix:
+            channelId = reaction_manifest.get('channelId')
+            break
 
 
       assert (channelId is not None), channel
@@ -264,6 +276,9 @@ def make_conf(song_def, options, temp_directory):
       if featured: 
         default_priority += 25
 
+      if reactions[channel]['asides'] is not None: 
+        default_priority += 20
+
       # print("Priority", channel, priority.get(channel, default_priority))
       reactions[channel]['priority'] = priority.get(channel, default_priority)
 
@@ -281,8 +296,8 @@ def make_conf(song_def, options, temp_directory):
         'views': reaction_manifest.get('views', 1)
       }
 
-    views = []
-    subscribers = []
+    views = [0]
+    subscribers = [0]
     for channel, reaction in reactions.items(): 
       views.append(metrics[channel]['views'])   
       subscribers.append(metrics[channel]['subs']) 
@@ -613,17 +628,17 @@ def prepare_reactions(convert_videos=[]):
             with VideoFileClip(react_video) as clip:
                 width, height = clip.size
             resize_command = ""
-            if width > 1920 or height > 1080:
-                # Calculate aspect ratio
-                aspect_ratio = width / height
-                if width > height:
-                    new_width = 1920
-                    new_height = int(new_width / aspect_ratio)
-                else:
-                    new_height = 1080
-                    new_width = int(new_height * aspect_ratio)
+            # if width > 1920 or height > 1080:
+            #     # Calculate aspect ratio
+            #     aspect_ratio = width / height
+            #     if width > height:
+            #         new_width = 1920
+            #         new_height = int(new_width / aspect_ratio)
+            #     else:
+            #         new_height = 1080
+            #         new_width = int(new_height * aspect_ratio)
                 
-                resize_command = f"-vf scale={new_width}:{new_height}"
+            #     resize_command = f"-vf scale={new_width}:{new_height}"
             # Generate the ffmpeg command
             command = f'ffmpeg -y -i "{react_video}" {resize_command} -c:v libx264 -r {conversion_frame_rate} -ar {sr} -c:a aac "{react_video_mp4}"'
             

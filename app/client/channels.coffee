@@ -151,14 +151,15 @@ dom.CHANNELS = ->
 
       if @local.filters[ channel_info.auto or ''  ]
 
-        if (@local.mentioned_in == ' ' or @local.mentioned_in in channel_info.mentioned_in) and 
-           (@local.included_in == ' ' or @local.included_in in channel_info.included_in)
-          
-          if !@local.filter_channels || (channel_info.title?.toLowerCase().indexOf(@local.filter_channels.toLowerCase()) > -1)
+        if (@local.mentioned_in == ' ' or @local.mentioned_in in channel_info.mentioned_in) 
 
-            CHANNEL
-              key: channel_info.channelId
-              channel_info: channel_info
+          if (@local.included_in == ' ' or @local.included_in in channel_info.included_in)
+          
+            if !@local.filter_channels || (channel_info.title?.toLowerCase().indexOf(@local.filter_channels.toLowerCase()) > -1)
+
+              CHANNEL
+                key: channel_info.channelId
+                channel_info: channel_info
 
 
 dom.CHANNEL = ->

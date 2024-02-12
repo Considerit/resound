@@ -458,7 +458,7 @@ if __name__ == '__main__':
         "download_and_parse": True,
         "alignment_test": False,
         "draft": True,
-        "break_on_exception": False,
+        "break_on_exception": False
     }
     failures = []
     for song in drafts: 

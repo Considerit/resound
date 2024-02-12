@@ -20,3 +20,4 @@ pympler
 torch
 mtcnn
 screeninfo
+openai-whisper

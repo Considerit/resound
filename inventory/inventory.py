@@ -11,7 +11,8 @@ import copy
 import glob 
 import ffmpeg
 
-from utilities import conf, conversion_audio_sample_rate as sr
+
+from utilities import conversion_audio_sample_rate as sr
 from utilities.utilities import extract_audio
 
 from inventory.channels import get_recommended_channels, refresh_reactors_inventory, update_channel, get_channel
@@ -238,7 +239,7 @@ def create_manifest(song_def, artist, song_title, song_search, search, test = No
     if manifest['main_song'] is None:
         manifest['main_song'] = search_for_song(artist, song_title, song_search)        
 
-    # search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
+    search_reactions(artist, song_title, search, manifest["reactions"], test, song_def.get('search_channel_id', None))
 
     save_reactions_manifest(manifest, artist, song_title)
 
@@ -288,7 +289,7 @@ def get_manifest_path(artist, song):
 
 
 def download_and_parse_reactions(song_def, artist, song, song_search, search, refresh_manifest=False):
-
+    from utilities import conf
 
     song_directory = os.path.join('Media', f"{artist} - {song}")
     
@@ -423,6 +424,8 @@ def prepare_title(title):
 
 
 def filter_and_augment_manifest(artist, song):
+    from utilities import conf
+    
     manifest_file = get_manifest_path(artist, song)
     song_data = json.load(open(manifest_file))
 
