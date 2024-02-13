@@ -33,6 +33,43 @@ from compositor.asides import incorporate_asides
 from aligner.create_trimmed_video import check_compatibility
 
 
+##########
+# Monkey patch MoviePy VideoClip to provide a position attribute on a clip.
+# Original set_position method
+original_set_position = VideoClip.set_position
+
+def new_set_position(self, pos, relative=False):
+    # Call the original set_position method to ensure the clip is positioned correctly
+    result = original_set_position(self, pos, relative)
+    # Check if pos is a lambda (function) or not before updating my_position
+    if not callable(pos):
+        result.my_position = pos
+    else:
+        result.my_position = pos(0)
+
+    result.my_position_is_dynamic = callable(pos)
+
+    return result
+
+# Monkey patch the set_position method
+VideoClip.set_position = new_set_position
+
+# Save the original __init__ method
+original_init = VideoClip.__init__
+
+def new_init(self, *args, **kwargs):
+    # Call the original __init__ method
+    original_init(self, *args, **kwargs)
+    # Initialize a default position
+    self.my_position = (0, 0)  # Default position could be (0,0) or any other default you prefer
+
+# Monkey patch the __init__ method
+VideoClip.__init__ = new_init
+
+
+
+
+
 # I have a base video, and then any number of videos of people reacting to that base video. I would 
 # like to use MoviePy to compose a video that has all of these videos together. 
 
@@ -60,14 +97,15 @@ from aligner.create_trimmed_video import check_compatibility
 
 
 
-def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="hexagon"): 
+
+def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexagon"): 
     conf.get('load_base_video')()
 
     output_path = conf.get('compilation_path')
     base_video_path = conf.get('base_video_path')
 
     if os.path.exists(output_path):
-      print("Compilation already exists", output_path)
+      print("Concert already exists", output_path)
       return
 
     print(f"Creating compilation for {output_path}")
@@ -77,16 +115,29 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
     base_video = VideoFileClip(base_video_path)
 
 
+
+    border_width = 20  # Width of the border in pixels
+    border_color = (255, 255, 255)  # Color of the border
+    base_video = base_video.margin(border_width, color=border_color)
+
+
     width, height = output_size
 
+    video_background = get_video_background(output_size, clip_length=base_video.duration + extend_by)
+
+
     base_video, cell_size, base_video_position = create_layout_for_composition(base_video, width, height, shape=shape)
+    
+
+
+
     print("\tLayout created")
-    all_clips, audio_clips, clip_length, audio_scaling_factors = create_clips(base_video, cell_size, draft, output_size, shape=shape)
+    all_clips, audio_clips, clip_length, audio_scaling_factors, video_background = create_clips(base_video, video_background, cell_size, draft, output_size, shape=shape)
     print("\tClips created")
 
     if base_video_position is not None:
-        all_clips[-1]['video'] = all_clips[-1]['video'].set_position(base_video_position)
-        print("Setting position of base video in composition to ", base_video_position)
+        base_video = all_clips[-1]['video'] = all_clips[-1]['video'].set_position(base_video_position)
+        print(f"\t\tSetting position of base video {id(base_video)} in composition to ", base_video_position)
     my_clips = [c for c in all_clips if 'video' in c]
     my_clips.sort(key=lambda x: x['priority'])
     
@@ -99,15 +150,167 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
         else: 
             clips.append(clip)
 
+    if video_background is not None:
+        clips.insert(0, video_background)
 
+
+    print("\tCreating channel labels")
     active_segments = find_active_segments(audio_scaling_factors)
     text_clips = create_channel_labels_video(active_segments, cell_size, output_size)
     clips += text_clips
 
 
+    print("\tComposing clips")
+    final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
+
+    # final_clip = animateZoomPans(final_clip, show_viewport=False) #.set_duration(10)
+    # final_clip.preview()
+    # return
+
+    # Unload a lot of the conf & reactions here to free memory
+    audio_clips = []
+    conf['free_conf']()
 
 
-    # pre_background = final_clip
+
+    visualize_clip_structure(final_clip)
+
+
+    print("\tCreating tiles")
+    tile_zoom = 2 # creates 4 tiles
+    tiles = create_tiles(final_clip, output_size=output_size, zoom_level=tile_zoom)
+
+    # tiles is a list of CompositeVideoClips 
+    for idx, tile in enumerate(tiles):
+        # tile = tile.set_duration(3)
+
+        print(f"\tWriting Tile {idx} of {len(tiles)}")
+        if idx == 0:
+            tile_path = output_path
+        else:
+            tile_path = os.path.splitext(output_path)[0] + f'-tile-{idx}.mp4'            
+
+        # Save the result
+        if draft:
+          tile_path = os.path.splitext(tile_path)[0] + "-draft.mp4"
+          if not os.path.exists(tile_path):
+            tile.set_fps(15).write_videofile(tile_path, 
+                                     codec="h264_videotoolbox", 
+                                     audio_codec="aac", 
+                                     ffmpeg_params=['-q:v', '60'])
+
+        else:
+            tile.write_videofile(tile_path, 
+                               codec="libx264", 
+                               ffmpeg_params=[
+                                     '-crf', '18', 
+                                     '-preset', 'slow' 
+                                   ]
+                              )
+
+
+
+    merge_audio_and_video(output_path, audio_output)
+
+
+
+########
+# Several issues arise when composing hundreds of reaction videos together in a CompositeVideoClip:
+
+# 1) Memory and CPU performance issues when calling write_videofile
+
+# 2) In post-production I’d like to be able to zoom in on particular parts of the concert and not have 
+#    them be blurry because each was written out to a such a small area. 
+
+# To address these issues, I'd like to be able to tile the CompositeVideoClip into several different tiles:
+
+#   - There should be an option to figure out how many tiles. It will be constrained to powers of two. A value 
+#     of 2 means that four tiles will be created, with the tile dividers vertically at x/2 and the horizontal 
+#     division at y/2. Similarily, a value of 4 means 16 tiles will be created, with each dimension divided into 
+#     4 equal parts. A value of 1 means no tiling.
+#   - Each tile will maintain the aspect ratio of the original video. Furthermore, it will be resized to match 
+#     the size of original video. 
+#   - Each tile should cull subclips which are not at all visible in the tile
+#   - Each write_videofile is called sequentially on each tile
+#   - For each tile, each subclip's position will need to be translated from the original clips' coordinates 
+#     to the tile's coordinates.
+
+from copy import deepcopy
+
+def create_tiles(composite_clip, output_size, zoom_level=1):
+    # if zoom_level == 1:
+    #     return [composite_clip]
+
+    # Calculate the number of tiles
+    tiles_count = 2 ** zoom_level
+    tile_width = output_size[0] / zoom_level
+    tile_height = output_size[1] / zoom_level
+
+    # List to store each tile's CompositeVideoClip
+    tiles = []
+    clip_already_adjusted = {}
+
+
+    for i in range(zoom_level):
+        for j in range(zoom_level):
+            # Calculate tile boundaries
+            x_start = i * tile_width
+            y_start = j * tile_height
+            x_end   = x_start + tile_width
+            y_end   = y_start + tile_height
+
+            # print( f"Creating TILE {i}x{j} at ({x_start}, {y_start}) x ({x_end}, {y_end})"  )
+
+            # Filter subclips visible within the current tile
+            visible_clips = []
+            for clip in composite_clip.clips:
+                clip_id = id(clip)  # Unique identifier for the clip
+
+                try:
+                    clip_x, clip_y = clip.my_position
+                except Exception as e:
+                    print("ERROR! No my_position for ", id(clip))
+                    clip_x, clip_y = (0,0)
+
+                clip_width, clip_height = clip.size
+
+                # Calculate the clip's bounding box
+                clip_right = clip_x + clip_width
+                clip_bottom = clip_y + clip_height
+
+                # Check if the clip overlaps with the tile
+
+                if clip_right >= x_start and clip_x <= x_end and clip_bottom >= y_start and clip_y <= y_end:
+                    # Clone the clip if it has already been adjusted for another tile
+                    # if clip_id in clip_already_adjusted:
+                    #     clip = deepcopy(clip)
+                    # else:
+                    #     clip_already_adjusted[clip_id] = True
+
+                    # Calculate the new position relative to the tile
+                    new_x = clip_x - x_start
+                    new_y = clip_y - y_start
+
+                    # Apply translation
+                    adjusted_clip = clip.set_position((new_x, new_y))
+
+                    visible_clips.append(adjusted_clip)
+
+            # Create a tile CompositeVideoClip with visible clips
+            if len(visible_clips) > 0:
+                tile_clip = CompositeVideoClip(visible_clips, size=(int(tile_width), int(tile_height))).resize(zoom_level)
+                tiles.append(tile_clip)
+
+    # assert( tiles_count == len(tiles), tiles_count, tiles  )
+
+    return tiles
+
+
+
+
+
+def get_video_background(output_size, clip_length):
+    video_background = None
     if conf.get('background'):
         reversing_bg = conf.get('background.reverse', False)
         video_background_path = conf.get('background')
@@ -141,59 +344,7 @@ def compose_reactor_compilation(extend_by=0, output_size=(1920, 1080), shape="he
             video_background = ImageClip(video_background_path)
 
         video_background = video_background.resize(output_size).set_duration(clip_length)
-
-        clips.insert(0, video_background)
-
-    final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
-    
-
-    
-    print("\tClips composed")
-
-
-
-
-
-
-    final_clip = animateZoomPans(final_clip, show_viewport=False) #.set_duration(10)
-    # final_clip.preview()
-    # return
-
-    # Unload a lot of the conf & reactions here to free memory
-    audio_clips = []
-    conf['free_conf']()
-
-
-
-    # visualize_clip_structure(final_clip)
-
-    # Save the result
-    if draft:
-      output_path = output_path + "fast.mp4"
-      if not os.path.exists(output_path):
-        print("VISUALIZING CLIP STRUCTURE:")
-        final_clip.set_fps(15).write_videofile(output_path, 
-                                 codec="h264_videotoolbox", 
-                                 audio_codec="aac", 
-                                 ffmpeg_params=['-q:v', '60'])
-
-    else:
-        final_clip.resize(2).write_videofile(output_path, 
-                                 codec="h264_videotoolbox", 
-                                 ffmpeg_params=['-q:v', '60']
-                                )
-
-
-        # try: 
-        #     pre_background.write_videofile(output_path+'.mov', 
-        #                    codec="prores_ks", 
-        #                    ffmpeg_params=['-profile:v', '4444', '-q:v', '60', '-pix_fmt', 'yuv444p10le']
-        #                   )
-        # except:
-        #     print("Could not export transparent")
-
-
-    merge_audio_and_video(output_path, audio_output)
+    return video_background
 
 
 def merge_audio_and_video(output_path, audio_output):
@@ -220,9 +371,10 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
     duration = max(base_video.duration, clip_length)
     # duration = 30 
 
-
     final_clip = CompositeVideoClip(clips, size=output_size)
-    final_clip = final_clip.set_duration(duration)
+
+    final_clip = final_clip.set_duration(duration).without_audio().set_fps(30)
+
 
     # Determine the maximum length among all audio clips
     max_len = max([track.shape[0] for track in audio_clips])
@@ -251,7 +403,7 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
     audio_output = os.path.join(conf.get('temp_directory'), "MAIN-full-mixed-directly.flac")
     sf.write(audio_output, mixed_track, sr, format='FLAC')
 
-    print(f"MIXED {len(audio_clips)} audio clips together!")
+    print(f"\t\t\tMIXED {len(audio_clips)} audio clips together!")
 
 
     # if extend_by > 0:
@@ -261,11 +413,6 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
     #   # Reduce the volume of the second clip
     #   clip2 = clip2.fx(audio_fx.volumex, 0.5)  # reduce volume to 50%
     #   final_audio = concatenate_audioclips([clip1, clip2])
-
-
-    final_clip = final_clip.without_audio().set_fps(30)
-
-    # final_clip = final_clip.set_duration(10)
 
     return final_clip, audio_output
 
@@ -334,11 +481,9 @@ def find_active_segments(audio_scaling_factors, duration_threshold=1.5):
 
     most_featured = [ (c, t) for c,t in summative.items()   ]
     most_featured.sort( key=lambda x: x[1], reverse=True)
-    print("Featured Time by Channel")
+    print("\t\t\tFeatured Time by Channel")
     for c,t in most_featured:
-        print(c, t/sr)
-    for c,t in most_featured:
-        print(c)
+        print("\t\t\t\t", c, t/sr)
 
 
     return final_segments
@@ -361,20 +506,28 @@ def create_progress_bar_clip(duration, width, height, start_time, bar_color=(0, 
 
 def create_channel_labels_video(active_segments, cell_size, output_size):
     channel_textclips = []
-    progress_bar_height = 10  # Height of the progress bar
+    progress_bar_height = 10 * 2 # Height of the progress bar
+
+
+    font = "Fira-Sans-ExtraBold" # "BadaBoom-BB"
 
     print('creating channel label video')
     for channel, start, end in active_segments:
         reaction = conf.get('reactions').get(channel)
         duration = (end - start) / sr
 
+
+
         # Create shadow text clip (black and slightly offset)
-        shadow_clip = TextClip(reaction.get('channel_label'), fontsize=24, color='black', 
-                               font="Fira-Sans-ExtraBold")
+        shadow_clip = TextClip(reaction.get('channel_label'), fontsize=28*2, color='black', 
+                               font=font)
+        # Create shadow text clip (black and slightly offset)
+        shadow_clip2 = TextClip(reaction.get('channel_label'), fontsize=28*2, color='black', 
+                               font=font)
 
         # Create main text clip (white)
-        txt_clip = TextClip(reaction.get('channel_label'), fontsize=24, color='white', 
-                            font="Fira-Sans-ExtraBold")
+        txt_clip = TextClip(reaction.get('channel_label'), fontsize=28*2, color='white', 
+                            font=font)
 
         text_width, text_height = txt_clip.size
 
@@ -401,14 +554,17 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
         # comp_clip = comp_clip.set_duration(duration).set_start(start / sr)
         # channel_textclips.append(comp_clip)
 
-        shadow_clip = shadow_clip.set_position((x+1, y+1)).set_duration(duration).set_start(start / sr)
+        shadow_clip  = shadow_clip.set_position((x+2, y+2)).set_duration(duration).set_start(start / sr)
+        shadow_clip2 = shadow_clip2.set_position((x-1, y-1)).set_duration(duration).set_start(start / sr)
+
         txt_clip = txt_clip.set_position((x, y)).set_duration(duration).set_start(start / sr)
 
+        channel_textclips.append(shadow_clip2)        
         channel_textclips.append(shadow_clip)        
         channel_textclips.append(txt_clip)
 
         # Calculate position for progress bar
-        bar_position = (x, y + text_height // 2 + progress_bar_height + 4)
+        bar_position = (x, y + int(text_height * .75) + progress_bar_height + 4)
 
         # Create progress bar clip
         progress_bar_clip = create_progress_bar_clip(
@@ -426,7 +582,7 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
 
 
 
-def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
+def create_clips(base_video, video_background, cell_size, draft, output_size, shape="hexagon"):
 
 
     reactor_colors = generate_hsv_colors(len(conf.get('reactions').keys()), 1, .6)
@@ -439,6 +595,7 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
     # Set position
     print("\tSetting all positions")    
     for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+
         print(f"\t\tSetting position for {name}")
         reactors = reaction.get('reactors')
         if reactors is None:
@@ -466,7 +623,7 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
     #####################
     # Create video clips
 
-    base_video, base_audio_clip = incorporate_asides(base_video, base_audio_clip, audio_scaling_factors)
+    base_video, video_background, base_audio_clip = incorporate_asides(base_video, video_background, base_audio_clip, audio_scaling_factors)
     all_clips = []
 
     print("\tCreating all clips")
@@ -556,13 +713,12 @@ def create_clips(base_video, cell_size, draft, output_size, shape="hexagon"):
 
     all_clips.append(base_clip)
 
-
     if not conf['include_base_video']: # draft or 
         del base_clip['video']
 
 
 
-    return all_clips, audio_clips, clip_length, audio_scaling_factors
+    return all_clips, audio_clips, clip_length, audio_scaling_factors, video_background
 
 
 
@@ -648,7 +804,7 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
         h, s, v = hsv_color
         
 
-        def color_func(t):
+        def color_func(t, dominant):
             # Get the volume at current time
             idx = int(t * sr)
 
@@ -660,9 +816,8 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
             if volume == 0:
                 return 0, 0, 0
 
-            
 
-            if idx < len(audio_scaling_factor) and audio_scaling_factor[idx] > .5:
+            if dominant:
                 v_modulated = 1 - volume * (1 - v)
                 r, g, b = colorsys.hsv_to_rgb(h, s, v_modulated)
             else: 
@@ -687,12 +842,16 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
     border_color_func = colorize_when_backchannel_active(border_color, clip)
 
 
-    def make_frame(t):
-        img = np.zeros((height, width, 3))
 
-        # Convert the color from HSV to RGB, then scale from 0-1 to 0-255
-        color_rgb = np.array(border_color_func(t)) * 255
-        img[border_mask_np > 0] = color_rgb  # apply color to border
+    def make_frame(t):
+        idx = int(t * sr)
+        dominant = idx < len(audio_scaling_factor) and audio_scaling_factor[idx] > .5
+
+        img = np.zeros((height, width, 3))
+        color_rgb = np.array(border_color_func(t, dominant)) * 255
+
+        # Apply color to border
+        img[border_mask_np > 0] = color_rgb
 
         return img
 
@@ -761,11 +920,11 @@ def visualize_clip_structure(clip, depth=0):
     indent = "  " * depth  # Indentation to represent depth
 
     if isinstance(clip, CompositeVideoClip):
-        print(f"{indent}CompositeVideoClip:")
+        print(f"{indent}CompositeVideoClip [{id(clip)}]:")
         for subclip in clip.clips:
             visualize_clip_structure(subclip, depth + 1)
     else:
         # Handle other clip types here
-        print(f"{indent}{type(clip).__name__}")
+        print(f"{indent}{type(clip).__name__} [{id(clip)}]")
 
 
