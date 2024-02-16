@@ -169,13 +169,12 @@ def create_reactor_view(reaction, show_facial_recognition=False, aside_video=Non
   for file in output_files:
     match = re.match(regex_pattern, file)
     i, x, orientation_x, orientation_y = match.groups()
-
     cropped_reactors.append({
       'key': file,
       'priority': reaction.get('priority'), 
-      'clip': VideoFileClip(file),
       'orientation': sophisticated_orientation,
-      'x': int(x)
+      'x': int(x),
+      'path': file
     })
 
   cropped_reactors.sort(key=lambda r: r['x'])  
@@ -318,6 +317,7 @@ def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_au
 
     # Close the video clip
     video.close()
+    cropped_video.close()
 
 
 

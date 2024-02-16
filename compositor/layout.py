@@ -3,6 +3,27 @@ import math, os, glob
 from utilities import conf, conversion_frame_rate, conversion_audio_sample_rate, save_object_to_file, read_object_from_file
 from itertools import groupby
 
+def set_reactor_positions(cell_size):
+    print("\tSetting all positions")    
+    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+
+        print(f"\t\tSetting position for {name}")
+        reactors = reaction.get('reactors')
+        if reactors is None:
+            continue
+
+        for idx, reactor in enumerate(reactors): 
+            x,y = reactor['grid_assignment']
+
+            size = cell_size
+            if reaction['featured']: 
+              size *= 1.15
+              size = int(size)
+
+            position = (x - size / 2, y - size / 2)
+
+            reactor['position'] = position
+            reactor['size'] = size
 
 def create_layout_for_composition(base_video, width, height, shape="hexagon"):
     base_video_proportion = conf.get('base_video_proportion')

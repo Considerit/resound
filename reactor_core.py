@@ -10,8 +10,8 @@ from utilities import conversion_audio_sample_rate as sr
 from inventory import download_and_parse_reactions, get_manifest_path, filter_and_augment_manifest
 from aligner import create_aligned_reaction_video
 from face_finder.face_finder import create_reactor_view, get_face_files
-from backchannel_isolator import isolate_reactor_backchannel
-from compositor import compose_reactor_compilation
+from backchannel_isolator import isolate_reactor_backchannel, get_reactor_backchannel_path
+from compositor import create_reaction_concert
 from compositor.asides import create_asides
 
 from aligner.scoring_and_similarity import print_path, ground_truth_overlap
@@ -99,10 +99,12 @@ def clean_up(song_def, on_ice=False):
         except Exception as e:
             print(f"Error occurred while deleting file {webm}: {e}")
 
-def handle_reaction_video(reaction, return_if_ready_for_compilation, extend_by=15):
 
-    if return_if_ready_for_compilation and len(get_face_files(reaction)) > 0:
-        return 
+
+def reaction_fully_processed(reaction): 
+    return len(get_face_files(reaction)) > 0
+
+def handle_reaction_video(reaction, extend_by=15):
 
     output_file = reaction.get('aligned_path')
 
@@ -261,10 +263,12 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         extend_by = 12
 
+        conf.get('load_reactions')()
+
+        all_reactions = list(conf.get('reactions').keys())
+        all_reactions.sort()        
+
         def handle_all_reaction_videos(return_if_ready_for_compilation):
-            conf.get('load_reactions')()
-            all_reactions = list(conf.get('reactions').keys())
-            all_reactions.sort()
 
             for i, channel in enumerate(all_reactions):
                 reaction = conf.get('reactions').get(channel)
@@ -279,7 +283,8 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
                     # profiler = cProfile.Profile()
                     # profiler.enable()
 
-                    handle_reaction_video(reaction, return_if_ready_for_compilation=return_if_ready_for_compilation, extend_by=extend_by)
+                    if not reaction_fully_processed(reaction) or not return_if_ready_for_compilation:
+                        handle_reaction_video(reaction, extend_by=extend_by)
 
                     # profiler.disable()
                     # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
@@ -301,13 +306,21 @@ def create_reaction_compilation(song_def:dict, progress, output_dir: str = 'alig
 
         handle_all_reaction_videos(True)
 
-        print_progress(progress)        
+        print_progress(progress)
         compilation_exists = os.path.exists(compilation_path)
         print("COMP EXISTS?", compilation_exists, compilation_path)
         if not compilation_exists and conf['create_compilation'] and request_lock('compilation'):
+            # handle_all_reaction_videos(False)
+            
+            for channel in all_reactions:
+                reaction = conf.get('reactions').get(channel)
+                reaction["backchannel_audio"] = get_reactor_backchannel_path(reaction)                
+                # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
+                reaction["reactors"], __ = create_reactor_view(reaction)
+                if reaction['asides']:
+                    create_asides(reaction)
 
-            handle_all_reaction_videos(False)
-            compose_reactor_compilation(extend_by=extend_by)
+            create_reaction_concert(extend_by=extend_by)
             free_lock('compilation')
     
 

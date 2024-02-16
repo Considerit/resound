@@ -23,8 +23,8 @@ from inventory.channels import get_reactors_inventory
 
 conf = {} # global conf
 
+constrain_to = ["Andrea Silvestro", "Braindead Breakdown", "The Music Recording Network"]
 constrain_to = []
-
 
 from library import search_testers
 
@@ -324,7 +324,7 @@ def make_conf(song_def, options, temp_directory):
       reaction_conf = conf.get('reactions')[channel]
 
       if not conf.get('base_video_path'):
-          load_base_video()
+          load_base()
 
       if not 'reaction_audio_path' in reaction_conf: 
 
@@ -353,7 +353,7 @@ def make_conf(song_def, options, temp_directory):
     reaction_conf = conf.get('reactions')[channel]
 
     if not conf.get('base_video_path'):
-      load_base_video()
+      load_base()
 
     if not 'reaction_audio_path' in reaction_conf: 
       load_reaction(channel)
@@ -381,7 +381,8 @@ def make_conf(song_def, options, temp_directory):
     gc.collect()
 
   conf.update({
-    'load_base_video': load_base_video,
+    'load_base': load_base,
+    'unload_base': unload_base,
     'load_reactions':  load_reactions,
     'load_reaction': load_reaction,
     'load_aligned_reaction_data': load_aligned_reaction_data,
@@ -504,8 +505,26 @@ def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio
 
 
 
+def unload_base():
 
-def load_base_video():
+  import gc
+  global conf
+
+  # print(f"Unloading reaction {channel}")
+
+  to_delete_for_base = ['aligned_reaction_data', 'mixed_audio']
+  for source in ['_', '_vocals', '_accompaniment']:
+    for metric in ['_data', '_mfcc', '_pitch_contour', '_spectral_flux', '_root_mean_square_energy']:     # _continuous_wavelet_transform
+      to_delete_for_base.append(f"song_audio{source}{metric}")
+
+  for field in to_delete_for_base:
+    if field in conf:
+      del conf[field]
+
+  gc.collect()
+
+
+def load_base():
 
     if 'song_audio_data' in conf: 
         return

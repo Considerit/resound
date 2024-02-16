@@ -13,6 +13,7 @@ from moviepy.video.fx import fadeout
 from utilities import extract_audio, conf, conversion_frame_rate, conversion_audio_sample_rate as sr
 
 
+
 PAUSE_AFTER_ASIDE = .3
 
 def create_asides(reaction):
@@ -75,49 +76,359 @@ def create_asides(reaction):
 
         return start, end, insertion_point, rewind
 
-    def remove_skipped_segments(aside_reactor_views, keep_segments):
-        keep_segments.sort( key=lambda x: x[0] )
-
-        for reactor_view in aside_reactor_views:
-            # Initialize a list to hold the subclips
-            subclips = [ reactor_view['clip'].subclip(aside[0], aside[1]) for aside in keep_segments ]
-
-            # Concatenate all the subclips together
-            reactor_view['clip'] = concatenate_videoclips(subclips)
-
-        return aside_reactor_views
-
 
     consolidated_asides = consolidate_adjacent_asides(all_asides)
 
     for i, aside in enumerate(consolidated_asides):
 
-        start, end = aside['range']
         insertion_point = aside['insertion_point']
         rewind = aside['rewind']
         keep_segments = aside['keep_segments']
+        keep_segments.sort( key=lambda x: x[0] )
 
         # first, isolate the correct part of the reaction video
         aside_video_clip = os.path.join(conf.get('temp_directory'), f"{reaction.get('channel')}-aside-{i}.mp4")
         
         if not os.path.exists(aside_video_clip):            
             react_video = VideoFileClip(reaction.get('video_path'), has_mask=True)
-            aside_clip = react_video.subclip(float(start), float(end))
-            aside_clip.set_fps(30)
-            aside_clip.write_videofile(aside_video_clip, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
+            start = aside['range'][0]
+            subclips = [ react_video.subclip(start + aside[0], start + aside[1]) for aside in keep_segments ]
+            aside_clip = concatenate_videoclips(subclips).set_fps(30)
+
+            # aside_clip.write_videofile(aside_video_clip, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '60'])
+
+            aside_clip.write_videofile(aside_video_clip, 
+                                            codec="libx264", 
+                                            ffmpeg_params=[
+                                                 '-crf', '18', 
+                                                 '-preset', 'slow' 
+                                               ], 
+                                            audio_codec="aac")
+
             react_video.close()
+            aside_clip.close()
 
         # do face detection on it
         aside_reactor_views, __ = create_reactor_view(reaction, aside_video = aside_video_clip, show_facial_recognition=False)
-        aside_reactor_views = remove_skipped_segments(aside_reactor_views, keep_segments)
 
-        audio_data = aside_reactor_views[0]['clip'].audio.set_fps(sr).to_soundarray()
         for reactor_view in aside_reactor_views: 
-            reactor_view['audio'] = audio_data
-            reactor_view['clip']  = reactor_view['clip'].without_audio()
-
+            reactor_view['duration'] = sum( (b-a for (a,b) in keep_segments)    )
+            reactor_view['aside-num'] = i
 
         reaction["aside_clips"][insertion_point] = (aside_reactor_views, rewind)
+
+
+
+
+def create_full_video_from_spec(spec, name, key2video): 
+
+    video_segments = []
+
+    for segment in spec:
+        still_frame = segment.get('still-frame', None)
+
+        clip = key2video[segment['key']]
+        main_duration = clip.duration
+
+        if still_frame is not None:
+            duration = segment['duration']
+            frame = clip.get_frame(still_frame)
+            clip = ImageClip(frame, duration=duration) 
+        
+        else:
+
+            start = segment['start']
+
+            end = segment['end']
+            if end == '*':
+                end = main_duration
+
+            if end <= start:
+                continue
+
+            clip = clip.subclip(start, end)
+
+            if segment.get('rewind_clip', False):
+                print("rewind clip", segment)
+                rewind_icon = ImageClip(os.path.join('compositor', 'rewind.png')).set_duration(1).resize( (100,100)  )
+                rewind_icon = rewind_icon.fadeout(.5)
+                rewind_icon = rewind_icon.set_position(("center", "center"))
+                duration = segment['duration']
+
+                composite_rewind_clip = CompositeVideoClip([clip, rewind_icon]) # results in video with just black background
+                f = os.path.join(conf.get('temp_directory'), f'COMPOSITE_REWIND_CLIP-{start}-{end}-{duration}.mp4')
+                composite_rewind_clip.write_videofile(f, 
+                                     codec="h264_videotoolbox", 
+                                     ffmpeg_params=['-q:v', '40']
+                                    )
+                clip = VideoFileClip(f).resize(clip.size)
+
+        video_segments.append(clip)
+
+    full_video = concatenate_videoclips(video_segments)
+    return full_video
+
+
+
+
+
+
+def adjust_audible_segments(audible_segments, name, split_point, duration, audio_factor):
+    new_segments = []
+
+    if duration == 0:
+        return
+
+    for segment in audible_segments[name]:
+        start,end,current_audio_factor = segment
+        if end < split_point:
+            # print("\t\t\t\t", f"BEFORE! start (s): {start/sr}, duration (s): {duration/sr}")
+
+            new_segments.append(segment)
+        elif start >= split_point:
+            # print("\t\t\t\t", f"start (s): {start/sr}, duration (s): {duration/sr}, new start (s): {(start+duration)/sr}, new start (sr): {start+duration}")
+            new_segments.append( [start + duration, end + duration, current_audio_factor]  )
+        elif start < split_point and end > split_point:
+            # print("\t\t\t\t", f"SPLITTING! start (s): {start/sr}, duration (s): {duration/sr}")
+
+            if split_point - start > 0:
+                before = [start, split_point, current_audio_factor]
+                new_segments.append( before )
+                # print("\t\t\t\t\t", f"BEFORE... start (s): {start/sr} - SPLIT (s): {split_point / sr}, duration (s): {(split_point - start)/sr}")
+
+            if end - split_point > 0:
+                after  = [split_point + duration, end + duration, current_audio_factor]
+                new_segments.append( after )
+                # print("\t\t\t\t\t", f"AFTER... start (s): {(split_point + duration)/sr} - SPLIT (s): {(end + duration) / sr}, duration (s): {(end-split_point)/sr}")
+
+    if audio_factor != 0:
+        insertion = [ split_point, split_point + duration, 1]
+        new_segments.append( insertion )
+
+    new_segments.sort(key=lambda x: x[0])
+    audible_segments[name] = new_segments
+
+def create_full_audio_from_spec(spec, name, key2audio, audible_segments): 
+
+    print("*************")
+    print(f"CREATING FULL AUDIO FOR {name}")
+
+    main_audio = key2audio['main']
+
+    is_reaction = name in audible_segments
+
+    audio_segments = []
+
+    # if is_reaction:
+    #     print(f"BEFORE AUDIBLE SEGMENTS FOR {name}")
+    #     for segment in audible_segments[name]:
+    #         print(f"\t  start={segment[0] / sr}  end={segment[1] / sr}  factor={segment[2]}")
+
+    #     for segment in spec:
+    #         print(segment)
+
+
+    for segment in reversed(spec):
+        split_point = int(segment.get('split_point', segment.get('start', 0)) * sr)
+
+        still_frame = segment.get('still-frame', None)
+        if still_frame is not None:
+            duration = int(sr * segment['duration'])
+            audio = np.zeros((duration, main_audio.shape[1]))
+            assert( duration > 0 )
+            if is_reaction:
+                # print(f"STILL FRAME FOR {segment['duration']} at {split_point / sr}")
+                adjust_audible_segments(audible_segments=audible_segments, name=name, split_point=split_point, duration=duration, audio_factor=0) 
+
+        else:
+
+            audio_src = key2audio[segment['key']]
+
+            start = int(sr * segment['start'])
+
+            end = segment['end']
+            if end == '*':
+                end = audio_src.shape[0]
+            else:
+                end = int(sr * end)
+
+            if end <= start:
+                continue
+
+
+            audio = audio_src[start:end, :]
+
+            if is_reaction:
+                duration = int(sr * segment.get('duration', 0))
+                assert(duration > 0, end, start)
+
+
+                if segment['key'] == 'main':
+                    # scaling_factors.append(  audio_scaling_factors[name][start:end]   )
+
+                    # print(f"MAIN FOR {duration / sr} at {split_point / sr}")
+
+                    adjust_audible_segments(audible_segments, name, split_point, duration, 0)     
+                                    
+                elif segment['key'].startswith('aside'): # from an aside
+                    # print(f"ASIDE FOR {duration / sr} at {split_point / sr}")
+                    adjust_audible_segments(audible_segments, name, split_point, duration, 1) 
+
+                else:
+                    raise Exception("Unsupported key", segment)
+
+
+        audio_segments.append(audio)
+
+    audio_segments.reverse()
+    full_audio = np.concatenate(audio_segments)
+
+    # if is_reaction:
+    #     print(f"AUDIBLE SEGMENTS FOR {name}")
+    #     for s in audible_segments[name]:
+    #         print("\t", f"{s[0] / sr} - {s[1] / sr}", s)
+    return full_audio
+
+
+
+
+def create_full_media_specification_with_asides(base_video_duration):
+
+    full_spec = {
+        "base": [ {"key": 'main', "start": 0, "end": "*"} ],
+    }
+
+    all_asides = []
+    for name, reaction in conf.get('reactions').items():
+
+        full_spec[name] = [ {"key": 'main', "start": 0, "end": "*"} ]
+
+        if reaction.get('aside_clips', None):
+            for insertion_point, (aside_clips, rewind) in reaction.get('aside_clips').items():
+                all_asides.append([insertion_point, aside_clips, reaction.get('channel'), rewind ])
+
+    if len(all_asides) == 0:
+        return full_spec
+
+
+    all_asides.sort(key=lambda x: x[0], reverse=True)
+
+
+    def split_at(name, split_point, duration, insert='still-frame', pause_after=None, start=None, end=None):
+        spec = full_spec[name]
+        new_spec = []
+        active = spec.pop(0)
+
+        if pause_after is None:
+            pause_after = PAUSE_AFTER_ASIDE
+
+        # Splice the aside into the current reaction clip
+        before = active.copy()
+        before["end"] = split_point
+        after = active.copy()
+        after["start"] = split_point
+
+        if before["end"] - before["start"] > 0:
+            new_spec.append(before)
+
+        if insert == 'still-frame':
+            assert(duration is not None and duration > 0)
+            splicing_in = {"key": "main", "still-frame": max(0, split_point - .1), "duration": duration, "split_point": split_point}
+            new_spec.append(splicing_in)
+
+        elif insert == 'rewind_clip':
+            assert(start is not None and end is not None)
+            if end == '*' or end - start > 0:
+                splicing_in = {"key": "main", "rewind_clip": True, "start": start, "end": end, "duration": duration, "split_point": split_point}
+                new_spec.append(splicing_in)
+
+        else:
+            assert(start is not None and end is not None)
+
+            if end == '*' or end - start > 0:
+                splicing_in = {"key": insert, "start": start, "end": end, "duration": duration, "split_point": split_point}
+                new_spec.append(splicing_in)
+
+            if pause_after > 0:
+                short_pause = {"key": insert, "still-frame": 0, "duration": pause_after, "split_point": split_point}
+                new_spec.append(short_pause)
+                
+        new_spec.append(after)
+
+        full_spec[name] = new_spec + spec
+
+
+    for i, (insertion_point, aside_clips, channel, rewind) in enumerate(all_asides):
+        
+
+        duration = aside_clips[0]['duration']
+
+        if duration <= 0:
+            continue
+
+        print(f"\tAside at {insertion_point} of {duration} seconds for {channel}")
+
+        if not rewind or base_video_duration < insertion_point:
+            rewind = 0
+
+        rewind = min(insertion_point, rewind)
+
+        if rewind > 0:             
+            
+            split_at(name = 'base', 
+                     split_point = insertion_point, 
+                     duration = rewind, 
+                     insert = 'rewind_clip',
+                     pause_after = 0,
+                     start = insertion_point - rewind,
+                     end = insertion_point)
+
+
+        split_at(name = 'base', 
+                 split_point = insertion_point, 
+                 duration = duration)
+
+
+        for name, reaction in conf.get('reactions').items():
+
+            if rewind > 0:
+                split_at(name = name, 
+                         split_point = insertion_point, 
+                         duration = rewind, 
+                         insert = 'main',
+                         pause_after = 0,
+                         start = insertion_point - rewind,
+                         end = insertion_point)
+
+
+            if channel == name:
+
+                aside_id = aside_clips[0]['aside-num']
+                split_at(name = name, 
+                         split_point = insertion_point, 
+                         insert = f"aside-{aside_id}",
+                         start = 0,
+                         end = '*',
+                         duration = duration)
+
+            else:
+
+                split_at(name = name, 
+                         split_point = insertion_point, 
+                         duration = duration)
+
+    # print("FULL SPEC")
+    # for k,v in full_spec.items():
+    #     print( f"\t{k}" )
+    #     for vv in v:
+    #         print( f"\t\t{vv}")
+
+            
+    return full_spec
+
+
+
+
 
 
 
@@ -130,194 +441,55 @@ def create_asides(reaction):
 # previous frame is replicated until the aside is finished, and no audio is played. 
 
 
-def incorporate_asides(base_video, video_background, base_audio_clip, audio_scaling_factors):
+def incorporate_asides_video(base_video, video_background):
 
-    all_asides = []
+    full_spec = create_full_media_specification_with_asides(base_video.duration)
+    base_video       = create_full_video_from_spec(full_spec['base'], 'base', {'main': base_video})
+    
+    if video_background is not None:
+        video_background = create_full_video_from_spec(full_spec['base'], 'base', {'main': video_background})
+        
     for name, reaction in conf.get('reactions').items():
+        # print(f"\t\tCreating video clip for {name}")
         reactors = reaction.get('reactors')
-        if reactors is None:
-            continue
 
-        if reaction.get('aside_clips', None):
-            for insertion_point, (aside_clips, rewind) in reaction.get('aside_clips').items():
-                all_asides.append([insertion_point, aside_clips, reaction.get('channel'), rewind ])
-
-    if len(all_asides) == 0:
-        return base_video, video_background, base_audio_clip
-
-    print('INCORPORATING ASIDES')
-    all_asides.sort(key=lambda x: x[0], reverse=True)
-
-
-
-    
-
-    def extend_for_aside(clip, insertion_point, duration, aside=None, use_countdown_timer=False, pause_after=None):
-        if pause_after is None:
-            pause_after = PAUSE_AFTER_ASIDE
-
-        if clip.duration < insertion_point:
-            return clip
-
-        # Splice the aside into the current reaction clip
-        before = clip.subclip(0, insertion_point)
-        after = clip.subclip(insertion_point)
-
-        if aside is None: 
-            # print('insertion_point', insertion_point)
-            frame = clip.get_frame(max(0,insertion_point - 1))
-            extended_clip = ImageClip(frame, duration=duration) 
-        
-        else:
-            extended_clip = aside
-            frame = after.get_frame(0)
-
-        if pause_after > 0:
-            short_pause = ImageClip(frame, duration=PAUSE_AFTER_ASIDE)
-            new_clip = concatenate_videoclips([before, extended_clip, short_pause, after])
-        else:
-            new_clip = concatenate_videoclips([before, extended_clip, after])
-
-        return new_clip
-
-    def extend_for_audio_aside(audio, insertion_point, duration, aside=None, pause_after=None):
-        if pause_after is None:
-            pause_after = PAUSE_AFTER_ASIDE
-
-        insertion_point = int(insertion_point * sr)
-
-        if audio.shape[0] < insertion_point:
-            return audio
-
-        if aside is None:
-            # Create a silent audio clip with the given duration
-            aside = np.zeros((int(sr * duration), audio.shape[1]))
-
-        if pause_after > 0:
-            short_pause = np.zeros((int(PAUSE_AFTER_ASIDE * sr), audio.shape[1]))
-            new_audio = np.concatenate([audio[0:insertion_point, :], aside, short_pause, audio[insertion_point:, :]])
-        else: 
-            new_audio = np.concatenate([audio[0:insertion_point, :], aside, audio[insertion_point:, :]])
-        return new_audio
-
-
-    original_video = base_video
-
-    reaction_segments = {}
-    for channel, reaction in conf.get('reactions').items():
-        reaction_segments[channel] = []
-        reactors = reaction.get('reactors')
-        if reactors is None:
-            continue
         for idx, reactor in enumerate(reactors): 
-            reaction_segments[channel].append([reactor['clip']])
+            reactor_clip = VideoFileClip(reactor['path'])
 
-    for i, (insertion_point, aside_clips, channel, rewind) in enumerate(all_asides):
-        duration = aside_clips[0]['clip'].duration
-        print(f"\tAside at {insertion_point} of {duration} seconds for {channel}")
+            videos = {'main': reactor_clip}
 
-        if not rewind or original_video.duration < insertion_point:
-            rewind = 0
+            for insertion_point, (views, rewind) in reaction.get("aside_clips", {}).items():
+                for view in views:
+                    videos[f"aside-{view['aside-num']}"] = VideoFileClip(view['path']).without_audio()
 
-        if rewind > 0:             
-            rewind = min(insertion_point, rewind)
-            # extend base video for aside with the rewind clip
-            print(insertion_point, rewind, insertion_point - rewind)
-            rewind_clip = original_video.subclip(insertion_point - rewind, insertion_point) # not sure why I have to use original_video rather than base_video here...
+            reactor['clip'] = create_full_video_from_spec(full_spec[name], name, videos)
 
-            rewind_icon = ImageClip(os.path.join('compositor', 'rewind.png')).set_duration(1).resize( (100,100)  )
-            rewind_icon = rewind_icon.fadeout(.5)
-            rewind_icon = rewind_icon.set_position(("center", "center"))
-
-            composite_rewind_clip = CompositeVideoClip([rewind_clip, rewind_icon]) # results in video with just black background
-            f = os.path.join(conf.get('temp_directory'), f'COMPOSITE_REWIND_CLIP-{insertion_point-rewind}-{insertion_point}.mp4')
-            composite_rewind_clip.write_videofile(f, 
-                                 codec="h264_videotoolbox", 
-                                 ffmpeg_params=['-q:v', '60']
-                                )
-            composite_rewind_clip = VideoFileClip(f).resize(rewind_clip.size)
-
-            base_video = extend_for_aside(base_video, insertion_point, duration=rewind, aside=composite_rewind_clip, pause_after=0)
-            if video_background is not None:
-                video_background = extend_for_aside(video_background, insertion_point, duration=rewind, pause_after=0)
-
-            rewind_audio_clip = base_audio_clip[int((insertion_point - rewind) * sr):int(insertion_point * sr), :] 
-            base_audio_clip = extend_for_audio_aside(base_audio_clip, insertion_point, duration=rewind, aside=rewind_audio_clip, pause_after=0)
-
-        # base_video.write_videofile(os.path.join(conf.get('temp_directory'), f'{i}-before.mp4'), 
-        #                                  codec="h264_videotoolbox", 
-        #                                  ffmpeg_params=['-q:v', '40']
-        #                                 )       
-
-        base_video      = extend_for_aside(base_video, insertion_point, duration)
-        if video_background is not None:
-            video_background = extend_for_aside(video_background, insertion_point, duration=duration)
+    return base_video, video_background
 
 
 
-        base_audio_clip = extend_for_audio_aside(base_audio_clip, insertion_point, duration)
 
+def incorporate_asides_audio(base_video, base_audio_clip, audible_segments):
 
-        # base_video.write_videofile(os.path.join(conf.get('temp_directory'), f'{i}-after.mp4'), 
-        #                                  codec="h264_videotoolbox", 
-        #                                  ffmpeg_params=['-q:v', '40']
-        #                                 )       
-
-        for name, reaction in conf.get('reactions').items():
-            print(f"\t\tCreating clip for {name}")
-            reactors = reaction.get('reactors')
-            if reactors is None:
-                continue
-
-
-            for idx, reactor in enumerate(reactors): 
-
-                if rewind > 0:
-                    rewind_clip = reactor['clip'].subclip(insertion_point - rewind, insertion_point)
-                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration=rewind, aside=rewind_clip, use_countdown_timer=False, pause_after=0)
-
-                if channel == name:
-                    assert( len(aside_clips), len(reactors), f"Number of aside reactors does not match the number of reactors for {channel}, check if the asides face recog found the right number."  )
-                    extended_clip = aside_clips[idx].get('clip')
-
-                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration, aside=extended_clip, use_countdown_timer=True)
-
-                else:
-                    # reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration + rewind)
-                    reactor['clip'] = extend_for_aside(reactor['clip'], insertion_point, duration)
-
-
-            # len_audio_before = reaction['mixed_audio'].shape[0]
-
-            if rewind > 0:
-                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration=rewind, pause_after=0)
-
-                rewind_scale = audio_scaling_factors[name][round(sr * (insertion_point - rewind)):round((sr * insertion_point))]
-                # rewind_scale = np.ones( int(sr * rewind))
-            else: 
-                rewind_scale = np.zeros(0)
-
-
-            if channel == name:
-                extended_clip = aside_clips[idx].get('audio')
-                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration, aside=extended_clip)                
-                middle = np.ones( int(sr * (duration + PAUSE_AFTER_ASIDE)  ))
-                # middle = np.ones( int(sr * (duration + rewind)))
-
-            else: 
-                # reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration + rewind)                
-                reaction['mixed_audio'] = extend_for_audio_aside(reaction['mixed_audio'], insertion_point, duration)
-                middle = np.zeros( int(sr * (duration + PAUSE_AFTER_ASIDE)  ))
-                # middle = np.zeros(int(sr * (duration + rewind)))
-
-
-            split = int(sr * insertion_point)
-            audio_scaling_factors[name] = np.concatenate([audio_scaling_factors[name][0:split], middle, rewind_scale, audio_scaling_factors[name][split:]])
+    full_spec = create_full_media_specification_with_asides(base_video.duration)
     
+    base_audio_clip  = create_full_audio_from_spec(full_spec['base'], 'base', {'main': base_audio_clip}, audible_segments)
+    
+    for name, reaction in conf.get('reactions').items():
+        print(f"\t\tCreating audio clip for {name}")
+        reactors = reaction.get('reactors')
+
+        audio_files = {'main': reaction['mixed_audio']}
+
+        for insertion_point, (views, rewind) in reaction.get("aside_clips", {}).items():
+            for view in views:
+                audio_files[f"aside-{view['aside-num']}"], __, __ = extract_audio(view['path'], convert_to_mono=False, keep_file=False)
+
+        reaction['mixed_audio'] = create_full_audio_from_spec(full_spec[name], name, audio_files, audible_segments)
 
 
-    from compositor.mix_audio import plot_scaling_factors
-    plot_scaling_factors(audio_scaling_factors)
-        
+    return base_audio_clip
 
-    return (base_video, video_background, base_audio_clip)
+
+
+

@@ -639,9 +639,16 @@ def confirm_via_correlation(reaction, segments, threshold=.9):
     return confirmed_segments
 
 
+
+def get_reactor_backchannel_path(reaction): 
+    output_dir = conf.get('temp_directory')
+    backchannel_audio_filename = f"{reaction.get('channel')}-isolated_backchannel.wav"
+
+    return os.path.join(output_dir, backchannel_audio_filename)
+
 def isolate_reactor_backchannel(reaction, extended_by=0):
 
-    conf.get('load_base_video')()
+    conf.get('load_base')()
     
     output_dir = conf.get('temp_directory')
     reaction_audio = reaction.get('aligned_audio_path')
@@ -659,8 +666,7 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
     backchannel_filename = f"{reaction.get('channel')}-isolated_backchannel.json"
     backchannel_path = os.path.join(output_dir, backchannel_filename)
 
-    backchannel_audio_filename = f"{reaction.get('channel')}-isolated_backchannel.wav"
-    backchannel_audio_path = os.path.join(output_dir, backchannel_audio_filename)
+    backchannel_audio_path = get_reactor_backchannel_path(reaction) 
 
     song_length = len(conf.get('song_audio_data')) / sr + 1
 

@@ -3,6 +3,8 @@ import numpy as np
 import subprocess
 import os
 import math
+import gc
+
 from PIL import Image, ImageDraw, ImageChops
 import colorsys
 
@@ -25,10 +27,10 @@ import soundfile as sf
 
 from utilities import unload_reaction, conf, conversion_frame_rate, conversion_audio_sample_rate as sr
 
-from compositor.layout import create_layout_for_composition
+from compositor.layout import create_layout_for_composition, set_reactor_positions
 from compositor.mix_audio import mix_audio
 from compositor.zoom_and_pan import animateZoomPans
-from compositor.asides import incorporate_asides
+from compositor.asides import incorporate_asides_video, incorporate_asides_audio
 
 from aligner.create_trimmed_video import check_compatibility
 
@@ -99,10 +101,11 @@ VideoClip.__init__ = new_init
 
 
 def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexagon"): 
-    conf.get('load_base_video')()
+    conf.get('load_base')()
 
     output_path = conf.get('compilation_path')
     base_video_path = conf.get('base_video_path')
+
 
     if os.path.exists(output_path):
       print("Concert already exists", output_path)
@@ -114,8 +117,6 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
 
     base_video = VideoFileClip(base_video_path)
 
-
-
     border_width = 20  # Width of the border in pixels
     border_color = (255, 255, 255)  # Color of the border
     base_video = base_video.margin(border_width, color=border_color)
@@ -125,14 +126,24 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
 
     video_background = get_video_background(output_size, clip_length=base_video.duration + extend_by)
 
-
     base_video, cell_size, base_video_position = create_layout_for_composition(base_video, width, height, shape=shape)
     
-
-
+    set_reactor_positions(cell_size)
 
     print("\tLayout created")
-    all_clips, audio_clips, clip_length, audio_scaling_factors, video_background = create_clips(base_video, video_background, cell_size, draft, output_size, shape=shape)
+
+    ###########################
+    # Create final audio track
+    audio_clips, audible_segments = create_audio_clips(base_video, output_size)
+    audio_output = compose_audio_clips(audio_clips)    
+    audio_clips = []
+    gc.collect()
+    ###########################
+
+    active_segments = find_active_segments(audible_segments)
+    all_clips, clip_length, video_background = create_video_clips(base_video, video_background, cell_size, draft, output_size, audible_segments, shape=shape)
+    
+
     print("\tClips created")
 
     if base_video_position is not None:
@@ -155,29 +166,23 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
 
 
     print("\tCreating channel labels")
-    active_segments = find_active_segments(audio_scaling_factors)
     text_clips = create_channel_labels_video(active_segments, cell_size, output_size)
     clips += text_clips
 
-
     print("\tComposing clips")
-    final_clip, audio_output = compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size)
+    final_clip = compose_video_clips(base_video, clips, clip_length, extend_by, output_size)
 
     # final_clip = animateZoomPans(final_clip, show_viewport=False) #.set_duration(10)
     # final_clip.preview()
     # return
 
     # Unload a lot of the conf & reactions here to free memory
-    audio_clips = []
     conf['free_conf']()
 
-
-
-    visualize_clip_structure(final_clip)
-
+    # visualize_clip_structure(final_clip)
 
     print("\tCreating tiles")
-    tile_zoom = 2 # creates 4 tiles
+    tile_zoom = 1 # creates 4 tiles
     tiles = create_tiles(final_clip, output_size=output_size, zoom_level=tile_zoom)
 
     # tiles is a list of CompositeVideoClips 
@@ -202,10 +207,8 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
         else:
             tile.write_videofile(tile_path, 
                                codec="libx264", 
-                               ffmpeg_params=[
-                                     '-crf', '18', 
-                                     '-preset', 'slow' 
-                                   ]
+                               preset="slow",
+                               ffmpeg_params=[ '-crf', '18' ]
                               )
 
 
@@ -220,7 +223,9 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
 # 1) Memory and CPU performance issues when calling write_videofile
 
 # 2) In post-production I’d like to be able to zoom in on particular parts of the concert and not have 
-#    them be blurry because each was written out to a such a small area. 
+#    them be blurry because each was written out to a such a small area. However, I can't just write a 
+#    higher resolution video because there is a C-library level limit we push at > 4k resolution in 
+#    MoviePy.
 
 # To address these issues, I'd like to be able to tile the CompositeVideoClip into several different tiles:
 
@@ -298,7 +303,7 @@ def create_tiles(composite_clip, output_size, zoom_level=1):
 
             # Create a tile CompositeVideoClip with visible clips
             if len(visible_clips) > 0:
-                tile_clip = CompositeVideoClip(visible_clips, size=(int(tile_width), int(tile_height))).resize(zoom_level)
+                tile_clip = CompositeVideoClip(visible_clips, size=(int(tile_width), int(tile_height))).resize(zoom_level).without_audio()
                 tiles.append(tile_clip)
 
     # assert( tiles_count == len(tiles), tiles_count, tiles  )
@@ -367,14 +372,8 @@ def merge_audio_and_video(output_path, audio_output):
     ]    
     subprocess.run(command)
 
-def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output_size):
-    duration = max(base_video.duration, clip_length)
-    # duration = 30 
 
-    final_clip = CompositeVideoClip(clips, size=output_size)
-
-    final_clip = final_clip.set_duration(duration).without_audio().set_fps(30)
-
+def compose_audio_clips(audio_clips):
 
     # Determine the maximum length among all audio clips
     max_len = max([track.shape[0] for track in audio_clips])
@@ -405,88 +404,41 @@ def compose_clips(base_video, clips, audio_clips, clip_length, extend_by, output
 
     print(f"\t\t\tMIXED {len(audio_clips)} audio clips together!")
 
-
-    # if extend_by > 0:
-    #   clip1 = final_audio.subclip(0, duration - extend_by)
-    #   clip2 = final_audio.subclip(duration - extend_by, duration)
-
-    #   # Reduce the volume of the second clip
-    #   clip2 = clip2.fx(audio_fx.volumex, 0.5)  # reduce volume to 50%
-    #   final_audio = concatenate_audioclips([clip1, clip2])
-
-    return final_clip, audio_output
+    return audio_output
 
 
 
 
-def find_active_segments(audio_scaling_factors, duration_threshold=1.5):
-    global sr  # Assuming sr is defined globally
+
+
+
+def compose_video_clips(base_video, clips, clip_length, extend_by, output_size):
+    duration = max(base_video.duration, clip_length)
+
+    final_clip = CompositeVideoClip(clips, size=output_size)
+    final_clip = final_clip.set_duration(duration).without_audio().set_fps(30)
+
+    return final_clip
+
+
+
+
+def find_active_segments(audible_segments, duration_threshold=1.5):
     active_segments = {}
     final_segments = []
 
-    # Step 1: Identify Qualifying Segments for Each Channel
-    for channel, audio_mask in audio_scaling_factors.items():
-        start_sample = None
-        active_segments[channel] = []
 
-        for i, value in enumerate(audio_mask):
-            if value == 1:
-                if start_sample is None:
-                    start_sample = i  # Start of a new active segment
-            else:
-                if start_sample is not None and i - start_sample >= duration_threshold * sr:
-                    active_segments[channel].append((start_sample, i - 1))
-                start_sample = None  # Reset for the next segment
+    for channel, segments in audible_segments.items():
+        for (start, end, audio_factor) in segments:
+            if end - start > duration_threshold * sr:
+                print("\tSegment passes duration threshold", channel, start/sr, end/sr, audio_factor, (end-start)/sr)
+                if audio_factor > .2:
+                    print("\t\tSegment passes volume threshold", channel, start/sr, end/sr, audio_factor, (end-start)/sr)
 
-        # Check if the last segment reaches the end of the array
-        if start_sample is not None and len(audio_mask) - start_sample >= duration_threshold * sr:
-            active_segments[channel].append((start_sample, len(audio_mask) - 1))
-
-    # Step 2: Modify and Check Segments for Overlaps
-    for channel, segments in active_segments.items():
-        for segment in segments:
-            segment_fragments = [segment]
-
-            for other_channel, other_segments in active_segments.items():
-                if other_channel != channel:
-                    for other_segment in other_segments:
-                        new_fragments = []
-                        for fragment in segment_fragments:
-                            start, end = fragment
-                            other_start, other_end = other_segment
-
-                            # Check for overlap and split the segment if necessary
-                            if not (end < other_start or start > other_end):
-                                if start < other_start:
-                                    new_fragments.append((start, other_start - 1))
-                                if end > other_end:
-                                    new_fragments.append((other_end + 1, end))
-                            else:
-                                new_fragments.append(fragment)
-
-                        segment_fragments = new_fragments
-
-            # Add non-overlapping fragments that meet the duration threshold to the final list
-            for fragment in segment_fragments:
-                if fragment[1] - fragment[0] >= duration_threshold * sr:
-                    final_segments.append((channel, fragment[0], fragment[1]))
-
-
-    summative = {}
-    for channel, start, end in final_segments:
-        if channel not in summative:
-            summative[channel] = 0
-
-        summative[channel] += end - start
-
-    most_featured = [ (c, t) for c,t in summative.items()   ]
-    most_featured.sort( key=lambda x: x[1], reverse=True)
-    print("\t\t\tFeatured Time by Channel")
-    for c,t in most_featured:
-        print("\t\t\t\t", c, t/sr)
-
+                    final_segments.append((channel, start, end))
 
     return final_segments
+
 
 
 from moviepy.editor import ImageSequenceClip
@@ -511,7 +463,6 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
 
     font = "Fira-Sans-ExtraBold" # "BadaBoom-BB"
 
-    print('creating channel label video')
     for channel, start, end in active_segments:
         reaction = conf.get('reactions').get(channel)
         duration = (end - start) / sr
@@ -574,108 +525,64 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
 
         channel_textclips.append(progress_bar_clip)
 
+
+        # print(f"\tTEXT LABEL for {channel}: {start/sr} for {duration}")
+
+
     return channel_textclips
 
 
 
+def create_video_clips(base_video, video_background, cell_size, draft, output_size, audible_segments, shape="hexagon"):
 
 
-
-
-def create_clips(base_video, video_background, cell_size, draft, output_size, shape="hexagon"):
-
-
-    reactor_colors = generate_hsv_colors(len(conf.get('reactions').keys()), 1, .6)
+    reactor_colors = generate_hsv_colors(len(conf.get('reactions').keys()), 1, 1)
     clip_length = 0
-
-
-
-
-    ###################
-    # Set position
-    print("\tSetting all positions")    
-    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
-
-        print(f"\t\tSetting position for {name}")
-        reactors = reaction.get('reactors')
-        if reactors is None:
-            continue
-
-        for idx, reactor in enumerate(reactors): 
-            x,y = reactor['grid_assignment']
-
-            size = cell_size
-            if reaction['featured']: 
-              size *= 1.15
-              size = int(size)
-
-            position = (x - size / 2, y - size / 2)
-
-            reactor['position'] = position
-            reactor['size'] = size
-
-    #####################
-    # Mix audio
-
-    base_audio_clip, audio_scaling_factors = mix_audio(base_video, output_size)
 
 
     #####################
     # Create video clips
 
-    base_video, video_background, base_audio_clip = incorporate_asides(base_video, video_background, base_audio_clip, audio_scaling_factors)
+    base_video, video_background = incorporate_asides_video(base_video, video_background)
+
     all_clips = []
 
-    print("\tCreating all clips")
-    audio_clips = []
+    print("\tCreating all video clips")
+
     for i, (name, reaction) in enumerate(conf.get('reactions').items()):
-        print(f"\t\tCreating clip for {name}")
+        # print(f"\t\tCreating video clip for {name}")
         reactors = reaction.get('reactors')
         if reactors is None:
             continue
 
-        # if i > 1:
-        #     continue
-
-
-
         reaction_color = reactor_colors.pop()
 
-        audio = reaction.get('mixed_audio')
-        audio_clips.append(audio)
-        # print(f"MIXED AUDIO LEN {name}={len(audio) / sr}")
-        audio_volume = get_audio_volume(audio)
-
         for idx, reactor in enumerate(reactors): 
-            print(f"\t\t\tReactor {idx}")
+            # print(f"\t\t\tReactor {idx}")
 
             clip = reactor['clip']
-
             size = reactor['size']
-
             featured = reaction['featured']
 
             clip = clip.resize((size, size))
-            if True or not draft:
-                print('\t\t\t\t...masking')
-                clips = create_masked_video(channel=name,
-                                           clip=clip, 
-                                           audio_volume=audio_volume,
-                                           border_color=reaction_color, 
-                                           audio_scaling_factor=audio_scaling_factors[name], 
-                                           border_thickness=min(30, max(5, size / 15)), 
-                                           width=size, 
-                                           height=size, 
-                                           shape= 'circle' if featured else shape)
 
-            position = reactor['position']
+            # print('\t\t\t\t...masking')
+            clips = create_masked_video(channel=name,
+                                       clip=clip, 
+                                       audio_volume=reaction['audio_volume'],
+                                       border_color=reaction_color, 
+                                       audible_segments=audible_segments[name], 
+                                       border_thickness=min(30, max(5, size / 15)), 
+                                       width=size, 
+                                       height=size, 
+                                       shape= 'circle' if featured else shape)
 
             if reactor['layout_adjustments'].get('flip-x', False):
-                clips[1] = clips[1].fx(vfx.mirror_x)
+                clips[-1] = clips[-1].fx(vfx.mirror_x)
 
-
-            clips[0] = clips[0].set_position(position)
-            clips[1] = clips[1].set_position(position)
+            position = reactor['position']
+            for n, vid in enumerate(clips):
+                clips[n] = vid.set_position(position)
 
             if clip_length < clip.duration:
               clip_length = clip.duration
@@ -686,25 +593,19 @@ def create_clips(base_video, video_background, cell_size, draft, output_size, sh
               'channel': name,
               'reaction': reaction,
               'priority': priority,
-              # 'video': CompositeVideoClip(clips).set_position(position), # still not sure which of these 'video' lines are faster
               'video': clips, 
               'position': position,
               'reactor_idx': idx
             }
 
             all_clips.append(clip_info)
-            print('\t\t\t\t...done!')
-
-
-
+            # print('\t\t\t\t...done!')
 
 
     base_opacity = conf.get('base_video_transformations').get('opacity', False)
     if base_opacity:
         base_video = base_video.set_opacity(base_opacity)
 
-
-    audio_clips.append(base_audio_clip)
     base_clip = {
       'base': True,
       'priority': 0,
@@ -716,9 +617,33 @@ def create_clips(base_video, video_background, cell_size, draft, output_size, sh
     if not conf['include_base_video']: # draft or 
         del base_clip['video']
 
+    return all_clips, clip_length, video_background
+
+downsample_factor = 100
+
+def create_audio_clips(base_video, output_size):
+
+    base_audio_clip, audible_segments = mix_audio(base_video, output_size)
+
+    base_audio_clip = incorporate_asides_audio(base_video, base_audio_clip, audible_segments)
+
+    all_clips = []
+
+    print("\tCreating all audio clips")
+
+    audio_clips = []
+    for i, (name, reaction) in enumerate(conf.get('reactions').items()):
+        print(f"\t\tCreating audio clip for {name}")
+
+        audio = reaction['mixed_audio']
+        audio_clips.append(audio)
+        reaction['audio_volume'] = get_audio_volume(audio, downsample_factor=downsample_factor)   # I can probably downsample this pretty heavily and still have it accurate enough        
+        del reaction['mixed_audio']
 
 
-    return all_clips, audio_clips, clip_length, audio_scaling_factors, video_background
+    audio_clips.append(base_audio_clip)
+
+    return audio_clips, audible_segments
 
 
 
@@ -729,11 +654,7 @@ def create_clips(base_video, video_background, cell_size, draft, output_size, sh
 
 
 
-# I’m using the following function to mask a video to a hexagon or circular shape, with 
-# a border that pulses with color when there is audio from the reactor. 
-
-def create_masked_video(channel, clip, audio_volume, width, height, audio_scaling_factor, border_color, border_thickness=10, shape="hexagon"):
-
+def create_mask_shape(shape, width, height, border_thickness):
     # Create new PIL images with the same size as the clip, fill with black color
     mask_img_large = Image.new('1', (width, height), 0)
     mask_img_small = Image.new('1', (width, height), 0)
@@ -744,6 +665,7 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
         # Draw larger and smaller circles on the mask images
         draw_large.ellipse([(0, 0), (width, height)], fill=1)
         draw_small.ellipse([(border_thickness, border_thickness), ((width - border_thickness), (height - border_thickness))], fill=1)
+    
     elif shape == 'diamond':
         def calc_diamond_vertices(cx, cy, size):
             return [(cx, cy - size / 2),  # Top
@@ -757,14 +679,13 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
         # Draw the larger and smaller diamonds on the mask images
         draw_large.polygon(vertices_large, fill=1)
         draw_small.polygon(vertices_small, fill=1)
+    
     elif shape == 'hexagon':
         assert(height == width)
 
         def calc_hexagon_vertices(cx, cy, size):
             relative_to = 0
             l = size / 2 #size / math.sqrt(3) # side length
-
-
 
             vertices = [  
               [cx,            cy - size / 2],  # center top
@@ -788,119 +709,218 @@ def create_masked_video(channel, clip, audio_volume, width, height, audio_scalin
         draw_large.polygon(vertices_large, fill=1)
         draw_small.polygon(vertices_small, fill=1)
 
-    # Subtract smaller mask from larger mask to create border mask
-    border_mask = ImageChops.subtract(mask_img_large, mask_img_small)
-    border_mask_np = np.array(border_mask)
-    mask_img_small_np = np.array(mask_img_small)
+    return mask_img_large, mask_img_small
 
 
-    # I’d like to make the border dynamic. Specifically:
-    #   - Each reaction video should have its own bright saturated HSV color assigned to it
-    #   - The HSV color for the respective reaction video should be mixed with white, 
-    #     inversely proportional to the volume of the track at that timestamp. That is, 
-    #     when there is no volume, the border should be white, and when it is at its 
-    #     loudest, it should be the HSV color.
-    def colorize_when_backchannel_active(hsv_color, clip):
-        h, s, v = hsv_color
-        
+precomputed_masks = {}
+def create_border_clip_old(audio_volume, audible_segments, width, height, mask_img_large, mask_img_small, border_color, duration):
 
-        def color_func(t, dominant):
-            # Get the volume at current time
-            idx = int(t * sr)
-
-            if idx < len(audio_volume):
-                volume = audio_volume[idx]
-            else: 
-                volume = 0
-
-            if volume == 0:
-                return 0, 0, 0
-
-
-            if dominant:
-                v_modulated = 1 - volume * (1 - v)
-                r, g, b = colorsys.hsv_to_rgb(h, s, v_modulated)
-            else: 
-                return 1, 1, 1
-
-
-            # # Calculate the interpolated V value based on audio volume
-            # if len(audio_scaling_factor) > idx: 
-            #     v_modulated = .5 * v + .5 * v * audio_scaling_factor[idx]
-            # else:
-            #     v_modulated = v
-            # # v_modulated = 1 - volume * (1 - v)
-
-            # # Convert modulated HSV color back to RGB
-            # r, g, b = colorsys.hsv_to_rgb(h, s, v_modulated)
-
-
-            return r, g, b
-
-        return color_func
-
-    border_color_func = colorize_when_backchannel_active(border_color, clip)
-
-
-
-    def make_frame(t):
-        idx = int(t * sr)
-        dominant = idx < len(audio_scaling_factor) and audio_scaling_factor[idx] > .5
-
-        img = np.zeros((height, width, 3))
-        color_rgb = np.array(border_color_func(t, dominant)) * 255
-
-        # Apply color to border
-        img[border_mask_np > 0] = color_rgb
-
-        return img
-
-    def make_mask(t):
-        mask = np.zeros((height, width))
-        idx = int(t * sr)
-
-        # Get the volume at current time
-        if (idx < len(audio_volume)):
+    def get_volume(t):
+        idx = int(t * sr / downsample_factor)
+        if idx < len(audio_volume):
             volume = audio_volume[idx]
         else: 
             volume = 0
+        return volume
 
-        if volume > 0:
-            mask[border_mask_np > 0] = 1  # Border visible
+    # Subtract smaller mask from larger mask to create border mask
+    border_mask = ImageChops.subtract(mask_img_large, mask_img_small)
+    border_mask_np = np.array(border_mask)
 
-        return mask
+    precomputed_mask_key = f"{height} - {width}"
+    if precomputed_mask_key not in precomputed_masks:
+        full_border_mask = np.zeros((height, width))
+        full_border_mask[border_mask_np > 0] = 1  # Border visible
 
-    border_clip = VideoClip(make_frame, duration=clip.duration)
+        white_border = np.zeros((height, width, 3))
+        white_border[border_mask_np > 0] = np.array( [1,1,1]  ) * 255
+        precomputed_masks[precomputed_mask_key] = {
+            "no_border": np.zeros((height, width)),
+            "visible_border": full_border_mask,
+            "no_color_border": np.zeros((height, width, 3)),
+            "white_border": white_border
+        }
+
+    # Each reaction video has its own bright saturated HSV color assigned to it       
+    h, s, v = border_color
+    my_r, my_g, my_b = colorsys.hsv_to_rgb(h, s, v)
+
+    no_color_default = precomputed_masks[precomputed_mask_key]['no_color_border']
+    white_border = precomputed_masks[precomputed_mask_key]['white_border']
+    my_border = np.zeros((height, width, 3))
+    my_border[border_mask_np > 0] = np.array( [my_r, my_g, my_b] ) * 255
+
+    def make_border_frame(t):
+        idx = int(t * sr)
+
+        while len(audible_segments) > 0 and idx > audible_segments[0][1]:
+            audible_segments.pop(0)
+
+        in_foreground = len(audible_segments) > 0 and idx <= audible_segments[0][1] and audible_segments[0][2] > .2
+
+        if in_foreground:
+            return my_border
+        elif get_volume(t) > 0:
+            return white_border
+        else: 
+            return no_color_default
+
+
+    empty_border_mask = precomputed_masks[precomputed_mask_key]["no_border"]
+    full_border_mask = precomputed_masks[precomputed_mask_key]["visible_border"]
+    def make_border_mask(t):
+
+        if get_volume(t) > 0:
+            return full_border_mask
+        else:
+            return empty_border_mask
+
+
+    border_clip = VideoClip(make_border_frame, duration=duration)
 
     # Apply mask to the border_clip
-    border_mask_clip = VideoClip(make_mask, ismask=True, duration=clip.duration)
+    border_mask_clip = VideoClip(make_border_mask, ismask=True, duration=duration)
     border_clip = border_clip.set_mask(border_mask_clip)
 
+    return border_clip
+
+
+
+
+def create_border_clip(audio_volume, audible_segments, width, height, mask_img_large, mask_img_small, border_color, duration):
+
+
+    # Subtract smaller mask from larger mask to create border mask
+    border_mask = ImageChops.subtract(mask_img_large, mask_img_small)
+    border_mask_np = np.array(border_mask)
+
+    precomputed_mask_key = f"{height} - {width}"
+    if precomputed_mask_key not in precomputed_masks:
+        full_border_mask = np.zeros((height, width))
+        full_border_mask[border_mask_np > 0] = 1  # Border visible
+
+        white_border = np.zeros((height, width, 3))
+        white_border[border_mask_np > 0] = np.array( [1,1,1]  ) * 255
+        precomputed_masks[precomputed_mask_key] = {
+            "no_border": np.zeros((height, width)),
+            "visible_border": full_border_mask,
+            "no_color_border": np.zeros((height, width, 3)),
+            "white_border": white_border
+        }
+
+    def get_volume(t):
+        idx = int(t * sr / downsample_factor)
+        if idx < len(audio_volume):
+            volume = audio_volume[idx]
+        else: 
+            volume = 0
+        return volume
+
+    no_color_default = precomputed_masks[precomputed_mask_key]['no_color_border']
+    white_border = precomputed_masks[precomputed_mask_key]['white_border']
+
+    def make_white_border(t):
+        if get_volume(t) > 0:
+            return white_border
+        else: 
+            return no_color_default
+
+    empty_border_mask = precomputed_masks[precomputed_mask_key]["no_border"]
+    full_border_mask = precomputed_masks[precomputed_mask_key]["visible_border"]
+    def make_border_mask(t):
+        if get_volume(t) > 0:
+            return full_border_mask
+        else:
+            return empty_border_mask
+
+    # Each reaction video has its own bright saturated HSV color assigned to it       
+    h, s, v = border_color
+    my_r, my_g, my_b = colorsys.hsv_to_rgb(h, s, v)
+    my_border = np.zeros((height, width, 3))
+    my_border[border_mask_np > 0] = np.array( [my_r, my_g, my_b] ) * 255
+
+    clips = []
+    for segment in audible_segments:
+        start, end, volume = segment
+        duration = (end-start) / sr
+
+        if segment[2] > .2 and duration > 1.5:
+            clip = ImageClip(my_border, duration=duration)
+            border_mask_clip = ImageClip(full_border_mask, ismask=True)
+
+        else:
+            clip = VideoClip(make_white_border, duration=duration)
+            border_mask_clip = VideoClip(make_border_mask, ismask=True)
+
+        # Apply mask to the border_clip
+        clip = clip.set_mask(border_mask_clip)
+        clip = clip.set_start(start / sr)
+
+
+        # print(f"\tBORDER CLIP: {start/sr} for {duration} ()")
+        clips.append(clip)
+
+    if clips:
+        border_clip = clips
+    else:
+        border_clip = []  # Or an empty clip with duration set to the original video duration
+
+
+    # print("BORDER CLIP COUNT", len(clips))
+    return border_clip
+
+
+
+
+# I’m using the following function to mask a video to a hexagon or circular shape, with 
+# a border that pulses with color when there is audio from the reactor. 
+def create_masked_video(channel, clip, audio_volume, width, height, audible_segments, border_color, border_thickness=10, shape="hexagon"):
+
+    audible_segments = audible_segments.copy()
+
+    mask_img_large, mask_img_small = create_mask_shape(shape, width, height, border_thickness)
+
+    # print(f"MAKING MASKED VIDEO FOR {channel}")
+    clips = create_border_clip(audio_volume, audible_segments, width, height, mask_img_large, mask_img_small, border_color, clip.duration)
+
     # Create video clip by applying the smaller mask to the original video clip
+    mask_img_small_np = np.array(mask_img_small)    
     clip = clip.set_mask(ImageClip(mask_img_small_np, ismask=True))
 
-
-    return [border_clip, clip]
-
-    # Overlay the video clip on the border clip
-    # final_clip = CompositeVideoClip([border_clip, clip])
+    clips.append(clip)
+    return clips
 
 
+def get_audio_volume(audio_array, downsample_factor=None):
+    """Calculate the volume of the audio clip and optionally downsample to a smaller sample rate by averaging.
+    """
 
 
-    return final_clip
+    if downsample_factor is not None and downsample_factor != 1:
+        # Calculate the downsampling factor
+        factor = downsample_factor
+        
+        # Determine the length of the resulting downsampled audio
+        downsampled_length = audio_array.shape[0] // factor
+        
+        # Initialize the downsampled audio array
+        downsampled_audio = np.zeros((downsampled_length, audio_array.shape[1]))
+        
+        for i in range(downsampled_length):
+            start_index = i * factor
+            end_index = start_index + factor
+            # Average the chunks of the original audio array
+            downsampled_audio[i, :] = np.mean(audio_array[start_index:end_index, :])
+        
+        audio = downsampled_audio
 
+    else:
+        audio = audio_array
 
-
-
-def get_audio_volume(audio_array, fps=None):
-    if fps is None:
-      fps = sr
-      
-    """Calculate the volume of the audio clip"""
-    audio = audio_array
+    # Calculate volume    
     audio_volume = np.sqrt(np.mean(np.square(audio), axis=1))  # RMS amplitude
     audio_volume /= np.max(audio_volume)  # normalize to range [0, 1]
+
     return audio_volume
 
 

@@ -56,7 +56,8 @@ def mix_audio(base_video, output_size):
 
         reaction['mixed_audio'] = isolated_backchannel
 
-    audio_scaling_factors = foreground_background_backchannel_segments(base_audio_as_array, foreground_scaler, background_scaler, conf.get('disable_backchannel_backgrounding'))
+    audio_scaling_factors, audible_segments = foreground_background_backchannel_segments(base_audio_as_array, 
+                                                   foreground_scaler, background_scaler, conf.get('disable_backchannel_backgrounding'))
 
     all_reactor_audios = []
 
@@ -90,20 +91,7 @@ def mix_audio(base_video, output_size):
         dynamic_limit_without_combining(base_audio_as_array, base_excess_limitation, sum_reaction_audio_threshold)
 
 
-    # def convert_dict_for_json(input_dict):
-    #     converted_dict = {}
-    #     for key, value in input_dict.items():
-    #         # Convert ndarray to a native Python list
-    #         if isinstance(value, np.ndarray):
-    #             converted_dict[key] = value.tolist()
-    #         else:
-    #             converted_dict[key] = value
-    #     return converted_dict
-
-    # audio_scaling_file = os.path.join(conf.get('temp_directory'), 'audio_scaling_factors.json')
-    # save_object_to_file(audio_scaling_file, convert_dict_for_json(audio_scaling_factors))
-
-    return base_audio_as_array, audio_scaling_factors
+    return base_audio_as_array, audible_segments
 
 
 
@@ -136,9 +124,9 @@ def find_contiguous_backchannel_segments(audio, max_silence_duration_samples=1.5
     contiguous_segments = []
     for start, end in segments:
         if contiguous_segments and start - contiguous_segments[-1][1] <= max_silence_duration_samples:
-            contiguous_segments[-1] = (contiguous_segments[-1][0], end)
+            contiguous_segments[-1] = [contiguous_segments[-1][0], end]
         else:
-            contiguous_segments.append((start, end))
+            contiguous_segments.append([start, end])
     
     return contiguous_segments
 
@@ -154,6 +142,7 @@ def find_contiguous_backchannel_segments(audio, max_silence_duration_samples=1.5
 def foreground_background_backchannel_segments(base_audio_as_array, foreground_scaler, background_scaler, disable_backchannel_backgrounding):
     channel_segments = []
     scaling_factors = {} 
+    audible_segments = {}
 
     print('\tDetermining foreground and background')
     foregrounded_backchannel_segments = []
@@ -168,7 +157,7 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
         #      can have at most 2 seconds of consecutive silence while still being treated 
         #      as contiguous. 
         reaction_audio = reaction.get('mixed_audio')
-        contiguous_backchannel_segments = find_contiguous_backchannel_segments(reaction_audio) 
+        contiguous_backchannel_segments = audible_segments[channel] = find_contiguous_backchannel_segments(reaction_audio) 
 
         scaling_factors[channel] = np.zeros(len(reaction_audio)) 
         for seg in contiguous_backchannel_segments:
@@ -355,7 +344,15 @@ def foreground_background_backchannel_segments(base_audio_as_array, foreground_s
 
     plot_scaling_factors(scaling_factors)
 
-    return scaling_factors
+    for channel, audible in audible_segments.items():
+        for segment in audible:
+            avg_factor = np.mean( scaling_factors[channel][segment[0]:segment[1]]  )
+            segment.append( avg_factor )
+
+            print("\t\t\t", channel, int(segment[0]), int(segment[1]), avg_factor )
+            assert( len(segment) == 3   )
+
+    return scaling_factors, audible_segments
 
 
 
