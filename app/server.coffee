@@ -225,11 +225,10 @@ bus = require('statebus').serve
         deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-", metadata_dir)
         deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-", cache_dir)
 
-      else if obj.scope == 'cropped reactors' and obj.action == 'delete'
-        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-CROSS-EXPANDER-cropped-", metadata_dir)
-
       else if obj.scope.startsWith('cropped reactors') and obj.action == 'delete'
         deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-CROSS-EXPANDER-cropped-", metadata_dir)
+        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-aside-", metadata_dir)
+
         if obj.scope == 'cropped reactors including coarse'
           deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-CROSS-EXPANDER-coarse_face_position_metadata", metadata_dir)
 
