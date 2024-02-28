@@ -80,7 +80,7 @@ def universal_frame_rate():
 
 
 
-def extract_audio(video_file, output_dir=None, sample_rate=None, preserve_silence=False, convert_to_mono=True, keep_file=True):
+def extract_audio(video_file, output_dir=None, sample_rate=None, preserve_silence=True, convert_to_mono=True, keep_file=True):
     if output_dir is None:
         output_dir = os.path.dirname(video_file)
     if sample_rate is None:
@@ -104,7 +104,7 @@ def extract_audio(video_file, output_dir=None, sample_rate=None, preserve_silenc
         command += f' "{output_file}"'
         print(command)
         # Execute the command
-        subprocess.run(command, shell=True, check=True)    
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)    
 
     audio_data, sample_rate = sf.read(output_file)
     if audio_data.ndim > 1 and convert_to_mono:  # convert to mono
