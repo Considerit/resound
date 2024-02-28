@@ -28,9 +28,9 @@ def create_asides(reaction):
         groups = []
         all_asides.sort(key=lambda x: x[0])  # sort by start value of the aside
 
-        group_when_closer_than = 0.1  # put asides into the same group if one's start value 
-                                      # is less than group_when_closer_than greater than the 
-                                      # end value of the previous aside 
+        # group_when_closer_than = 0.1  # put asides into the same group if one's start value 
+        #                               # is less than group_when_closer_than greater than the 
+        #                               # end value of the previous aside 
 
         # Initialize the first group
         current_group = []
@@ -40,7 +40,7 @@ def create_asides(reaction):
             aside = start, end, insertion_point, rewind = get_aside_config(aside)
 
             # If current_group is empty or the start of the current aside is close enough to the end of the last aside in the group
-            if not current_group or insertion_point - current_group[-1][2] < group_when_closer_than:
+            if not current_group or insertion_point == current_group[-1][2]: # < group_when_closer_than:
                 current_group.append(aside)
             else:
                 # Current aside starts a new group
@@ -157,10 +157,11 @@ def create_full_video_from_spec(spec, name, key2video):
 
                 composite_rewind_clip = CompositeVideoClip([clip, rewind_icon]) # results in video with just black background
                 f = os.path.join(conf.get('temp_directory'), f'COMPOSITE_REWIND_CLIP-{start}-{end}-{duration}.mp4')
-                composite_rewind_clip.write_videofile(f, 
-                                     codec="h264_videotoolbox", 
-                                     ffmpeg_params=['-q:v', '40']
-                                    )
+                if not os.path.exists(f):
+                    composite_rewind_clip.write_videofile(f, 
+                                         codec="h264_videotoolbox", 
+                                         ffmpeg_params=['-q:v', '40']
+                                        )
                 clip = VideoFileClip(f).resize(clip.size)
 
         video_segments.append(clip)
@@ -210,8 +211,8 @@ def adjust_audible_segments(audible_segments, name, split_point, duration, audio
 
 def create_full_audio_from_spec(spec, name, key2audio, audible_segments): 
 
-    print("*************")
-    print(f"CREATING FULL AUDIO FOR {name}")
+    # print("*************")
+    # print(f"CREATING FULL AUDIO FOR {name}")
 
     main_audio = key2audio['main']
 
@@ -310,9 +311,7 @@ def create_full_media_specification_with_asides(base_video_duration):
     if len(all_asides) == 0:
         return full_spec
 
-
     all_asides.sort(key=lambda x: x[0], reverse=True)
-
 
     def split_at(name, split_point, duration, insert='still-frame', pause_after=None, start=None, end=None):
         spec = full_spec[name]
@@ -332,11 +331,15 @@ def create_full_media_specification_with_asides(base_video_duration):
             new_spec.append(before)
 
         if insert == 'still-frame':
+            duration += pause_after
+
             assert(duration is not None and duration > 0)
             splicing_in = {"key": "main", "still-frame": max(0, split_point - .1), "duration": duration, "split_point": split_point}
             new_spec.append(splicing_in)
 
         elif insert == 'rewind_clip':
+            duration += pause_after
+
             assert(start is not None and end is not None)
             if end == '*' or end - start > 0:
                 splicing_in = {"key": "main", "rewind_clip": True, "start": start, "end": end, "duration": duration, "split_point": split_point}
@@ -352,8 +355,9 @@ def create_full_media_specification_with_asides(base_video_duration):
             if pause_after > 0:
                 short_pause = {"key": insert, "still-frame": 0, "duration": pause_after, "split_point": split_point}
                 new_spec.append(short_pause)
-                
-        new_spec.append(after)
+        
+        if "end" not in after or after["end"] == '*' or "before" not in after or after["end"] - after["before"] > 0:
+            new_spec.append(after)
 
         full_spec[name] = new_spec + spec
 
@@ -420,10 +424,25 @@ def create_full_media_specification_with_asides(base_video_duration):
     # print("FULL SPEC")
     # for k,v in full_spec.items():
     #     print( f"\t{k}" )
-    #     for vv in v:
-    #         print( f"\t\t{vv}")
+    #     t = 0
+    #     for i, vv in enumerate(v):
+    #         duration = vv.get('duration', None)
+    #         if duration is None:
+    #             if vv['end'] == '*':
+    #                 duration = 0
+    #             else:
+    #                 duration = vv['end'] - vv['start']
 
-            
+
+    #         if duration is None:
+    #             print(vv)
+
+    #         print( f"\t\t |{t} - {t + duration}| {vv.get('key')}: {vv.get('still-frame', '')} split_point = {vv.get('split_point', '')} duration = {duration}")
+
+    #         t += duration
+
+
+
     return full_spec
 
 
@@ -452,6 +471,8 @@ def incorporate_asides_video(base_video, video_background):
     for name, reaction in conf.get('reactions').items():
         # print(f"\t\tCreating video clip for {name}")
         reactors = reaction.get('reactors')
+        print(f"Making video for {name}")
+
 
         for idx, reactor in enumerate(reactors): 
             reactor_clip = VideoFileClip(reactor['path'])
@@ -463,18 +484,24 @@ def incorporate_asides_video(base_video, video_background):
                     videos[f"aside-{view['aside-num']}"] = VideoFileClip(view['path']).without_audio()
 
             reactor['clip'] = create_full_video_from_spec(full_spec[name], name, videos)
-
+    print('Done incorporating asides video')
     return base_video, video_background
 
 
 
-
+from compositor.mix_audio import adjust_gain_for_rms_match, rms_level_excluding_silence
 def incorporate_asides_audio(base_video, base_audio_clip, audible_segments):
 
     full_spec = create_full_media_specification_with_asides(base_video.duration)
     
+    base_rms = rms_level_excluding_silence(base_audio_clip)
+
     base_audio_clip  = create_full_audio_from_spec(full_spec['base'], 'base', {'main': base_audio_clip}, audible_segments)
     
+
+
+
+    print("CREATING ASIDE AUDIO CLIPS")
     for name, reaction in conf.get('reactions').items():
         print(f"\t\tCreating audio clip for {name}")
         reactors = reaction.get('reactors')
@@ -483,7 +510,9 @@ def incorporate_asides_audio(base_video, base_audio_clip, audible_segments):
 
         for insertion_point, (views, rewind) in reaction.get("aside_clips", {}).items():
             for view in views:
-                audio_files[f"aside-{view['aside-num']}"], __, __ = extract_audio(view['path'], convert_to_mono=False, keep_file=False)
+                aside_audio, __, __ = extract_audio(view['path'], convert_to_mono=False, keep_file=False, preserve_silence=True)
+                aside_audio = adjust_gain_for_rms_match(aside_audio, base_rms, name)
+                audio_files[f"aside-{view['aside-num']}"] = aside_audio
 
         reaction['mixed_audio'] = create_full_audio_from_spec(full_spec[name], name, audio_files, audible_segments)
 
