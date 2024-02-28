@@ -192,7 +192,7 @@ dom.SONG = ->
             # flexShrink: 1
             padding: '0 10px'
             minWidth: 450
-            position: 'sticky';
+            position: 'sticky'
             top: 0
             alignSelf: 'flex-start'
 
@@ -244,6 +244,9 @@ dom.LAYOUT = ->
   inner_border = 4
 
   DIV null,
+
+    DIV null,
+      "#{Object.keys(assigned_seats).length} seats assigned"
 
 
     DIV null,
@@ -297,6 +300,12 @@ dom.LAYOUT = ->
           SOURCE  
             src: "/Media/#{song}/background.mp4"
             type: "video/mp4"
+
+        # IMG 
+        #   style:
+        #     width: '100%'
+        #     height: '100%'
+        #   src: "/Media/#{song}/background.png"
 
 
 
@@ -390,6 +399,8 @@ dom.LAYOUT = ->
 
                   controls: false
                   onClick: click_seat
+                  onDoubleClick: (evt) ->
+                    saveMaskedVideoFrame(evt.target)
 
                   SOURCE  
                     src: '/' + assigned_seats[seat]
@@ -441,6 +452,55 @@ dom.LAYOUT.refresh = ->
         vid.currentTime = 60
       else 
         vid.addEventListener 'canplaythrough', func
+
+
+
+saveMaskedVideoFrame = (video) ->
+    canvas = document.createElement('canvas')
+    canvas.width = w = video.videoWidth
+    canvas.height = h = video.videoHeight
+    s = Math.min(w, h)
+
+    ctx = canvas.getContext('2d')
+
+    # Define hexagon path
+    hexagonPath = (ctx, x, y, radius) ->
+        ctx.beginPath()
+        for i in [0..6]
+          ctx.lineTo(x + 1.25 * radius * Math.cos((Math.PI / 3) * i - Math.PI / 2),
+                     y + radius * Math.sin((Math.PI / 3) * i - Math.PI / 2))
+        ctx.clip()
+
+
+    # Clip to hexagon
+    hexagonPath(ctx, w / 2, h / 2, s / 2)
+
+    # Draw video frame
+    ctx.drawImage(video, 0, 0, w, h)
+
+    # To save the canvas image including the hexagonal transparency,
+    # convert the canvas to a data URL and then to an image file if needed.
+    # imageDataUrl = canvas.toDataURL('image/png')
+
+    # # For demonstration, create an image element to display the result
+    # img = document.createElement('img')
+    # img.src = imageDataUrl
+    # img.width=img.height=104
+    # document.body.appendChild(img) # Append or handle the image data URL as needed
+
+
+    canvas.toBlob (blob) ->
+        console.log("Converting to blob")
+        item = new ClipboardItem({ "image/png": blob })
+        console.log('created new clipboard item')
+        navigator.clipboard.write([item]).then ->
+            console.log("Hexagonal image copied to clipboard.")
+        , (error) ->
+            console.error("Error copying image to clipboard: ", error)
+
+        console.log('wrote to clipboard')
+
+
 
 
 
