@@ -100,7 +100,6 @@ def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[
 
     # Concatenate the clips together
     final_clip = concatenate_videoclips(clips)
-    final_clip = final_clip.set_fps(conversion_frame_rate)
 
     # Get the duration of each clip
     final_clip_duration = final_clip.duration
@@ -126,11 +125,18 @@ def trim_and_concat_video(reaction, video_file: str, video_segments: List[Tuple[
         final_clip = CompositeVideoClip([final_clip, black_clip])
 
 
-    final_clip.resize(height=height, width=width)
+    final_clip.resize(height=height, width=width).set_fps(conversion_frame_rate)
 
     # Generate the final output video
     # final_clip.write_videofile(output_file, codec="libx264", audio_codec="aac")
-    final_clip.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
+    # final_clip.write_videofile(output_file, codec="h264_videotoolbox", audio_codec="aac", ffmpeg_params=['-q:v', '40'])
+    final_clip.write_videofile(output_file, 
+                                codec="libx264",
+                                # preset="slow", 
+                                ffmpeg_params=[
+                                     '-crf', '18'
+                                   ], 
+                                audio_codec="aac")
 
 
     # Close the video files
