@@ -43,7 +43,9 @@ def process_reaction(song, artist, search, item, reactions, test):
         video_id = item['id']
     else: 
         if not 'videoId' in item['id']:
-            print(f"{reactor_name} doesn't have a videoid")
+            recommended_channels = (channel.get('channelId') for channel in get_recommended_channels())
+            if channel_id not in recommended_channels:
+                print(f"{reactor_name} doesn't have a videoid AND is not a recommended channel")
             return False
         video_id = item['id']['videoId'] 
 
@@ -54,7 +56,7 @@ def process_reaction(song, artist, search, item, reactions, test):
 
     
     if video_id in reactions:
-        print(f"duplicate title {item['snippet']['title']}")
+        # print(f"duplicate title {item['snippet']['title']}")
         return True
 
 
@@ -143,7 +145,7 @@ def search_recommended_channels(artist, song, search, reactions, test):
 
         for item in items:
 
-            if (not test or not test(item['title'])):
+            if (not test or not test(item['title'], is_channel_search=True)):
                 print(f"\t\t\tBad result: {item['title']}")
                 continue
 
@@ -152,6 +154,9 @@ def search_recommended_channels(artist, song, search, reactions, test):
                 continue
 
             print(f"\t\t\t*** New reaction found: {item['title']}")
+            views = item['views']
+            if isinstance(views, str):
+                views = int(item['views'].replace(',', '').replace(' views', ''))
 
             reaction = {
                 'song': song,
@@ -162,7 +167,7 @@ def search_recommended_channels(artist, song, search, reactions, test):
                 'thumbnails': item['thumbnails'],
                 'id': item['id'],
                 'duration': item['duration'],
-                'views': int(item['views'].replace(',', '').replace(' views', '')),
+                'views': views,
                 'download': False,
             }
             
@@ -423,7 +428,7 @@ def prepare_title(title):
     return title.replace('&quot;', '').replace('-', ' - ').replace('&#39;', "'").replace("“", '').replace("”", '').replace('"', "")
 
 
-def filter_and_augment_manifest(artist, song):
+def filter_and_augment_manifest(artist, song, force = False):
     from utilities import conf
     
     manifest_file = get_manifest_path(artist, song)
@@ -433,7 +438,7 @@ def filter_and_augment_manifest(artist, song):
     song_def = json.load( open(f))
 
     song = song_data["main_song"]
-    if not song.get('duration', False):
+    if force or not song.get('duration', False):
         search = f"{artist} {prepare_title(song.get('title'))}"
         print(search)
         result = YoutubeSearch(search, max_results=1).to_dict()[0]
@@ -463,7 +468,7 @@ def filter_and_augment_manifest(artist, song):
             to_delete.append(reaction.get('id'))
             continue
 
-        if not reaction.get('duration', False):
+        if force or not reaction.get('duration', False):
 
             search = f"{prepare_title(reaction.get('title'))} \"{reaction.get('id')}\""
 
@@ -590,7 +595,7 @@ if __name__ == '__main__':
     # generate_description_text("Ren", "Hi Ren")
 
 
-    stats = reaction_stats('Ren - Money Game')
+    stats = reaction_stats('Ren - Fred Again Mash Up')
     print(stats)
 
 
