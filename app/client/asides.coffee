@@ -32,9 +32,11 @@ window.get_all_asides = (song) ->
 
   all_asides = []
   for reaction in all_reactions or []
+    continue unless reaction.download
     reaction_file_prefix = reaction.file_prefix or reaction.reactor
     asides = config.asides[reaction_file_prefix] or []
     sort_asides(asides)
+
     for aside, idx in asides
       all_asides.push 
         idx: idx
@@ -50,15 +52,38 @@ window.get_all_asides = (song) ->
     else 
       a.aside[2] - b.aside[2]
 
+
   return all_asides
 
-window.update_aside = (song, reaction_file_prefix, idx, start, end, insert_at, rewind) -> 
+window.update_aside = (song, reaction_file_prefix, idx, start, end, insert_at, rewind, skip_confirmation) -> 
+  
   song_config = retrieve("/song_config/#{song}")
   config = song_config.config
   asides = config.asides[reaction_file_prefix]
   asides[idx] = [start, end, insert_at, rewind]
   sort_asides(asides)
   save song_config
+
+  if skip_confirmation || confirm('Also delete aside files for this reaction?')
+
+    manifest = retrieve("/manifest/#{song}")
+    all_reactions = Object.values(manifest.manifest.reactions)
+    reaction_id = null
+    for reaction in all_reactions or []
+      continue unless reaction.download
+      rfp = reaction.file_prefix or reaction.reactor
+      if reaction_file_prefix == rfp
+        reaction_id = reaction.id
+        break
+
+    if reaction_id
+      action = 
+        key: "/action/#{reaction_id}"
+        action: 'delete'
+        scope: 'asides'
+        reaction_id: reaction_id
+        song: song
+      save action
 
 
 window.split_aside = (song, aside_idx, split_at, reaction_file_prefix) -> 
@@ -328,20 +353,10 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
   song = @props.song
   all_asides = get_all_asides(song)
 
-  total_aside_duration = 0
-  for aside,idx in all_asides
-    total_aside_duration += aside.aside[1] - aside.aside[0]
-
   @local.changes ?= {}
 
   DIV null, 
-    LABEL 
-      style: 
-        backgroundColor: 'deepskyblue'
-        color: 'white'
-        fontSize: 24
-        marginBottom: 18
-      "#{all_asides.length} asides of #{Math.floor(total_aside_duration/60)} min #{Math.round(total_aside_duration%60)} sec total duration"
+
     DIV 
       style: 
         display: 'grid'
@@ -427,9 +442,12 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
                 BUTTON null,
                   onClick: => 
                     updated_aside = @local.changes[key]
-                    update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3])
+                    update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3], true)
                     delete @local.changes[key]
                     save @local
+
+
+
                   I 
                     className: "glyphicon glyphicon-floppy-save"
 
@@ -488,15 +506,43 @@ dom.ASIDE_EDITOR_LIST = ->
   song = @props.song
   all_asides = get_all_asides(song)
 
+  total_aside_duration = 0
+  for aside,idx in all_asides
+    total_aside_duration += aside.aside[1] - aside.aside[0]
+
+  aside_length = all_asides.length
+  all_asides = (a for a in all_asides when !@local.filter_around_time || (Math.abs(@local.filter_around_time - a.aside[2]) < 15))
+  all_asides.sort(  (a,b) => Math.abs((@local.filter_around_time or 0) - a.aside[2]) - Math.abs((@local.filter_around_time or 0) - b.aside[2])  )     
+
   DIV null,
 
 
     COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER
+      key: "composite_player"
       song: song
+      onSeek: (segment) =>
+        if segment.aside
+          @local.filter_around_time = segment.aside.aside[2]
+        else if segment.is_base_video
+          @local.filter_around_time = segment.start + (segment.end - segment.start) / 2
+        else
+          @local.filter_around_time = null
 
-    ASIDE_SUMMARY_AND_INSERTION_EDITOR
-      song: song
-        
+        console.log("SEEK TO ", @local.filter_around_time, segment)
+        save @local
+
+
+    DIV null, 
+      LABEL 
+        style: 
+          backgroundColor: 'deepskyblue'
+          color: 'white'
+          fontSize: 24
+          marginBottom: 18
+        "#{aside_length} asides of #{Math.floor(total_aside_duration/60)} min #{Math.round(total_aside_duration%60)} sec total duration"
+
+
+
     UL 
       style:
         listStyle: 'none'
@@ -506,12 +552,17 @@ dom.ASIDE_EDITOR_LIST = ->
 
 
       for aside,idx in all_asides
+        # console.log((Math.abs(@local.filter_around_time or 0 - aside.aside[2])))
+        # if !@local.filter_around_time || (Math.abs(@local.filter_around_time - aside.aside[2]) < 30) 
         ASIDE_EDITOR_ITEM
-          key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
+          key: "#{aside.reaction_file_prefix}-#{aside.idx}-#{aside_length}"
           aside: aside
           song: song
-          my_key: "#{aside.reaction_file_prefix}-#{idx}-#{aside.idx}-#{all_asides.length}"
+          my_key: "#{aside.reaction_file_prefix}-#{aside.idx}-#{aside_length}"
 
+
+    ASIDE_SUMMARY_AND_INSERTION_EDITOR
+      song: song
 
 
 
@@ -584,7 +635,7 @@ dom.ASIDE_EDITOR_ITEM = ->
           type: 'range'
           defaultValue: @local.zoom
           min: 1
-          max: 50
+          max: 75
           style:
             width: 200
 
@@ -727,8 +778,8 @@ dom.ASIDE_EDITOR_ITEM.refresh = ->
       region.setOptions({ color: randomColor() })
 
     # Reset the active region when the user clicks anywhere in the waveform
-    ws.on 'interaction', =>
-      @activeRegion = null
+    # ws.on 'interaction', =>
+    #   @activeRegion = null
 
 
   wavesurfer.on 'click', =>
@@ -842,6 +893,7 @@ dom.COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER = ->
         clickPercent = relativeX / player_width
         seekTo = clickPercent * total_duration
 
+        console.log("CLIKCED!", @local.currentSegment)
         @player.seek(seekTo)
 
 
@@ -881,11 +933,14 @@ dom.COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER.refresh = ->
     if @player?
       @player.tearDown()
 
-    @player = new CompositeVideoPlayer segments, @refs.video.getDOMNode(), (currentSegment, time_in_segment) =>
+    console.log("INITIALIZING NEW PLAYER")
+    @player = new CompositeVideoPlayer segments, @refs.video.getDOMNode(), @player, (currentSegment, time_in_segment) =>
       @local.currentSegment = currentSegment
       @local.time_in_segment = time_in_segment
+
+      @props.onSeek?(@local.currentSegment)
+
       save @local
-      console.log(@local)
 
     @initialized = key
 
@@ -895,16 +950,11 @@ dom.COMPOSITE_ASIDE_AND_BASE_VIDEO_PLAYER.refresh = ->
 
 
 class CompositeVideoPlayer
-  constructor: (segments, videoElement, onTimeUpdate) ->
+  constructor: (segments, videoElement, previous_player, onTimeUpdate) ->
     @segments = segments
-    @currentSegmentIndex = 0
-
-    # Calculate the total duration and map segments with their cumulative start time.
-    cumulativeTime = 0
+    @currentSegmentIndex = previous_player?.currentSegmentIndex or 0
 
     @segments = segments
-
-
 
     @videoElement = videoElement
     @onTimeUpdate = onTimeUpdate
