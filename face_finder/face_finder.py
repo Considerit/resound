@@ -304,7 +304,7 @@ def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_au
         return cropped_frame
 
     print("\tmaking video clip")
-    cropped_video = VideoClip(make_frame, duration=video.duration)
+    cropped_video = VideoClip(make_frame, duration=video.duration).set_fps(conversion_frame_rate)
 
     if remove_audio:
       cropped_video = cropped_video.without_audio()
@@ -312,9 +312,14 @@ def crop_video(video_file, output_file, num_reactors, w, h, centroids, remove_au
       cropped_video = cropped_video.set_audio(video.audio)
 
     # Write the cropped video to a file
-    cropped_video.write_videofile(output_file, codec="h264_videotoolbox", fps=conversion_frame_rate,
-                                ffmpeg_params=['-q:v', '60'])
+    cropped_video.write_videofile(output_file, 
+                                  codec="libx264",
+                                  #preset="slow", 
+                                  ffmpeg_params=[
+                                       '-crf', '18'
+                                     ])
 
+ 
     # Close the video clip
     video.close()
     cropped_video.close()

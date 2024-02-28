@@ -40,8 +40,6 @@ def mix_audio(base_video, output_size):
     base_audio_as_array = peak_normalize_with_headroom(base_audio_as_array, headroom=normalize_base_with_headroom)
     base_audio_rms = rms_level_excluding_silence(base_audio_as_array)
 
-
-
     for channel, reaction in conf.get('reactions').items():
         print(f"\t\tLoading and volume matching audio for {channel}")
         reactors = reaction.get('reactors')
@@ -51,7 +49,7 @@ def mix_audio(base_video, output_size):
         audio_path = reaction.get("backchannel_audio")
         isolated_backchannel = AudioFileClip(audio_path).to_soundarray() 
 
-        isolated_backchannel = adjust_gain_for_rms_match(isolated_backchannel, base_audio_rms)
+        isolated_backchannel = adjust_gain_for_rms_match(isolated_backchannel, base_audio_rms, channel)
         # write_audio_to_file(reaction, isolated_backchannel, 'adjusted_for_gain')
 
         reaction['mixed_audio'] = isolated_backchannel
@@ -473,10 +471,10 @@ def rms_level_excluding_silence(audio_array, threshold=0.01):
 
     return rms
 
-def adjust_gain_for_rms_match(audio_array, target_rms):
+def adjust_gain_for_rms_match(audio_array, target_rms, channel):
     '''Adjust the gain of audio_array to match the target RMS.'''
     current_rms = rms_level_excluding_silence(audio_array)
-    # print("ADJUSTING!", target_rms, current_rms, target_rms / current_rms)
+    print(f"MATCHING RMS of {channel}={current_rms} to base RMS={target_rms}. Adjustment is {target_rms / current_rms} louder")
     return audio_array * (target_rms / current_rms)
 
 def peak_normalize_with_headroom(audio_array, headroom=0.025):

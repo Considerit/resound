@@ -142,9 +142,6 @@ def apply_adjustments(layout):
 
       layout["assignments"] = new_assignments
 
-
-
-
     base_width = layout['grid_size'][0]
     for channel, reaction in conf.get('reactions').items():
       for reactor in reaction['reactors']:

@@ -182,7 +182,7 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
     # visualize_clip_structure(final_clip)
 
     print("\tCreating tiles")
-    tile_zoom = 1 # creates 4 tiles
+    tile_zoom = 2 # creates 4 tiles
     tiles = create_tiles(final_clip, output_size=output_size, zoom_level=tile_zoom)
 
     # tiles is a list of CompositeVideoClips 
@@ -202,7 +202,7 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
             tile.set_fps(15).write_videofile(tile_path, 
                                      codec="h264_videotoolbox", 
                                      audio_codec="aac", 
-                                     ffmpeg_params=['-q:v', '60'])
+                                     ffmpeg_params=['-q:v', '40'])
 
         else:
             tile.write_videofile(tile_path, 
@@ -211,9 +211,8 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
                                ffmpeg_params=[ '-crf', '18' ]
                               )
 
-
-
-    merge_audio_and_video(output_path, audio_output)
+        if idx == 0:
+            merge_audio_and_video(output_path, audio_output)
 
 
 
@@ -253,11 +252,12 @@ def create_tiles(composite_clip, output_size, zoom_level=1):
 
     # List to store each tile's CompositeVideoClip
     tiles = []
-    clip_already_adjusted = {}
+    clip_in_tile = {}
 
 
     for i in range(zoom_level):
         for j in range(zoom_level):
+            tile_key = f"{i}-{j}"
             # Calculate tile boundaries
             x_start = i * tile_width
             y_start = j * tile_height
@@ -285,12 +285,20 @@ def create_tiles(composite_clip, output_size, zoom_level=1):
 
                 # Check if the clip overlaps with the tile
 
+                if clip_id not in clip_in_tile:
+                    clip_in_tile[clip_id] = []
+                clip_in_tile[clip_id].append( tile_key  )
+
+                # if i != 1 or j != 1:
+
+                #     if "1-1" not in clip_in_tile[clip_id]:
+                #         clip.close()
+                    
+                #     continue
+
+
                 if clip_right >= x_start and clip_x <= x_end and clip_bottom >= y_start and clip_y <= y_end:
                     # Clone the clip if it has already been adjusted for another tile
-                    # if clip_id in clip_already_adjusted:
-                    #     clip = deepcopy(clip)
-                    # else:
-                    #     clip_already_adjusted[clip_id] = True
 
                     # Calculate the new position relative to the tile
                     new_x = clip_x - x_start
@@ -302,9 +310,11 @@ def create_tiles(composite_clip, output_size, zoom_level=1):
                     visible_clips.append(adjusted_clip)
 
             # Create a tile CompositeVideoClip with visible clips
-            if len(visible_clips) > 0:
+            if len(visible_clips) > 0: #and i == j == 1:
                 tile_clip = CompositeVideoClip(visible_clips, size=(int(tile_width), int(tile_height))).resize(zoom_level).without_audio()
                 tiles.append(tile_clip)
+
+
 
     # assert( tiles_count == len(tiles), tiles_count, tiles  )
 
@@ -431,10 +441,7 @@ def find_active_segments(audible_segments, duration_threshold=1.5):
     for channel, segments in audible_segments.items():
         for (start, end, audio_factor) in segments:
             if end - start > duration_threshold * sr:
-                print("\tSegment passes duration threshold", channel, start/sr, end/sr, audio_factor, (end-start)/sr)
                 if audio_factor > .2:
-                    print("\t\tSegment passes volume threshold", channel, start/sr, end/sr, audio_factor, (end-start)/sr)
-
                     final_segments.append((channel, start, end))
 
     return final_segments
@@ -633,7 +640,7 @@ def create_audio_clips(base_video, output_size):
 
     audio_clips = []
     for i, (name, reaction) in enumerate(conf.get('reactions').items()):
-        print(f"\t\tCreating audio clip for {name}")
+        print(f"\t\tCreating audio volume for {name}")
 
         audio = reaction['mixed_audio']
         audio_clips.append(audio)

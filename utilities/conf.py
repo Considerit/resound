@@ -277,7 +277,7 @@ def make_conf(song_def, options, temp_directory):
         default_priority += 25
 
       if reactions[channel]['asides'] is not None: 
-        default_priority += 20
+        default_priority += 30
 
       # print("Priority", channel, priority.get(channel, default_priority))
       reactions[channel]['priority'] = priority.get(channel, default_priority)
