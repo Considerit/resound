@@ -13,10 +13,10 @@ production
 concerts
 inventory/reactor_notations.py
 library/*
-app/node_modules
-app/backups
-app/db
-app/.nvmrc
-app/vendor
-app/package-lock.json
+studio/node_modules
+studio/backups
+studio/db
+studio/.nvmrc
+studio/vendor
+studio/package-lock.json
 testren.coffee
