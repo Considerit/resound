@@ -1,9 +1,15 @@
+
+require('dotenv').config()
+wavFileInfo = require('wav-file-info')
 port = 4005
 path = require('path')
 fs = require('fs')
+sqlite3 = require('sqlite3').verbose()
+{execSync} = require 'child_process'
 
 songsPath = path.join( __dirname, '..', 'Media')
 libraryPath = path.join( __dirname, '..', 'library')
+resoundioDBPath = process.env.RESOUNDIO_DB_PATH
 
 get_manifest_path = (song) ->
 
@@ -151,6 +157,87 @@ bus = require('statebus').serve
       write_manifest(song, manifest_json)
 
 
+
+
+    getWavDurationSync = (filePath) ->
+      throw new Error "File does not exist: #{filePath}" unless fs.existsSync filePath
+
+      try
+        command = "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"#{filePath}\""
+        output = execSync command, encoding: 'utf-8'
+        durationInSeconds = parseFloat output
+        return durationInSeconds
+      catch error
+        throw new Error 'Failed to get audio duration'
+
+    get_alignment_data = (reaction, song, reaction_file_prefix) ->      
+      metadata_dir = path.join( songsPath, song, 'bounded' )
+      alignment_path = path.join(metadata_dir, "#{reaction_file_prefix}-CROSS-EXPANDER.json")
+
+      if fs.existsSync(alignment_path)
+        alignment_data = JSON.parse(fs.readFileSync(alignment_path))
+      else
+        return null
+
+      sample_rate = 44100
+
+      if reaction.duration
+        [minutes, seconds] = reaction.duration.split(':')
+        duration = parseInt(minutes) * 60 + parseInt(seconds)
+      else
+        reaction_wav = path.join(songsPath, song, 'reactions', "#{reaction_file_prefix}.wav")
+        duration = getWavDurationSync(reaction_wav)
+        console.log("CALCULSTED DURATION OF #{reaction_wav} as #{duration}")
+
+      
+
+      unaligned_segments = []
+      keypoints = []
+      
+      last_reaction_end = 0
+
+      for segment, idx in alignment_data.best_path
+
+        reaction_start = segment[0] / sample_rate
+        reaction_end = segment[1] / sample_rate
+        base_start = segment[2] / sample_rate
+        base_end = segment[3] / sample_rate
+
+
+        if last_reaction_end < reaction_start - 1
+          unaligned_segments.push 
+            type: 'speaking'
+            length: reaction_start - last_reaction_end
+            start: last_reaction_end
+            end: reaction_start
+
+        unaligned_segments.push 
+          type: 'backchannel'
+          length: reaction_end - reaction_start
+          start: reaction_start
+          end: reaction_end
+
+        last_reaction_end = reaction_end
+
+        if idx == 0
+          keypoints.push reaction_start
+        keypoints.push reaction_end
+
+      unaligned_segments.push 
+        type: 'speaking'
+        length: duration - last_reaction_end
+        start: last_reaction_end
+        end: duration
+
+
+      console.log('keypoints:', keypoints)
+
+      return {
+        alignment: alignment_data,
+        unaligned_segments: unaligned_segments,
+        keypoints: keypoints
+      }
+
       
 
     client('reaction_metadata/*').to_fetch = (key) ->
@@ -166,12 +253,12 @@ bus = require('statebus').serve
 
       metadata_dir = path.join( songsPath, song, 'bounded' )
 
-      alignment_path = path.join(metadata_dir, "#{reaction_file_prefix}-CROSS-EXPANDER.json")
+      alignment_data = get_alignment_data(reaction, song, reaction_file_prefix)
 
       results = {key}
 
-      if fs.existsSync(alignment_path)
-        results.alignment = JSON.parse(fs.readFileSync(alignment_path))
+      if alignment_data
+        results.update(alignment_data)
 
       findMatchingFiles = (directory, pattern) ->
 
@@ -267,6 +354,146 @@ bus = require('statebus').serve
 
       bus.dirty "channels"
 
+
+    client('sync_with_resoundio/*').to_save = (obj) ->
+      song = obj.song
+
+      song_config = read_song_config(song)
+      manifest = read_manifest(song)
+
+      song_vid = manifest['main_song']['id']
+
+      db = new sqlite3.Database(resoundioDBPath)
+
+      db.get "SELECT * from User WHERE email='#{process.env.DEFAULT_USER}'", (err, row) =>
+        default_user_id = row["user_id"]
+
+
+        ############################
+        # Synchronize the base video
+
+        status = 1 # pinned
+
+        song_vid_values = {
+          $vid: song_vid, 
+          $channel: manifest['main_song']['artist'], 
+          $channel_id: manifest['main_song']['channel_id'], 
+          $title: manifest['main_song']['title'], 
+          $description: manifest['main_song']['description'], 
+          $views: manifest['main_song']['views'], 
+          $duration: manifest['main_song']['duration']
+        }
+        song_values = {
+          $vid: song_vid, 
+          $status: status,  # make sure to put all 
+          $song_key: song,
+          $added_by: default_user_id 
+        }
+
+        db.get "SELECT * FROM Song WHERE vid='#{song_vid}'", (err, row) =>
+          if !row?
+            console.log("INSERTING NEW VIDEO #{song}")
+            db.run \
+              """INSERT INTO Video (vid,  channel,  channel_id,  title,  description,  views,  duration) VALUES 
+                                  ($vid, $channel, $channel_id, $title, $description, $views, $duration)""", 
+              song_vid_values
+
+
+            console.log("INSERTING NEW SONG #{song}")
+            db.run \
+              "INSERT INTO Song (vid, song_key, status, added_by) VALUES ($vid, $song_key, $status, $added_by)", 
+              song_values
+          
+          else
+            console.log("UPDATING VIDEO #{song}")
+
+            db.run \
+              """UPDATE Video SET channel=$channel, channel_id=$channel_id, title=$title, description=$description, views=$views, duration=$duration 
+                                  WHERE vid=$vid""", song_vid_values
+
+            console.log("UPDATING SONG #{song}")
+
+            song_values = {  # annoying, node-sqlite3 errors if there are unused values
+              $vid: song_values.$vid, 
+              $status: song_values.$status
+            }
+            db.run "UPDATE Song SET status=$status WHERE vid=$vid", song_values
+
+
+
+
+        reactions = manifest["reactions"]
+        included_reactions = {}
+        for reaction in Object.values(reactions)
+          if reaction['download']
+            included_reactions[reaction.id] = reaction
+
+        ##################################################
+        # Delete any reactions that are no longer included
+
+        db.each "SELECT * FROM Reaction WHERE song_key='#{song}'", (err, row) =>
+          if row.vid not of included_reactions
+            db.run "DELETE FROM Reaction WHERE vid='#{row.vid}'"
+            db.run "DELETE FROM Video WHERE vid='#{row.vid}'"
+
+        ##################################################
+        # Insert/update all included reactions 
+        
+        for reaction_vid, reaction of included_reactions
+          do(reaction_vid, reaction) =>
+            db.get "SELECT * FROM Reaction WHERE vid='#{reaction_vid}'", (err, row) =>
+              # console.log("PROCESSING", row)
+
+              reaction_file_prefix = reaction.file_prefix or reaction.reactor
+              alignment = get_alignment_data(reaction, song, reaction_file_prefix)
+              keypoints = alignment.keypoints
+
+              published_on_str = new Date(reaction.release_date)
+              published_on = Math.floor(published_on_str.getTime() / 1000)
+              video_values = {
+                $vid: reaction_vid, 
+                $channel: reaction.reactor, 
+                $channel_id: reaction.channelId, 
+                $title: reaction.title, 
+                $description: reaction.description, 
+                $views: reaction.views, 
+                $duration: reaction.duration,
+                $published_on: published_on 
+              }
+              reaction_values = {
+                $vid: reaction_vid, 
+                $song_key: song,
+                $channel: reaction.reactor,
+                $keypoints: JSON.stringify(keypoints)
+              }   
+                       
+              if !row?
+                console.log("INSERTING NEW REACTION VIDEO: #{reaction_values.$channel} for #{song}")
+                db.run \
+                  """INSERT INTO Video (vid,  channel,  channel_id,  title,  description,  views,  duration, published_on) VALUES 
+                                      ($vid, $channel, $channel_id, $title, $description, $views, $duration, $published_on)""", 
+                  video_values
+
+
+                console.log("INSERTING NEW REACTION: #{reaction_values.$channel} for #{song}")
+                db.run \
+                  "INSERT INTO Reaction (vid, song_key, channel, keypoints) VALUES ($vid, $song_key, $channel, $keypoints)", 
+                  reaction_values
+              
+              else
+                console.log("UPDATING REACTION VIDEO #{reaction_values.$channel} for #{song}")
+                db.run \
+                  """UPDATE Video SET channel=$channel, channel_id=$channel_id, title=$title, description=$description, views=$views, duration=$duration, published_on=$published_on
+                                      WHERE vid=$vid""", video_values
+
+                console.log("UPDATING REACTION #{reaction_values.$channel} for #{song}")
+
+                reaction_values = {  # annoying, node-sqlite3 errors if there are unused values
+                  $vid: reaction_values.$vid, 
+                  $keypoints: reaction_values.$keypoints
+                }
+
+                db.run "UPDATE Reaction SET keypoints=$keypoints WHERE vid=$vid", reaction_values
 
 deleteMatchingFilesAndDirsSync = (name, dir) ->
   files = fs.readdirSync dir, withFileTypes: true
