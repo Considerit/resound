@@ -1,13 +1,12 @@
 import requests
 import time
-import json 
+import json
 import os
 import subprocess
 import copy
-import glob 
+import glob
 from datetime import datetime, timedelta
 import webbrowser
-
 
 
 from decouple import config as decouple_config
@@ -22,7 +21,7 @@ youtube_oauth_client_id = decouple_config("youtube_oauth_client_id")
 youtube_client_secret = decouple_config("youtube_client_secret")
 
 
-try: 
+try:
     access_token = decouple_config("youtube_access_token")
     last_updated_str = decouple_config("youtube_access_token_last_updated")
     last_updated = datetime.strptime(last_updated_str, "%Y-%m-%d %H:%M:%S")
@@ -33,26 +32,30 @@ except:
 if last_updated is None or datetime.now() - last_updated > timedelta(days=1):
     # if the access token expires, you need to delete the access token line in the .env file,
     #   and make sure redirect_url is None, to reset the process.
-    redirect_url = "https://localhost/?state=Python-YouTube&code=4/0AeaYSHB5qk5e3b3865h4Ru866Gp1xNqreapoaMxvFYm2o_vJSNzhDNzDFcNXMLnFgKW7bg&scope=profile%20https://www.googleapis.com/auth/youtube%20https://www.googleapis.com/auth/userinfo.profile"
+    redirect_url = "https://localhost/?state=Python-YouTube&code=4/0AdLIrYfgwApJE1265RaaQuI1CUI6cTd82yTsyQho7EKlci_69n-sJ1RPCL4toK1Xs3vxuQ&scope=profile%20https://www.googleapis.com/auth/youtube%20https://www.googleapis.com/auth/userinfo.profile"
 
-    client = Client(client_id=youtube_oauth_client_id, client_secret=youtube_client_secret)
-
+    client = Client(
+        client_id=youtube_oauth_client_id, client_secret=youtube_client_secret
+    )
 
     if redirect_url is not None:
-
         existing_values = {}
-        with open('.env', 'r') as file:
+        with open(".env", "r") as file:
             for line in file:
                 line = line.strip()
-                if line and not line.startswith('#'):  # Ignore empty lines and comments
-                    key, value = line.split('=', 1)  # Split on the first equals sign
+                if line and not line.startswith("#"):  # Ignore empty lines and comments
+                    key, value = line.split("=", 1)  # Split on the first equals sign
                     existing_values[key] = value
 
-        try: 
-            access_token = client.generate_access_token(authorization_response=redirect_url).access_token
+        try:
+            access_token = client.generate_access_token(
+                authorization_response=redirect_url
+            ).access_token
 
             existing_values["youtube_access_token"] = access_token
-            existing_values["youtube_access_token_last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            existing_values[
+                "youtube_access_token_last_updated"
+            ] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             # Write everything back to the .env file
             with open(".env", "w") as file:
@@ -63,24 +66,24 @@ if last_updated is None or datetime.now() - last_updated > timedelta(days=1):
         except:
             redirect_url = None
 
-
     if redirect_url is None:
         print("We need to generate a valid access token")
 
         # Get authorization url
-        x=client.get_authorize_url()
+        x = client.get_authorize_url()
         print(x[0])
         # Click url and give permissions.
         # Copy the redirected url. Note that that this will look like an error page, possibly blank.
 
         webbrowser.open(x[0])
-        raise(Exception(f"Need to regenerate your access token. Access this url in a browser, then set redirect_url above to the resulting url, and rerun: \n{x[0]}"))
+        raise (
+            Exception(
+                f"Need to regenerate your access token. Access this url in a browser, then set redirect_url above to the resulting url, and rerun: \n{x[0]}"
+            )
+        )
 
 
 client = Client(access_token=access_token)
-
-
-
 
 
 # client = Client(api_key=api_key)
@@ -88,6 +91,7 @@ client = Client(access_token=access_token)
 RATE_LIMIT_PAUSE = 10  # Pause for 10 seconds if rate limit is hit
 
 channel_id = decouple_config("youtube_channel")  # resound
+
 
 def get_or_create_playlist(title, description):
     playlist_id = find_playlist_by_title(title)
@@ -99,20 +103,18 @@ def get_or_create_playlist(title, description):
         new_playlist = client.playlists.insert(
             part="snippet,status",
             body={
-                "snippet": {
-                    "title": title,
-                    "description": description
-                },
+                "snippet": {"title": title, "description": description},
                 "status": {
                     "privacyStatus": "public"  # Can be public, private, or unlisted
-                }
-            }
+                },
+            },
         )
         return new_playlist.id  # Return new playlist ID
     except PyYouTubeException as e:
         print(f"An error occurred: {e}")
 
     return None
+
 
 def find_playlist_by_title(playlist_title):
     try:
@@ -127,20 +129,23 @@ def find_playlist_by_title(playlist_title):
         return None
 
 
-
-
 def get_existing_video_ids(playlist_id):
-
-
     try:
         existing_videos = []
         got_first = False
         next_page_token = None
         while not got_first or next_page_token:
             if next_page_token:
-                result = client.playlistItems.list(playlist_id=playlist_id, part="contentDetails", pageToken=next_page_token, max_results=50)                
+                result = client.playlistItems.list(
+                    playlist_id=playlist_id,
+                    part="contentDetails",
+                    pageToken=next_page_token,
+                    max_results=50,
+                )
             else:
-                result = client.playlistItems.list(playlist_id=playlist_id, part="contentDetails", max_results=50)
+                result = client.playlistItems.list(
+                    playlist_id=playlist_id, part="contentDetails", max_results=50
+                )
 
             for item in result.items:
                 existing_videos.append(item.contentDetails.videoId)
@@ -155,9 +160,7 @@ def get_existing_video_ids(playlist_id):
         return []
 
 
-
 existing_ids = []
-
 
 
 def add_videos_to_playlist(playlist_id, video_ids):
@@ -170,17 +173,11 @@ def add_videos_to_playlist(playlist_id, video_ids):
                 body = {
                     "snippet": {
                         "playlistId": playlist_id,
-                        "resourceId": {
-                            "kind": "youtube#video",
-                            "videoId": video_id
-                        }
+                        "resourceId": {"kind": "youtube#video", "videoId": video_id},
                     }
                 }
 
-                client.playlistItems.insert(
-                    part="snippet",
-                    body=body
-                )
+                client.playlistItems.insert(part="snippet", body=body)
                 existing_ids.append(video_id)
                 print(f"Added video {video_id} to playlist.")
 
@@ -188,14 +185,11 @@ def add_videos_to_playlist(playlist_id, video_ids):
                 print(f"Error adding video {video_id}: {e}")
 
 
-
-
-if __name__=='__main__':
+if __name__ == "__main__":
     from inventory.inventory import get_manifest_path
 
-
-    playlist_title = "Reactions to Ren's Fred Again Mash Up"
-    playlist_description = "Reactions to Ren's Fred Again Mash Up that were included in this channel's respective Reaction Concert."
+    playlist_title = "Reactions to Crutch by Ren (ft Bibi)"
+    playlist_description = "Reactions to Crutch that were included in this channel's respective Reaction Concert."
 
     playlist_id = get_or_create_playlist(playlist_title, playlist_description)
     print(playlist_id)
@@ -204,7 +198,7 @@ if __name__=='__main__':
 
     # if playlist_id is not None:
 
-    song1 = 'Ren - Fred Again Mash Up'
+    song1 = "Ren - Crutch"
     # song2 = 'Ren - Ocean'
 
     playlist_songs = [
@@ -213,16 +207,14 @@ if __name__=='__main__':
     ]
     songs = []
     for song in playlist_songs:
-        parts = song.split(' - ')
-        songs.append( get_manifest_path(parts[0], parts[1])  )
+        parts = song.split(" - ")
+        songs.append(get_manifest_path(parts[0], parts[1]))
 
     for manifest_file in songs:
-
         song_data = json.load(open(manifest_file))
-        reaction_data = song_data['reactions']
+        reaction_data = song_data["reactions"]
 
-
-        song_ids = [ s.get('id') for s in reaction_data.values() if s.get('download') ]
+        song_ids = [s.get("id") for s in reaction_data.values() if s.get("download")]
 
         song_ids.sort(key=lambda x: x[0])
         # for channel, id in song_ids:
@@ -230,15 +222,14 @@ if __name__=='__main__':
 
         add_videos_to_playlist(playlist_id, song_ids)
 
-
     def fill_in_for_chiefaberach(artist, song, found_playlist):
         missing_title = f"Missing {artist} - {song} Reactions for Chiefaberach"
         found_videos = get_existing_video_ids(found_playlist)
         song_data = json.load(open(get_manifest_path(artist, song)))
-        reactions = song_data['reactions']
+        reactions = song_data["reactions"]
 
         missing = []
-        print('EXISTING!')
+        print("EXISTING!")
 
         for vid in found_videos:
             print(vid)
@@ -247,25 +238,24 @@ if __name__=='__main__':
             if vid not in found_videos:
                 missing.append(vid)
 
-        print('MISSING!')
+        print("MISSING!")
 
-        playlist_description = "Chief, these are reactions that I think are missing from your playlist."
+        playlist_description = (
+            "Chief, these are reactions that I think are missing from your playlist."
+        )
         playlist_id = get_or_create_playlist(missing_title, playlist_description)
 
         for vid in missing:
             print(f"[{vid}] {reactions[vid]['reactor']} - {reactions[vid]['title']}")
         add_videos_to_playlist(playlist_id, missing)
 
-
     def hi_ren_chiefaberach_gap():
         found_playlist = "PLvQ9PT7Tdzm0oWcg8u_v77mnqNIjZ3lMo"
-        artist = 'Ren'
-        song = 'Hi Ren - BP'        
+        artist = "Ren"
+        song = "Hi Ren - BP"
         fill_in_for_chiefaberach(artist, song, found_playlist)
 
-    found_playlist = "PLvQ9PT7Tdzm3NTWF9CzxbXvihZ-wS1uyx"
-    artist = 'Ren'
-    song = 'Fred Again Mash Up'        
-    fill_in_for_chiefaberach(artist, song, found_playlist)
-
-
+    # found_playlist = "PLvQ9PT7Tdzm3NTWF9CzxbXvihZ-wS1uyx"
+    # artist = "Ren"
+    # song = "Fred Again Mash Up"
+    # fill_in_for_chiefaberach(artist, song, found_playlist)
