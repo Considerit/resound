@@ -556,7 +556,7 @@ def filter_and_augment_manifest(artist, song, force=False):
             # search = f"\"{reaction.get('reactor')}\" \"{artist}\"  \"{song.get('title')}\"  "
 
             results = YoutubeSearch(
-                search, max_results=3, channel=get_channel(reaction.get("channelId"))
+                search, max_results=5, channel=get_channel(reaction.get("channelId"))
             ).to_dict()
             if results is None:
                 continue
