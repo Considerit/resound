@@ -70,8 +70,26 @@ dom.SONGS = ->
     UL 
       style:
         marginTop: 50
+        listStyle: 'none'
+        paddingLeft: 60
       for song in pinned
-        LI null,
+        LI 
+          style:
+            display: 'flex'
+
+          BUTTON
+            title: 'Sync with Resoundio.com'
+            style:
+              marginRight: 18
+            onClick: do(song) => =>
+              save {
+                'key': "/sync_with_resoundio/#{song}",
+                'song': song
+              }, ->
+                bus.forget("/sync_with_resoundio/#{song}")
+            
+            I
+              className: "glyphicon glyphicon-refresh"
 
           A
             href: "/songs/#{song}"
@@ -82,9 +100,13 @@ dom.SONGS = ->
               color: 'white'
             song
 
+
     UL 
       style:
         marginTop: 50
+        listStyle: 'none'
+        paddingLeft: 60
+
       for song in all
         LI null,
 
@@ -694,7 +716,11 @@ dom.REACTION_LIST = ->
     @local.force_deselection = false
 
   @local.page ?= 0
-  @local.per_page = 10
+
+  if task == 'backchannels'
+    @local.per_page = 50
+  else
+    @local.per_page = 10
 
 
   DIV null,
@@ -1327,6 +1353,8 @@ dom.BEST_PATH_BAR = ->
       length: duration - last_reaction_end
       start: last_reaction_end
       end: duration
+
+
 
   DIV 
     style: 

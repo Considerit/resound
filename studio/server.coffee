@@ -10,6 +10,9 @@ sqlite3 = require('sqlite3').verbose()
 songsPath = path.join( __dirname, '..', 'Media')
 libraryPath = path.join( __dirname, '..', 'library')
 resoundioDBPath = process.env.RESOUNDIO_DB_PATH
+resoundioDevDBPath = process.env.RESOUNDIO_DEV_DB_PATH
+
+
 
 get_manifest_path = (song) ->
 
@@ -48,8 +51,9 @@ read_layout = (song) ->
 
 write_layout = (song, obj) ->
   layout_path = get_layout_path(song)
-  fs.writeFileSync(layout_path, JSON.stringify(obj.layout, null, 2))
-  bus.dirty(obj.key)
+  if layout_path
+    fs.writeFileSync(layout_path, JSON.stringify(obj.layout, null, 2))
+    bus.dirty(obj.key)
 
 get_song_config_path = (song) ->
   config_path = path.join( libraryPath, "#{song}.json" )
@@ -160,7 +164,9 @@ bus = require('statebus').serve
 
 
     getWavDurationSync = (filePath) ->
-      throw new Error "File does not exist: #{filePath}" unless fs.existsSync filePath
+      if !fs.existsSync filePath
+        console.error("File does not exist: #{filePath}")
+        return 5000
 
       try
         command = "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"#{filePath}\""
@@ -210,27 +216,36 @@ bus = require('statebus').serve
             length: reaction_start - last_reaction_end
             start: last_reaction_end
             end: reaction_start
+            base_start: base_start
+            base_end: base_end
 
         unaligned_segments.push 
           type: 'backchannel'
           length: reaction_end - reaction_start
           start: reaction_start
           end: reaction_end
+          base_start: base_start
+          base_end: base_end
 
+        pause_duration = reaction_start - last_reaction_end
         last_reaction_end = reaction_end
-
-        if idx == 0
-          keypoints.push reaction_start
-        keypoints.push reaction_end
 
       unaligned_segments.push 
         type: 'speaking'
         length: duration - last_reaction_end
         start: last_reaction_end
         end: duration
+        base_start: base_end
+        base_end: base_end
 
 
-      console.log('keypoints:', keypoints)
+      for seg in unaligned_segments
+        if seg.type == 'speaking'
+          if seg.start == 0
+            keypoints.push( [seg.end, 0] )
+          else
+            keypoints.push( [seg.start, seg.base_start] )
+
 
       return {
         alignment: alignment_data,
@@ -258,7 +273,8 @@ bus = require('statebus').serve
       results = {key}
 
       if alignment_data
-        results.update(alignment_data)
+        for k,v of alignment_data
+          results[k] = v
 
       findMatchingFiles = (directory, pattern) ->
 
@@ -363,137 +379,142 @@ bus = require('statebus').serve
 
       song_vid = manifest['main_song']['id']
 
-      db = new sqlite3.Database(resoundioDBPath)
+      dbs = [resoundioDevDBPath, resoundioDBPath]
 
-      db.get "SELECT * from User WHERE email='#{process.env.DEFAULT_USER}'", (err, row) =>
-        default_user_id = row["user_id"]
+      for db_path in dbs
 
+        db = new sqlite3.Database(db_path)
 
-        ############################
-        # Synchronize the base video
-
-        status = 1 # pinned
-
-        song_vid_values = {
-          $vid: song_vid, 
-          $channel: manifest['main_song']['artist'], 
-          $channel_id: manifest['main_song']['channel_id'], 
-          $title: manifest['main_song']['title'], 
-          $description: manifest['main_song']['description'], 
-          $views: manifest['main_song']['views'], 
-          $duration: manifest['main_song']['duration']
-        }
-        song_values = {
-          $vid: song_vid, 
-          $status: status,  # make sure to put all 
-          $song_key: song,
-          $added_by: default_user_id 
-        }
-
-        db.get "SELECT * FROM Song WHERE vid='#{song_vid}'", (err, row) =>
-          if !row?
-            console.log("INSERTING NEW VIDEO #{song}")
-            db.run \
-              """INSERT INTO Video (vid,  channel,  channel_id,  title,  description,  views,  duration) VALUES 
-                                  ($vid, $channel, $channel_id, $title, $description, $views, $duration)""", 
-              song_vid_values
+        db.get "SELECT * from User WHERE email='#{process.env.DEFAULT_USER}'", (err, row) =>
+          console.log(row)
+          default_user_id = row["user_id"]
 
 
-            console.log("INSERTING NEW SONG #{song}")
-            db.run \
-              "INSERT INTO Song (vid, song_key, status, added_by) VALUES ($vid, $song_key, $status, $added_by)", 
-              song_values
-          
-          else
-            console.log("UPDATING VIDEO #{song}")
+          ############################
+          # Synchronize the base video
 
-            db.run \
-              """UPDATE Video SET channel=$channel, channel_id=$channel_id, title=$title, description=$description, views=$views, duration=$duration 
-                                  WHERE vid=$vid""", song_vid_values
+          status = 1 # pinned
 
-            console.log("UPDATING SONG #{song}")
+          song_vid_values = {
+            $vid: song_vid, 
+            $channel: manifest['main_song']['artist'], 
+            $channel_id: manifest['main_song']['channel_id'], 
+            $title: manifest['main_song']['title'], 
+            $description: manifest['main_song']['description'], 
+            $views: manifest['main_song']['views'], 
+            $duration: manifest['main_song']['duration']
+          }
+          song_values = {
+            $vid: song_vid, 
+            $status: status,  # make sure to put all 
+            $song_key: song,
+            $added_by: default_user_id 
+          }
 
-            song_values = {  # annoying, node-sqlite3 errors if there are unused values
-              $vid: song_values.$vid, 
-              $status: song_values.$status
-            }
-            db.run "UPDATE Song SET status=$status WHERE vid=$vid", song_values
+          db.get "SELECT * FROM Song WHERE vid='#{song_vid}'", (err, row) =>
+            if !row?
+              console.log("INSERTING NEW VIDEO #{song}")
+              db.run \
+                """INSERT INTO Video (vid,  channel,  channel_id,  title,  description,  views,  duration) VALUES 
+                                    ($vid, $channel, $channel_id, $title, $description, $views, $duration)""", 
+                song_vid_values
 
 
+              console.log("INSERTING NEW SONG #{song}")
+              db.run \
+                "INSERT INTO Song (vid, song_key, status, added_by) VALUES ($vid, $song_key, $status, $added_by)", 
+                song_values
+            
+            else
+              console.log("UPDATING VIDEO #{song}")
 
+              db.run \
+                """UPDATE Video SET channel=$channel, channel_id=$channel_id, title=$title, description=$description, views=$views, duration=$duration 
+                                    WHERE vid=$vid""", song_vid_values
 
-        reactions = manifest["reactions"]
-        included_reactions = {}
-        for reaction in Object.values(reactions)
-          if reaction['download']
-            included_reactions[reaction.id] = reaction
+              console.log("UPDATING SONG #{song}")
 
-        ##################################################
-        # Delete any reactions that are no longer included
-
-        db.each "SELECT * FROM Reaction WHERE song_key='#{song}'", (err, row) =>
-          if row.vid not of included_reactions
-            db.run "DELETE FROM Reaction WHERE vid='#{row.vid}'"
-            db.run "DELETE FROM Video WHERE vid='#{row.vid}'"
-
-        ##################################################
-        # Insert/update all included reactions 
-        
-        for reaction_vid, reaction of included_reactions
-          do(reaction_vid, reaction) =>
-            db.get "SELECT * FROM Reaction WHERE vid='#{reaction_vid}'", (err, row) =>
-              # console.log("PROCESSING", row)
-
-              reaction_file_prefix = reaction.file_prefix or reaction.reactor
-              alignment = get_alignment_data(reaction, song, reaction_file_prefix)
-              keypoints = alignment.keypoints
-
-              published_on_str = new Date(reaction.release_date)
-              published_on = Math.floor(published_on_str.getTime() / 1000)
-              video_values = {
-                $vid: reaction_vid, 
-                $channel: reaction.reactor, 
-                $channel_id: reaction.channelId, 
-                $title: reaction.title, 
-                $description: reaction.description, 
-                $views: reaction.views, 
-                $duration: reaction.duration,
-                $published_on: published_on 
+              song_values = {  # annoying, node-sqlite3 errors if there are unused values
+                $vid: song_values.$vid, 
+                $status: song_values.$status
               }
-              reaction_values = {
-                $vid: reaction_vid, 
-                $song_key: song,
-                $channel: reaction.reactor,
-                $keypoints: JSON.stringify(keypoints)
-              }   
-                       
-              if !row?
-                console.log("INSERTING NEW REACTION VIDEO: #{reaction_values.$channel} for #{song}")
-                db.run \
-                  """INSERT INTO Video (vid,  channel,  channel_id,  title,  description,  views,  duration, published_on) VALUES 
-                                      ($vid, $channel, $channel_id, $title, $description, $views, $duration, $published_on)""", 
-                  video_values
+              db.run "UPDATE Song SET status=$status WHERE vid=$vid", song_values
 
 
-                console.log("INSERTING NEW REACTION: #{reaction_values.$channel} for #{song}")
-                db.run \
-                  "INSERT INTO Reaction (vid, song_key, channel, keypoints) VALUES ($vid, $song_key, $channel, $keypoints)", 
-                  reaction_values
-              
-              else
-                console.log("UPDATING REACTION VIDEO #{reaction_values.$channel} for #{song}")
-                db.run \
-                  """UPDATE Video SET channel=$channel, channel_id=$channel_id, title=$title, description=$description, views=$views, duration=$duration, published_on=$published_on
-                                      WHERE vid=$vid""", video_values
 
-                console.log("UPDATING REACTION #{reaction_values.$channel} for #{song}")
 
-                reaction_values = {  # annoying, node-sqlite3 errors if there are unused values
-                  $vid: reaction_values.$vid, 
-                  $keypoints: reaction_values.$keypoints
+          reactions = manifest["reactions"]
+          included_reactions = {}
+          for reaction in Object.values(reactions)
+            if reaction['download']
+              included_reactions[reaction.id] = reaction
+
+          ##################################################
+          # Delete any reactions that are no longer included
+
+          db.each "SELECT * FROM Reaction WHERE song_key='#{song}'", (err, row) =>
+            if row.vid not of included_reactions
+              db.run "DELETE FROM Reaction WHERE vid='#{row.vid}'"
+              db.run "DELETE FROM Video WHERE vid='#{row.vid}'"
+
+          ##################################################
+          # Insert/update all included reactions 
+          
+          for reaction_vid, reaction of included_reactions
+            do(reaction_vid, reaction) =>
+              db.get "SELECT * FROM Reaction WHERE vid='#{reaction_vid}'", (err, row) =>
+                # console.log("PROCESSING", row)
+
+                reaction_file_prefix = reaction.file_prefix or reaction.reactor
+                alignment = get_alignment_data(reaction, song, reaction_file_prefix)
+                keypoints = alignment.keypoints
+
+                published_on_str = new Date(reaction.release_date)
+                published_on = Math.floor(published_on_str.getTime() / 1000)
+                video_values = {
+                  $vid: reaction_vid, 
+                  $channel: reaction.reactor, 
+                  $channel_id: reaction.channelId, 
+                  $title: reaction.title, 
+                  $description: reaction.description, 
+                  $views: reaction.views, 
+                  $duration: reaction.duration,
+                  $published_on: published_on 
                 }
+                reaction_values = {
+                  $vid: reaction_vid, 
+                  $song_key: song,
+                  $channel: reaction.reactor,
+                  $keypoints: JSON.stringify(keypoints)
+                }   
+                         
+                if !row?
+                  console.log("INSERTING NEW REACTION VIDEO: #{reaction_values.$channel} for #{song}")
+                  db.run \
+                    """INSERT INTO Video (vid,  channel,  channel_id,  title,  description,  views,  duration, published_on) VALUES 
+                                        ($vid, $channel, $channel_id, $title, $description, $views, $duration, $published_on)""", 
+                    video_values
 
-                db.run "UPDATE Reaction SET keypoints=$keypoints WHERE vid=$vid", reaction_values
+
+                  console.log("INSERTING NEW REACTION: #{reaction_values.$channel} for #{song}")
+                  db.run \
+                    "INSERT INTO Reaction (vid, song_key, channel, keypoints) VALUES ($vid, $song_key, $channel, $keypoints)", 
+                    reaction_values
+                
+                else
+                  console.log("UPDATING REACTION VIDEO #{reaction_values.$channel} for #{song}")
+                  db.run \
+                    """UPDATE Video SET channel=$channel, channel_id=$channel_id, title=$title, description=$description, views=$views, duration=$duration, published_on=$published_on
+                                        WHERE vid=$vid""", video_values
+
+                  console.log("UPDATING REACTION #{reaction_values.$channel} for #{song}")
+
+                  reaction_values = {  # annoying, node-sqlite3 errors if there are unused values
+                    $vid: reaction_values.$vid, 
+                    $keypoints: reaction_values.$keypoints
+                  }
+
+                  db.run "UPDATE Reaction SET keypoints=$keypoints WHERE vid=$vid", reaction_values
 
 deleteMatchingFilesAndDirsSync = (name, dir) ->
   files = fs.readdirSync dir, withFileTypes: true
