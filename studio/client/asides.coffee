@@ -361,53 +361,64 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
       style: 
         display: 'grid'
         alignItems: 'center'
-        justifyContent: 'space-evenly'
+        justifyContent: 'center'
+        gridTemplateColumns: "auto auto 40px auto auto 70px"
+        columnGap: "3rem"
+        rowGap: "2rem"
 
 
       for aside,row in all_asides
         key = "#{aside.reaction_file_prefix}-#{aside.idx}-#{aside.aside[0]}-#{aside.aside[1]}"
 
         do (aside, row, key) =>         
+          data_id = "#{aside.reactor}-#{aside.aside[0]}-#{aside.aside[1]}"
           [
             DIV 
               key: "#{key}-reactor"
-              style: 
-                gridRow: row + 1
-                gridColumn: 1
+              style:
+                textAlign: 'right'
+              # style: 
+              #   gridRow: "#{row + 1} / 1"
+              #   gridColumn: 1
               aside.reactor
 
 
             DIV
               key: "#{key}-audio"
 
-              style: 
-                gridRow: row + 1
-                gridColumn: 2
+              # style: 
+              #   gridRow: "#{row + 1} / 1"
+              #   gridColumn: 2
 
 
-              AUDIO
-                style: 
-                  width: 100
-                controls: true
-                "data-id": "#{aside.reactor}-#{aside.aside[0]}-#{aside.aside[1]}"
-                "data-start": aside.aside[0]
-                "data-end": aside.aside[1]
-                src: aside.media + '.wav'
+              # AUDIO
+              #   style: 
+              #     visible: 'hidden'
+              #   controls: false
+              #   "data-id": data_id
+              #   "data-start": aside.aside[0]
+              #   "data-end": aside.aside[1]
+              #   src: aside.media + '.wav'
+
+              BUTTON 
+                onClick: =>
+                  @playAudioSegment(data_id, aside.media + '.wav', aside.aside[0], aside.aside[1])
+                'play'
 
 
 
             DIV 
               key: "#{key}-duration"            
-              style: 
-                gridRow: row + 1
-                gridColumn: 3
+              # style: 
+              #   gridRow: "#{row + 1} / 1"
+              #   gridColumn: 3
               "#{Math.round(aside.aside[1] - aside.aside[0])}s"
 
             DIV 
               key: "#{key}-insertion"            
-              style: 
-                gridRow: row + 1
-                gridColumn: 4
+              # style: 
+              #   gridRow: "#{row + 1} / 1"
+              #   gridColumn: 4
               INPUT
                 type: 'number'
                 defaultValue: aside.aside[2]
@@ -418,12 +429,14 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
 
             DIV 
               key: "#{key}-rewind"            
-              style: 
-                gridRow: row + 1
-                gridColumn: 5
+              # style: 
+              #   gridRow: "#{row + 1} / 1"
+              #   gridColumn: 5
               INPUT
                 type: 'text'
                 defaultValue: aside.aside[3]
+                style: 
+                  width: 50
                 onChange: (e) => 
                   rewind = parseFloat(e.target.value)
                   if isNaN(e.target.value)
@@ -432,30 +445,32 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
                   @local.changes[key][3] = rewind
                   save @local
 
-            if key of @local.changes
-              DIV 
-                key: "#{key}-save"
-                style: 
-                  gridRow: row + 1
-                  gridColumn: 6
-
-                BUTTON null,
-                  onClick: => 
-                    updated_aside = @local.changes[key]
-                    update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3], true)
-                    delete @local.changes[key]
-                    save @local
-
-
-
-                  I 
-                    className: "glyphicon glyphicon-floppy-save"
 
             DIV 
               key: "#{key}-trash"            
-              style: 
-                gridRow: row + 1
-                gridColumn: 7
+              # style: 
+              #   gridRow: "#{row + 1} / 1"
+              #   gridColumn: 7
+
+
+              if key of @local.changes
+                DIV 
+                  key: "#{key}-save"
+                  # style: 
+                  #   gridRow: "#{row + 1} / 1"
+                  #   gridColumn: 6
+
+                  BUTTON null,
+                    onClick: => 
+                      updated_aside = @local.changes[key]
+                      update_aside(song, aside.reaction_file_prefix, aside.idx, updated_aside[0], updated_aside[1], updated_aside[2], updated_aside[3], true)
+                      delete @local.changes[key]
+                      save @local
+
+
+
+                    I 
+                      className: "glyphicon glyphicon-floppy-save"
 
               BUTTON 
                 style: 
@@ -474,24 +489,47 @@ dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR = ->
 
 
 dom.ASIDE_SUMMARY_AND_INSERTION_EDITOR.refresh = ->
-  @initialized ?= {}
+  @audio_buffers ?= {}
 
-  audios = @getDOMNode().querySelectorAll('audio')
-  for audio in audios
-    continue if audio.dataset.id in @initialized
+  # Try to precisely control playback of subclip
+  @playAudioSegment = (id, url, startTime, endTime) =>
 
-    audio.ontimeupdate = (ev) =>
-      audio = ev.currentTarget
-      if audio.currentTime >= audio.dataset.end
-          audio.currentTime = audio.dataset.start
-          audio.pause()
+    loadAudio = (url, audio_buffers, id, callback) ->
+      audioContext = new (window.AudioContext || window.webkitAudioContext)()
 
-    audio.onplay = (ev) =>
-      audio = ev.currentTarget
-      audio.currentTime = audio.dataset.start
-      audio.play()
+      fetch(url)
+        .then (response) => response.arrayBuffer()
+        .then (buffer) => audioContext.decodeAudioData(buffer)
+        .then (decodedData) =>
+          audio_buffers[id] = [audioContext, decodedData]
+          callback()
 
-    @initialized[audio.dataset.id] = true
+    if id not of @audio_buffers
+      loadAudio(url, @audio_buffers, id, => @playAudioSegment(id, url, startTime, endTime))
+      return
+
+    [audioContext, buffer] = @audio_buffers[id]
+
+    source = audioContext.createBufferSource()
+
+    # Truncate the buffer to the desired subclip
+    sampleRate = buffer.sampleRate
+    startOffset = Math.round(sampleRate * startTime)  # Convert time to audio sample frame
+    endOffset = Math.round(sampleRate * endTime)      # Convert time to audio sample frame
+
+    frameCount = endOffset - startOffset
+    myArrayBuffer = audioContext.createBuffer(buffer.numberOfChannels, frameCount, sampleRate)
+
+    # Copy the relevant audio data to a new buffer
+    for channel in [0...buffer.numberOfChannels]
+      nowBuffering = myArrayBuffer.getChannelData(channel)
+      originalBuffer = buffer.getChannelData(channel)
+      nowBuffering.set(originalBuffer.subarray(startOffset, endOffset))
+
+    # Setup playback
+    source.buffer = myArrayBuffer
+    source.connect(audioContext.destination)
+    source.start(0)
 
 
 
