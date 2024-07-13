@@ -533,13 +533,11 @@ def incorporate_asides_video(base_video, video_background):
     return base_video, video_background
 
 
-from compositor.mix_audio import adjust_gain_for_rms_match, rms_level_excluding_silence
+from compositor.mix_audio import adjust_gain_for_loudness_match
 
 
 def incorporate_asides_audio(base_video, base_audio_clip, audible_segments):
     full_spec = create_full_media_specification_with_asides(base_video.duration)
-
-    base_rms = rms_level_excluding_silence(base_audio_clip)
 
     base_audio_clip = create_full_audio_from_spec(
         full_spec["base"], "base", {"main": base_audio_clip}, audible_segments
@@ -560,7 +558,7 @@ def incorporate_asides_audio(base_video, base_audio_clip, audible_segments):
                     keep_file=False,
                     preserve_silence=True,
                 )
-                aside_audio = adjust_gain_for_rms_match(aside_audio, base_rms, name)
+                aside_audio = adjust_gain_for_loudness_match(aside_audio, name)
                 audio_files[f"aside-{view['aside-num']}"] = aside_audio
 
         reaction["mixed_audio"] = create_full_audio_from_spec(

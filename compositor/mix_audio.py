@@ -4,7 +4,7 @@ import os
 import math
 import soundfile as sf
 
-from moviepy.editor import AudioFileClip
+from moviepy.editor import AudioFileClip, VideoFileClip
 
 from utilities import conf, conversion_audio_sample_rate as sr, save_object_to_file
 
@@ -14,11 +14,34 @@ from utilities import print_profiling
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 
+import pyloudnorm as pyln
+
 
 def write_audio_to_file(reaction, audio, name):
     channel = reaction.get("channel")
     path = os.path.join(conf.get("temp_directory"), f"{channel}-int-{name}.wav")
     sf.write(path, audio, sr)
+
+
+def get_peak_normalized_base_audio_and_rms(base_video=None):
+    knobs = conf.get("audio_mixing", {})
+
+    if base_video is None:
+        base_video = VideoFileClip(conf.get("base_video_path"))
+
+    normalize_base_with_headroom = knobs.get(
+        "normalize_base_with_headroom", 0.2
+    )  # base volume set to 1 - headroom
+
+    base_video.audio.fps = sr
+    base_audio_as_array = base_video.audio.to_soundarray()
+
+    base_audio_as_array = peak_normalize_with_headroom(
+        base_audio_as_array, headroom=normalize_base_with_headroom
+    )
+    base_audio_rms = rms_level_excluding_silence(base_audio_as_array)
+
+    return base_audio_as_array, base_audio_rms
 
 
 def mix_audio(base_video, output_size):
@@ -33,13 +56,9 @@ def mix_audio(base_video, output_size):
     base_excess_limitation = knobs.get("base_excess_limitation", 0.75)
     stereo_pan_max = knobs.get("stereo_pan_max", 0.75)
 
-    base_video.audio.fps = sr
-    base_audio_as_array = base_video.audio.to_soundarray()
-
-    base_audio_as_array = peak_normalize_with_headroom(
-        base_audio_as_array, headroom=normalize_base_with_headroom
+    base_audio_as_array, base_audio_rms = get_peak_normalized_base_audio_and_rms(
+        base_video
     )
-    base_audio_rms = rms_level_excluding_silence(base_audio_as_array)
 
     for channel, reaction in conf.get("reactions").items():
         print(f"\t\tLoading and volume matching audio for {channel}")
@@ -49,11 +68,6 @@ def mix_audio(base_video, output_size):
 
         audio_path = reaction.get("backchannel_audio")
         isolated_backchannel = AudioFileClip(audio_path).to_soundarray()
-
-        isolated_backchannel = adjust_gain_for_rms_match(
-            isolated_backchannel, base_audio_rms, channel
-        )
-        # write_audio_to_file(reaction, isolated_backchannel, 'adjusted_for_gain')
 
         reaction["mixed_audio"] = isolated_backchannel
 
@@ -76,15 +90,6 @@ def mix_audio(base_video, output_size):
 
         audio_scaling_factor = audio_scaling_factors[channel]
         audio_scaling_factor_reshaped = audio_scaling_factor[:, np.newaxis]
-
-        non_zero_elements = audio_scaling_factor[np.nonzero(audio_scaling_factor)]
-        if non_zero_elements.size > 0:
-            average_non_zero = np.mean(non_zero_elements)
-            print(
-                f"\t\t\tscaling reaction by average of non-zero elements: {average_non_zero}"
-            )
-        else:
-            print("No non-zero elements to average.")
 
         reaction["mixed_audio"] *= audio_scaling_factor_reshaped
         # write_audio_to_file(reaction, reaction['mixed_audio'], 'adjusted_for_foreground')
@@ -166,6 +171,9 @@ def foreground_background_backchannel_segments(
     print("\tDetermining foreground and background")
     foregrounded_backchannel_segments = []
     backgrounded_backchannel_segments = []
+
+    meter = pyln.Meter(sr)  # create BS.1770 meter
+
     for channel, reaction in conf.get("reactions").items():
         print(f"\t\tForeground/background audio for {channel}")
 
@@ -184,13 +192,34 @@ def foreground_background_backchannel_segments(
         for seg in contiguous_backchannel_segments:
             start, end = seg
             # score = seg[0][1] - seg[0][0]
-            score = np.sum(calculate_perceptual_loudness(reaction_audio[start:end]))
+            # score = np.sum(calculate_perceptual_loudness(reaction_audio[start:end]))
+
+            loudness = meter.integrated_loudness(reaction_audio[start:end])
+            perc_of_song = 100 * (end - start) / base_audio_as_array.shape[0]
+
+            segment_length = (end - start) / sr
+
+            # best segments are 3-7 secs, long segments are usually not great
+            if segment_length < 1:
+                score_multiplier = 0.75
+            if segment_length < 3:
+                score_multiplier = 1.25
+            elif segment_length < 7:
+                score_multiplier = 2.5
+            elif segment_length < 10:
+                score_multiplier = 2
+            else:
+                score_multiplier = 1
+
+            score = score_multiplier * (loudness + 30)
+
+            # print(channel, score, loudness, perc_of_song)
             channel_seg = [seg, channel, score]
             channel_segments.append(channel_seg)
 
             # 2) Initialize each backchannel segment as foreground. We'll track this by creating
             #        a numpy array that will represent a scaling factor at each sample in the
-            #        audio array. Foreground = foreground_scaler. Background = foreground_scaler. An audio mask I guess.
+            #        audio array. Foreground = foreground_scaler. Background = background_scaler. An audio mask I guess.
 
             scaling_factors[channel][start:end] = np.ones(end - start)
 
@@ -209,7 +238,7 @@ def foreground_background_backchannel_segments(
     #       - Mark the others at that timestamp as in the background
     #     - Loop until there aren't any sections with multiple foreground channels
 
-    spacing = 5 * sr
+    spacing = 1 * sr
 
     def construct_temporal_storage_for_backchannel_segments(foregrounded):
         duration = len(conf.get("song_audio_data"))
@@ -218,8 +247,9 @@ def foreground_background_backchannel_segments(
             center = i
             my_bin = []
             for chan in foregrounded:
-                start, end = chan[0]
-                if abs(start - center) <= spacing or abs(end - center) <= spacing:
+                if segments_overlap(
+                    chan[0], (center - spacing / 2, center + spacing / 2)
+                ):
                     my_bin.append(chan)
             bins.append(my_bin)
         return bins
@@ -251,6 +281,7 @@ def foreground_background_backchannel_segments(
         # Check if two segments overlap
         start1, end1 = seg1
         start2, end2 = seg2
+
         return max(start1, start2) < min(end1, end2)
 
     def find_most_overlapping_backchannel_segments(bins):
@@ -307,6 +338,7 @@ def foreground_background_backchannel_segments(
             co_listener_scaler = background_scaler / max(2, split_between)
             quality_scaler = background_scaler * score / total_score
             scaler = min(1, max(co_listener_scaler, quality_scaler))
+            # scaler = 0
             scaling_factors[channel][start:end] = np.minimum(
                 scaler, scaling_factors[channel][start:end]
             )
@@ -487,6 +519,22 @@ def rms_level_excluding_silence(audio_array, threshold=0.01):
         print("NAN!", np.mean(non_silent_samples**2), non_silent_samples)
 
     return rms
+
+
+LUFS_normalization = -16
+
+
+def adjust_gain_for_loudness_match(audio_array, channel):
+    meter = pyln.Meter(sr)  # create BS.1770 meter
+    loudness = meter.integrated_loudness(audio_array)
+
+    # loudness normalize audio to LUFS_normalization dB LUFS
+    loudness_normalized_audio = pyln.normalize.loudness(
+        audio_array, loudness, LUFS_normalization
+    )
+
+    print(f"Loudness of {channel}={loudness}, adjusting to {LUFS_normalization}db LUFS")
+    return loudness_normalized_audio
 
 
 def adjust_gain_for_rms_match(audio_array, target_rms, channel):

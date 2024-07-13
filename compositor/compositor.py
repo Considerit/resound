@@ -473,7 +473,7 @@ def find_active_segments(audible_segments, duration_threshold=1.5):
     for channel, segments in audible_segments.items():
         for start, end, audio_factor in segments:
             if end - start > duration_threshold * sr:
-                if audio_factor > 0.2:
+                if audio_factor >= 0.5:
                     final_segments.append((channel, start, end))
 
     return final_segments
