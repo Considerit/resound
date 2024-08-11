@@ -20,3 +20,8 @@ studio/.nvmrc
 studio/vendor
 studio/package-lock.json
 testren.coffee
+bin/dl
+*.json
+*.txt
+*.vtt
+Voice memos/*

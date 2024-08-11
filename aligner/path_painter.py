@@ -29,6 +29,11 @@ import time
 import math
 
 
+GENERATE_FULL_ALIGNMENT_VIDEO = (
+    True  # This was originally created for the how-I-make-these-concerts video
+)
+
+
 attempts_progression = {
     "chunk_size": [3, 3, 5, 5, 8, 8, 10, 10, 12, 12, 3, 5, 8, 10, 12],
     "allowed_spacing": [3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 12, 12, 12, 12, 12],
@@ -70,105 +75,170 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
 
     print("FIND SEGMENTS")
 
-    segments = find_segments(reaction, chunk_size, step, peak_tolerance)
+    segments = find_segments(
+        reaction,
+        chunk_size,
+        step,
+        peak_tolerance,
+        save_to_file=GENERATE_FULL_ALIGNMENT_VIDEO,
+    )
 
-    # splay_paint(reaction, segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(
+        reaction,
+        segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="original_segments",
+    )
 
     print("ABSORB")
     consolidated_segments = consolidate_segments(segments, bridge_gaps=True)
 
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="consolidate-segments-1",
+    )
 
     print("PRUNE UNREACHABLE")
 
-    consolidated_segments, __ = prune_unreachable_segments(
-        reaction, consolidated_segments, allowed_spacing, prune_links=False
-    )
-
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    print("SHARPEN INTERCEPT")
-    sharpen_intercept(
-        reaction, chunk_size, step, consolidated_segments, allowed_spacing
-    )
-
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    print("ABSORB2")
-    consolidated_segments = consolidate_segments(
-        consolidated_segments, bridge_gaps=True
-    )
-
-    # for seg in consolidated_segments:
-    #     rs,re,bs,be = seg.get('end_points')
-    #     print(f"[{rs-bs}] {bs/sr}-{be/sr} / {rs/sr}-{re/sr}   [{seg.get('pruned')}]")
-
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    print("SHARPEN ENDPOINTS")
-
-    sharpen_endpoints(
-        reaction, chunk_size, step, consolidated_segments, allowed_spacing
-    )
-
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    print("SHARPEN INTERCEPT2")
-
-    sharpen_intercept(
-        reaction, chunk_size, step, consolidated_segments, allowed_spacing
-    )
-
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    # print("THIN CLUSTERS")
-
-    # consolidated_segments = prune_low_quality_segments(reaction, consolidated_segments)
-
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    # if attempts % 3 == 0:
-    # print("PRUNE NEIGHBORS")
-
-    # prune_neighbors(reaction, consolidated_segments, allowed_spacing)
-
-    # splay_paint(reaction, consolidated_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    print("PRUNE UNREACHABLE2")
-
-    consolidated_segments, joinable_segment_map = prune_unreachable_segments(
+    pruned_segments, __ = prune_unreachable_segments(
         reaction, consolidated_segments, allowed_spacing, prune_links=False
     )
 
     splay_paint(
         reaction,
         consolidated_segments,
-        stroke_alpha=0.2,
+        stroke_alpha=1,
         show_live=False,
         chunk_size=chunk_size,
+        id="prune-unreachable-1",
     )
 
-    print(f"Constructing paths from {len(consolidated_segments)} viable segments")
+    print("SHARPEN INTERCEPT")
+    sharpen_intercept(reaction, chunk_size, step, pruned_segments, allowed_spacing)
+
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="sharpen-intercepts-1",
+    )
+
+    print("ABSORB2")
+    pruned_segments = consolidate_segments(pruned_segments, bridge_gaps=True)
+
+    # for seg in pruned_segments:
+    #     rs,re,bs,be = seg.get('end_points')
+    #     print(f"[{rs-bs}] {bs/sr}-{be/sr} / {rs/sr}-{re/sr}   [{seg.get('pruned')}]")
+
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="consolidate-segments-2",
+    )
+
+    print("SHARPEN ENDPOINTS")
+
+    sharpen_endpoints(reaction, chunk_size, step, pruned_segments, allowed_spacing)
+
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="sharpen-endpoints",
+    )
+
+    print("SHARPEN INTERCEPT2")
+
+    sharpen_intercept(reaction, chunk_size, step, pruned_segments, allowed_spacing)
+
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="sharpen-intercepts-2",
+    )
+
+    print("ABSORB3")
+    pruned_segments = consolidate_segments(pruned_segments, bridge_gaps=True)
+
+    # for seg in pruned_segments:
+    #     rs,re,bs,be = seg.get('end_points')
+    #     print(f"[{rs-bs}] {bs/sr}-{be/sr} / {rs/sr}-{re/sr}   [{seg.get('pruned')}]")
+
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="consolidate-segments-3",
+    )
+
+    # print("THIN CLUSTERS")
+
+    # pruned_segments = prune_low_quality_segments(reaction, pruned_segments)
+
+    # splay_paint(reaction, pruned_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    # if attempts % 3 == 0:
+    # print("PRUNE NEIGHBORS")
+
+    # prune_neighbors(reaction, pruned_segments, allowed_spacing)
+
+    # splay_paint(reaction, pruned_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
+
+    print("PRUNE UNREACHABLE2")
+
+    pruned_segments, joinable_segment_map = prune_unreachable_segments(
+        reaction, pruned_segments, allowed_spacing, prune_links=False
+    )
+
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="prune-unreachable-2",
+    )
+
+    print(f"Constructing paths from {len(pruned_segments)} viable segments")
 
     paths = construct_all_paths(
-        reaction, consolidated_segments, joinable_segment_map, allowed_spacing
+        reaction, pruned_segments, joinable_segment_map, allowed_spacing, chunk_size
     )
 
     segments_by_key = {}
-    for segment in consolidated_segments:
+    for segment in pruned_segments:
         segments_by_key[segment["key"]] = segment
-
-    # paths = finesse_paths(reaction, paths, segments_by_key)
 
     if len(paths) == 0 and attempts < len(attempts_progression["chunk_size"]) - 1:
         print(f"No paths found.")
-        splay_paint(
-            reaction,
-            consolidated_segments,
-            stroke_alpha=0.2,
-            show_live=False,
-            chunk_size=chunk_size,
-        )
+
+        if not GENERATE_FULL_ALIGNMENT_VIDEO:
+            splay_paint(
+                reaction,
+                consolidated_segments,
+                stroke_alpha=1,
+                show_live=False,
+                chunk_size=chunk_size,
+                id="end-failed",
+            )
 
         return paint_paths(reaction, peak_tolerance, attempts=attempts + 1)
 
@@ -184,11 +254,16 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
 
     splay_paint(
         reaction,
-        segments,
-        stroke_alpha=0.2,
+        consolidated_segments,
+        stroke_alpha=1,
         show_live=False,
-        paths=[best_path],
+        best_path=best_path,
         chunk_size=chunk_size,
+        id="finished",
+    )
+
+    compile_images_to_video(
+        get_paint_portfolio_path(reaction, chunk_size), "video.mp4", FPS=5
     )
 
     return best_path
@@ -1077,15 +1152,6 @@ def micro_align_path(reaction, path, strokes):
     return new_path
 
 
-# def finesse_paths(reaction, paths, strokes):
-#     merged_paths = []
-#     for path in paths:
-#         merged_path = merge_continuous_segments_separated_by_filler(reaction, path, strokes)
-#         merged_paths.append(merged_path)
-
-#     return merged_paths
-
-
 #########################################
 # Getting rid of clusters of bad segments
 # 1) Identify clusters of candidate segments where there are 5 or more segments such
@@ -1386,7 +1452,9 @@ def sharpen_path_boundaries(reaction, original_path):
         return path
 
 
-def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacing):
+def construct_all_paths(
+    reaction, segments, joinable_segment_map, allowed_spacing, chunk_size
+):
     paths = []
     song_length = len(conf.get("song_audio_data"))
     partial_paths = []
@@ -1536,6 +1604,20 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
         should_prune, score = should_prune_path(
             reaction, partial_path[0], song_length, score, threshold_base=threshold_base
         )
+
+        if GENERATE_FULL_ALIGNMENT_VIDEO:
+            splay_paint(
+                reaction,
+                segments,
+                stroke_alpha=1,
+                stroke_color="gray",
+                stroke_linewidth=1,
+                show_live=False,
+                best_path=best_score_cache.get("best_overall_path", None),
+                paths=[partial_path[0]],
+                chunk_size=chunk_size,
+                id=f"path-test-{i}",
+            )
 
         if should_prune:  # and prune_eligible:
             continue
@@ -1772,7 +1854,7 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links=
             del joinable_segments[segment_id]
             prune_cache["unreachable"] += 1
 
-    segments = [s for s in segments if not s.get("pruned", False)]
+    # segments = [s for s in segments if not s.get("pruned", False)]
 
     # clean up segments that can't reach the end
     pruned_another = True
@@ -2444,7 +2526,7 @@ def get_lower_bounds(reaction, chunk_size):
     return lower_bounds
 
 
-def find_segments(reaction, chunk_size, step, peak_tolerance):
+def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False):
     base_audio = conf.get("song_audio_data")
     reaction_audio = reaction.get("reaction_audio_data")
 
@@ -2482,6 +2564,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
     reaction_span = reaction.get("end_reaction_search_at", len(reaction_audio))
 
+    all_candidates = []  # used only for painting full alignment
     for i, start in enumerate(starting_points):
         print(f"\tStroking...{i/len(starting_points)*100:.2f}%", end="\r")
 
@@ -2587,6 +2670,37 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
 
                 already_matched[new_stroke[0]] = True
 
+        if save_to_file:
+            for y1 in candidates:
+                all_candidates.append(
+                    {
+                        "pruned": False,
+                        "end_points": (
+                            y1,
+                            y1 + chunk_size,
+                            start,
+                            start + chunk_size,
+                        ),
+                        "strokes": (
+                            y1,
+                            y1 + chunk_size,
+                            start,
+                            start + chunk_size,
+                        ),
+                    }
+                )
+
+            splay_paint(
+                reaction,
+                strokes=all_candidates,
+                stroke_alpha=step / chunk_size,
+                stroke_color="blue",
+                show_live=False,
+                chunk_size=chunk_size,
+                id=f"{start}",
+                copy_to_main=False,
+            )
+
         for y1 in candidates:
             if y1 in already_matched:
                 continue
@@ -2612,6 +2726,18 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
                 still_active_strokes.append(stroke)
         active_strokes = still_active_strokes
 
+        # if save_to_file:
+        #     print(step / chunk_size)
+        #     splay_paint(
+        #         reaction,
+        #         strokes,
+        #         stroke_alpha=2 * step / chunk_size,
+        #         show_live=False,
+        #         chunk_size=chunk_size,
+        #         id=f"{start}",
+        #         copy_to_main=False,
+        #     )
+
     save_object_to_file(candidate_cache_file, candidate_cache)
 
     for segment in strokes:
@@ -2619,7 +2745,6 @@ def find_segments(reaction, chunk_size, step, peak_tolerance):
         if len(segment["strokes"]) < 4:
             segment["pruned"] = True
 
-    # splay_paint(reaction, strokes, stroke_alpha=step/chunk_size, show_live=False, chunk_size=chunk_size)
     return [stroke for stroke in strokes if not stroke["pruned"]]
 
 
@@ -2776,50 +2901,100 @@ def compress_segments(match_segments):
 # Drawing
 
 
+def get_paint_portfolio_path(reaction, chunk_size):
+    paint_portfolio = os.path.join(
+        conf.get("temp_directory"),
+        f"{reaction.get('channel')}-paintings-{int(chunk_size/sr)}",
+    )
+    if not os.path.exists(paint_portfolio):
+        os.makedirs(paint_portfolio)
+
+    return paint_portfolio
+
+
+import shutil
+
+
 def splay_paint(
     reaction,
     strokes,
     stroke_alpha,
-    done=False,
+    chunk_size,
+    draw_intercept=False,
     show_live=True,
     paths=None,
-    chunk_size=None,
+    best_path=None,
+    id="",
+    copy_to_main=True,
+    stroke_color="blue",
+    stroke_linewidth=2,
 ):
-    plt.figure(figsize=(20, 10))
+    paint_portfolio = get_paint_portfolio_path(reaction, chunk_size)
+    plot_fname = os.path.join(
+        paint_portfolio, f"{reaction.get('channel')}-painting-{id}.png"
+    )
+
+    # if os.path.exists(plot_fname):
+    #     return
+
+    fig = plt.figure(figsize=(20, 10))
+
+    ax = fig.gca()
+    ax.set_xlim(left=0)
+    ax.set_ylim(bottom=0)
 
     # Creating the first plot
-    plt.subplot(1, 2, 1)
+    if draw_intercept:
+        plt.subplot(1, 2, 1)
 
-    plt.title(f"Path painting of {reaction.get('channel')} / {conf.get('song_key')}")
+    plt.title(
+        f"Alignment painting for {reaction.get('channel')} / {conf.get('song_key')}",
+        fontsize="xx-large",
+        pad=12,
+        fontdict={"fontweight": "bold"},
+    )
 
     draw_strokes(
         reaction,
         chunk_size,
         strokes,
         stroke_alpha,
+        stroke_color=stroke_color,
+        stroke_linewidth=stroke_linewidth,
         paths=paths,
+        best_path=best_path,
         intercept_based_figure=False,
     )
 
-    plt.subplot(1, 2, 2)
+    if draw_intercept:
+        plt.subplot(1, 2, 2)
 
-    draw_strokes(
-        reaction,
-        chunk_size,
-        strokes,
-        stroke_alpha,
-        paths=paths,
-        intercept_based_figure=True,
-    )
+        draw_strokes(
+            reaction,
+            chunk_size,
+            strokes,
+            stroke_alpha,
+            stroke_color=stroke_color,
+            stroke_linewidth=stroke_linewidth,
+            paths=paths,
+            best_path=best_path,
+            intercept_based_figure=True,
+        )
 
-    plt.tight_layout()
+        plt.tight_layout()
 
     # Save the plot instead of displaying it
-    filename = os.path.join(
-        conf.get("temp_directory"),
-        f"{reaction.get('channel')}-painting-{int(chunk_size/sr)}.png",
-    )
-    plt.savefig(filename, dpi=300)
+
+    plt.savefig(plot_fname, dpi=300)
+
+    if copy_to_main:
+        # Easy access to last one
+        filename = os.path.join(
+            conf.get("temp_directory"),
+            f"{reaction.get('channel')}-painting-{int(chunk_size/sr)}.png",
+        )
+
+        shutil.copyfile(plot_fname, filename)
 
     if show_live:
         plt.show()
@@ -2828,7 +3003,15 @@ def splay_paint(
 
 
 def draw_strokes(
-    reaction, chunk_size, strokes, stroke_alpha, paths, intercept_based_figure=False
+    reaction,
+    chunk_size,
+    strokes,
+    stroke_alpha,
+    paths,
+    best_path=None,
+    stroke_linewidth=2,
+    stroke_color="blue",
+    intercept_based_figure=False,
 ):
     alignment_bounds = reaction["alignment_bounds"]
     if len(alignment_bounds) > 0:
@@ -2854,21 +3037,26 @@ def draw_strokes(
     for segment in strokes:
         # if not segment.get('pruned', False) and 'old_end_points' in segment:
         if segment.get("pruned", False):
-            alpha = 0.2
+            alpha = 0.25
+            color = "black"
+            linewidth = stroke_linewidth / 2
         else:
-            alpha = 1
-        make_stroke(
-            segment.get("old_end_points", segment["end_points"]),
-            linewidth=2,
-            color="orange",
-            alpha=alpha,
-            intercept_based_figure=intercept_based_figure,
-        )
+            alpha = stroke_alpha
+            color = stroke_color
+            linewidth = stroke_linewidth
+
+            make_stroke(
+                segment.get("old_end_points", segment["end_points"]),
+                linewidth=linewidth,
+                color="orange",
+                alpha=alpha,
+                intercept_based_figure=intercept_based_figure,
+            )
 
         make_stroke(
-            segment.get("end_points", segment["end_points"]),
-            linewidth=2,
-            color="blue",
+            segment.get("end_points"),
+            linewidth=linewidth,
+            color=color,
             alpha=alpha,
             intercept_based_figure=intercept_based_figure,
         )
@@ -2881,68 +3069,81 @@ def draw_strokes(
 
     #         # make_stroke(segment['end_points'], linewidth=1, color='blue', alpha = 1, intercept_based_figure=intercept_based_figure)
 
+    if best_path is not None:
+        visualize_candidate_path(
+            best_path,
+            intercept_based_figure=intercept_based_figure,
+            color="green",
+            linewidth=8,
+        )
+
     if paths is not None:
         for path in paths:
             visualize_candidate_path(
-                path, intercept_based_figure=intercept_based_figure
+                path,
+                intercept_based_figure=intercept_based_figure,
+                linewidth=2,
+                color="orange",
             )
 
-    # Find the min and max values of base_ts for the width of the chart
-    x_min = min(base_ts)
-    x_max = max(base_ts)
-    alignment_bound_linewidth = 2
-    for xx, c in alignment_bounds:
-        c /= sr  # Calculate the y-intercept
-        if intercept_based_figure:
-            plt.plot(
-                [x_min, xx / sr],
-                [c, c],
-                linewidth=alignment_bound_linewidth,
-                alpha=1,
-                color="black",
-            )  # Plot the line using the y = mx + c equation
-        else:
-            plt.plot(
-                [x_min, xx / sr],
-                [x_min + c, xx / sr + c],
-                linewidth=alignment_bound_linewidth,
-                alpha=1,
-                color="black",
-            )  # Plot the line using the y = mx + c equation
+    # Draw the alignment bounds
+    if not GENERATE_FULL_ALIGNMENT_VIDEO:
+        # Find the min and max values of base_ts for the width of the chart
+        x_min = min(base_ts)
+        x_max = max(base_ts)
+        alignment_bound_linewidth = 2
+        for xx, c in alignment_bounds:
+            c /= sr  # Calculate the y-intercept
+            if intercept_based_figure:
+                plt.plot(
+                    [x_min, xx / sr],
+                    [c, c],
+                    linewidth=alignment_bound_linewidth,
+                    alpha=1,
+                    color="black",
+                )  # Plot the line using the y = mx + c equation
+            else:
+                plt.plot(
+                    [x_min, xx / sr],
+                    [x_min + c, xx / sr + c],
+                    linewidth=alignment_bound_linewidth,
+                    alpha=1,
+                    color="black",
+                )  # Plot the line using the y = mx + c equation
 
-    lower_bounds = get_lower_bounds(reaction, chunk_size)
-    for xx, c in lower_bounds:
-        c /= sr
-        if intercept_based_figure:
-            plt.plot(
-                [xx / sr, x_max],
-                [c - xx / sr, c - xx / sr],
-                linewidth=alignment_bound_linewidth,
-                alpha=1,
-                color="red",
-            )  # Plot the line using the y = mx + c equation
-        else:
-            plt.plot(
-                [xx / sr, x_max],
-                [c, c + (x_max - xx / sr)],
-                linewidth=alignment_bound_linewidth,
-                alpha=1,
-                color="red",
-            )  # Plot the line using the y = mx + c equation
+        lower_bounds = get_lower_bounds(reaction, chunk_size)
+        for xx, c in lower_bounds:
+            c /= sr
+            if intercept_based_figure:
+                plt.plot(
+                    [xx / sr, x_max],
+                    [c - xx / sr, c - xx / sr],
+                    linewidth=alignment_bound_linewidth,
+                    alpha=1,
+                    color="red",
+                )  # Plot the line using the y = mx + c equation
+            else:
+                plt.plot(
+                    [xx / sr, x_max],
+                    [c, c + (x_max - xx / sr)],
+                    linewidth=alignment_bound_linewidth,
+                    alpha=1,
+                    color="red",
+                )  # Plot the line using the y = mx + c equation
 
     x = conf.get("song_audio_data")
     y = reaction.get("reaction_audio_data")
 
     if intercept_based_figure:
-        plt.ylabel("React Audio intercept [s]")
+        plt.ylabel("React Audio intercept [s]", fontsize="x-large", labelpad=24)
         # plt.yticks(np.arange(0, max(intercepts) / sr + 30, 30))
         plt.yticks(np.arange(0, max(y) / sr + 30, 30))
 
     else:
-        plt.ylabel("Time in React Audio [s]")
+        plt.ylabel("Reaction Audio (sec)", fontsize="x-large", labelpad=24)
         plt.yticks(np.arange(0, len(y) / sr + 30, 30))
 
-    plt.xlabel("Time in Base Audio [s]")
+    plt.xlabel("Song Audio (sec)", fontsize="x-large", labelpad=24)
     plt.xticks(np.arange(0, len(x) / sr + 30, 30))
 
     plt.grid(True)
@@ -2978,7 +3179,7 @@ def make_stroke(stroke, color=None, linewidth=1, alpha=1, intercept_based_figure
 
 
 def visualize_candidate_path(
-    path, color=None, linewidth=1, alpha=1, intercept_based_figure=False
+    path, color=None, linewidth=4, alpha=1, intercept_based_figure=False
 ):
     segment_color = color
     for i, segment in enumerate(path):
@@ -2995,10 +3196,11 @@ def visualize_candidate_path(
             ) = segment
 
         if color is None:
-            segment_color = "green"
+            segment_color = "blue"
             if filler:
                 segment_color = "turquoise"
 
+        # draw vertical dashed line connecting segments
         if i > 0:
             if len(previous_segment) == 5:
                 (
@@ -3027,7 +3229,7 @@ def visualize_candidate_path(
                     ],
                     color=segment_color,
                     linestyle="dashed",
-                    linewidth=linewidth,
+                    linewidth=1,
                     alpha=alpha,
                 )
             else:
@@ -3036,10 +3238,11 @@ def visualize_candidate_path(
                     [last_reaction_end / sr, reaction_start / sr],
                     color=segment_color,
                     linestyle="dashed",
-                    linewidth=linewidth,
+                    linewidth=1,
                     alpha=alpha,
                 )
 
+        # draw horizontal segment
         if intercept_based_figure:
             plt.plot(
                 [current_start / sr, current_end / sr],
@@ -3077,3 +3280,37 @@ def print_prune_data():
         x.add_row(["\t", k, v])
 
     print(x)
+
+
+def compile_images_to_video(img_dir, video_filename, FPS=5):
+    import cv2
+
+    images = sorted(
+        [
+            os.path.join(img_dir, img)
+            for img in os.listdir(img_dir)
+            if img.endswith(".png")
+        ],
+        key=lambda t: os.stat(t).st_mtime,  # sort by date modified (ascending)
+    )
+    if not images:
+        raise ValueError("No images found in the specified directory!")
+
+    # Find out the frame width and height from the first image
+    frame = cv2.imread(images[0])
+    h, w, layers = frame.shape
+    size = (w, h)
+
+    # Define the codec and create VideoWriter object
+    out = cv2.VideoWriter(
+        os.path.join(img_dir, video_filename),
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        FPS,
+        size,
+    )  # 1 FPS
+
+    for i in range(len(images)):
+        img = cv2.imread(images[i])
+        out.write(img)
+
+    out.release()
