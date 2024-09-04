@@ -412,14 +412,22 @@ def download_included_reactions(song_directory, artist, song):
         output = os.path.join(full_reactions_path, channel + ".webm")
         extracted_output = os.path.join(full_reactions_path, channel + ".mp4")
 
+        weird_output = os.path.join(full_reactions_path, channel + ".webm.mp4")
+        if os.path.exists(weird_output):
+            os.rename(weird_output, extracted_output)
+
         if not os.path.exists(output) and not os.path.exists(extracted_output):
-            cmd = f'yt-dlp -o "{output}" https://www.youtube.com/watch\?v\={v_id}\;'
+            cmd = f'yt-dlp -o "{output}" -S vcodec:h264,res,acodec:m4a https://www.youtube.com/watch\?v\={v_id}\;'
             # print(cmd)
 
             try:
                 subprocess.run(cmd, shell=True, check=True)
             except:
                 print(f"Failed to download {output} {cmd}")
+
+            weird_output = os.path.join(full_reactions_path, channel + ".webm.mp4")
+            if os.path.exists(weird_output):
+                os.rename(weird_output, extracted_output)
 
         # Get all reaction video files
         mkv_videos = glob.glob(os.path.join(full_reactions_path, "*.mkv"))
