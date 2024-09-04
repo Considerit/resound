@@ -33,7 +33,18 @@ dom.INVENTORY = ->
     for filter in included_filters
       @local.included_filters[filter] = true
 
+
+  filtered_reactions = []
+  for reaction in reactions
+    if @local.channel_recommendation_filters[ channels[reaction.channelId]?.auto or '' ] && @local.included_filters[ reaction.download or false ]
+      if !@local.filter_channels || reaction.reactor.toLowerCase().indexOf(@local.filter_channels.toLowerCase()) > -1
+        filtered_reactions.push reaction
+
   DIV null,
+
+    H1 null, 
+      "#{filtered_reactions.length} Reactions"
+
     DIV null, 
       SPAN null,
         'sort: '
@@ -136,12 +147,10 @@ dom.INVENTORY = ->
       style:
         listStyle: 'none'
 
-      for reaction in reactions
-        if @local.channel_recommendation_filters[ channels[reaction.channelId]?.auto or '' ] && @local.included_filters[ reaction.download or false ]
-          if !@local.filter_channels || reaction.reactor.toLowerCase().indexOf(@local.filter_channels.toLowerCase()) > -1
-            MANIFEST_ITEM
-              song: song
-              reaction: reaction
+      for reaction in filtered_reactions
+        MANIFEST_ITEM
+          song: song
+          reaction: reaction
 
 dom.MANIFEST_ITEM = ->
   reaction = @props.reaction
