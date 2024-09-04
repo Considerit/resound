@@ -6,6 +6,7 @@ from aligner.find_segment_start import (
     initialize_segment_start_cache,
     score_start_candidates,
     correct_peak_index,
+    seconds_to_timestamp,
 )
 from aligner.find_segment_end import find_segment_end, initialize_segment_end_cache
 from aligner.scoring_and_similarity import (
@@ -30,7 +31,7 @@ import math
 
 
 GENERATE_FULL_ALIGNMENT_VIDEO = (
-    True  # This was originally created for the how-I-make-these-concerts video
+    False  # This was originally created for the how-I-make-these-concerts video
 )
 
 
@@ -256,15 +257,17 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
         reaction,
         consolidated_segments,
         stroke_alpha=1,
+        stroke_color="gray",
         show_live=False,
         best_path=best_path,
         chunk_size=chunk_size,
         id="finished",
     )
 
-    compile_images_to_video(
-        get_paint_portfolio_path(reaction, chunk_size), "video.mp4", FPS=5
-    )
+    if GENERATE_FULL_ALIGNMENT_VIDEO:
+        compile_images_to_video(
+            get_paint_portfolio_path(reaction, chunk_size), "video.mp4", FPS=5
+        )
 
     return best_path
 
@@ -1501,6 +1504,20 @@ def construct_all_paths(
         if score > 0.9 * best_score_cache["best_overall_score"]:
             paths.append(completed_path)
 
+        if GENERATE_FULL_ALIGNMENT_VIDEO:
+            splay_paint(
+                reaction,
+                segments,
+                stroke_alpha=1,
+                stroke_color="gray",
+                stroke_linewidth=1,
+                show_live=False,
+                # best_path=best_score_cache.get("best_overall_path", None),
+                paths=[completed_path],
+                chunk_size=chunk_size,
+                id=f"path-completed-{hash( tuple (  [tuple(t) for t in completed_path]       )     )}",
+            )
+
     for c in segments:
         if c.get("pruned", False):
             continue
@@ -1605,7 +1622,7 @@ def construct_all_paths(
             reaction, partial_path[0], song_length, score, threshold_base=threshold_base
         )
 
-        if GENERATE_FULL_ALIGNMENT_VIDEO:
+        if False and GENERATE_FULL_ALIGNMENT_VIDEO:
             splay_paint(
                 reaction,
                 segments,
@@ -1613,7 +1630,7 @@ def construct_all_paths(
                 stroke_color="gray",
                 stroke_linewidth=1,
                 show_live=False,
-                best_path=best_score_cache.get("best_overall_path", None),
+                # best_path=best_score_cache.get("best_overall_path", None),
                 paths=[partial_path[0]],
                 chunk_size=chunk_size,
                 id=f"path-test-{i}",
@@ -2498,6 +2515,7 @@ def get_candidate_starts(
             peak_indices[signal] = new_candidates
 
     candidates = score_start_candidates(
+        reaction=reaction,
         signals=signals,
         peak_indices=peak_indices,
         open_chunk=signals[evaluate_with][2],
@@ -2585,9 +2603,11 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
         upper_bound = len(reaction_audio) - len(base_audio)
         if str(start) not in candidate_cache:
             # print(f"START NOT IN CACHE {str(start) in candidate_cache} {start} {str(start)}")
+
             upper_bound = get_bound(
                 alignment_bounds, start, reaction_span - (len(base_audio) - start)
             )
+            # upper_bound = len(reaction_audio)  # comment this in if you want an unbounded painting (e.g. for the making-of video)
 
             signals, evaluate_with = get_signals(
                 reaction, start, reaction_start, chunk_size
@@ -2631,7 +2651,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
 
         already_matched = {}
         active_strokes.sort(key=lambda x: x["end_points"][2])
-        for i, segment in enumerate(active_strokes):
+        for segment in active_strokes:
             best_match = None
             best_match_overlap = None
 
@@ -2670,7 +2690,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
 
                 already_matched[new_stroke[0]] = True
 
-        if save_to_file:
+        if save_to_file or i == len(starting_points) - 1:
             for y1 in candidates:
                 all_candidates.append(
                     {
@@ -2697,7 +2717,7 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
                 stroke_color="blue",
                 show_live=False,
                 chunk_size=chunk_size,
-                id=f"{start}",
+                id=f"stroke-{start}",
                 copy_to_main=False,
             )
 
@@ -2904,7 +2924,7 @@ def compress_segments(match_segments):
 def get_paint_portfolio_path(reaction, chunk_size):
     paint_portfolio = os.path.join(
         conf.get("temp_directory"),
-        f"{reaction.get('channel')}-paintings-{int(chunk_size/sr)}",
+        f"{reaction.get('channel')}-painting-{int(chunk_size/sr)}",
     )
     if not os.path.exists(paint_portfolio):
         os.makedirs(paint_portfolio)
@@ -2934,10 +2954,11 @@ def splay_paint(
         paint_portfolio, f"{reaction.get('channel')}-painting-{id}.png"
     )
 
-    # if os.path.exists(plot_fname):
-    #     return
+    if os.path.exists(plot_fname):
+        return
 
     fig = plt.figure(figsize=(20, 10))
+    plt.style.use("dark_background")
 
     ax = fig.gca()
     ax.set_xlim(left=0)
@@ -3135,18 +3156,30 @@ def draw_strokes(
     y = reaction.get("reaction_audio_data")
 
     if intercept_based_figure:
-        plt.ylabel("React Audio intercept [s]", fontsize="x-large", labelpad=24)
-        # plt.yticks(np.arange(0, max(intercepts) / sr + 30, 30))
-        plt.yticks(np.arange(0, max(y) / sr + 30, 30))
+        ylabel = "React Audio intercept"
+    else:
+        ylabel = "Reaction Audio"
+
+    plt.ylabel(ylabel, fontsize="x-large", labelpad=24)
+    plt.xlabel("Song Audio", fontsize="x-large", labelpad=24)
+
+    if GENERATE_FULL_ALIGNMENT_VIDEO:
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+
+        major_ticks = np.arange(0, len(x) / sr + 30, 30)
+        x_labels = [seconds_to_timestamp(x) for x in major_ticks]
+        plt.xticks(ticks=major_ticks, labels=x_labels)
+
+        major_ticks = np.arange(0, len(y) / sr + 30, 30)
+        y_labels = [seconds_to_timestamp(y) for y in major_ticks]
+        plt.yticks(ticks=major_ticks, labels=y_labels)
 
     else:
-        plt.ylabel("Reaction Audio (sec)", fontsize="x-large", labelpad=24)
+        plt.xticks(np.arange(0, len(x) / sr + 30, 30))
         plt.yticks(np.arange(0, len(y) / sr + 30, 30))
 
-    plt.xlabel("Song Audio (sec)", fontsize="x-large", labelpad=24)
-    plt.xticks(np.arange(0, len(x) / sr + 30, 30))
-
-    plt.grid(True)
+    plt.grid(True, color=(0.35, 0.35, 0.35))
 
 
 def make_stroke(stroke, color=None, linewidth=1, alpha=1, intercept_based_figure=False):
@@ -3282,7 +3315,7 @@ def print_prune_data():
     print(x)
 
 
-def compile_images_to_video(img_dir, video_filename, FPS=5):
+def compile_images_to_video(img_dir, video_filename, FPS=10):
     import cv2
 
     images = sorted(
@@ -3309,8 +3342,17 @@ def compile_images_to_video(img_dir, video_filename, FPS=5):
         size,
     )  # 1 FPS
 
-    for i in range(len(images)):
-        img = cv2.imread(images[i])
-        out.write(img)
+    for img_path in images:
+        img = cv2.imread(img_path)
+
+        if "stroke" in img_path:
+            times = 1
+        elif "path-test" in img_path:
+            times = FPS
+        else:
+            times = 2 * FPS
+
+        for i in range(times):
+            out.write(img)
 
     out.release()

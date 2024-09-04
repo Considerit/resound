@@ -53,6 +53,9 @@ def initialize_segment_start_cache(reaction):
 
 # TODO:
 #   - ditch the open chunk / closed chunk and use song / reaction
+from scipy.signal import correlate, find_peaks
+
+
 def find_segment_starts(
     reaction,
     open_chunk,
@@ -163,6 +166,7 @@ def find_segment_starts(
 
 # peak_indices is a dictionary, with indicies for each signal. Each signal has peak indicies and the overall correlation
 def score_start_candidates(
+    reaction,
     signals,
     open_chunk,
     closed_chunk,
@@ -312,6 +316,7 @@ def score_start_candidates(
 
     # Helps us examine how the system is perceiving candidate starting locations
     plot_candidate_starting_locations(
+        reaction,
         peak_indices,
         scores_at_index,
         candidates,
@@ -328,6 +333,7 @@ def score_start_candidates(
 
 # This function still needs to be refactored
 def plot_candidate_starting_locations(
+    reaction,
     peak_indices,
     scores_at_index,
     candidates,
@@ -339,6 +345,7 @@ def plot_candidate_starting_locations(
     has_point_of_interest = False
 
     points_of_interest = [
+        # (abs(closed_start - 146.9 * sr) < 2 * sr and open_start < 600 * sr),
         # (abs(closed_start - 146.9 * sr) < 2 * sr and open_start < 600 * sr),
         # (abs(closed_start - 149 * sr) < 1 * sr and open_start > 620 * sr and open_start < 650 * sr),
         # (abs(closed_start - 33.6 * sr) < 2 * sr) # and open_start < 400 * sr),
@@ -361,30 +368,41 @@ def plot_candidate_starting_locations(
     for pi in points_of_interest:
         has_point_of_interest = has_point_of_interest or pi
 
-    if not has_point_of_interest:
+    GENERATE_FOR_MAKING_OF = False
+
+    if not has_point_of_interest and not GENERATE_FOR_MAKING_OF:
         return
+
+    hop_length = conf.get("hop_length")
 
     metrics = ("mfcc_mse_score", "mfcc_cosine_score", "composite_score")
     signals = peak_indices.keys()
     num_metrics = len(metrics)
     num_signals = len(signals)
 
+    if GENERATE_FOR_MAKING_OF:
+        num_metrics = 0
+        num_signals = 1
+
     screen_width = get_screen_width()
+    screen_height = get_screen_height()
 
     if screen_width:
         width_per_plot = 0.9 * screen_width / max(num_signals, num_metrics)
     else:
         width_per_plot = 5  # Default if unable to determine screen width
 
-    total_width = max(num_signals, num_metrics) * width_per_plot
-    total_height = (
-        2 * height_per_plot
-    )  # Since there are always 2 rows (signals and metrics)
+    total_width = 20  # max(num_signals, num_metrics) * width_per_plot
 
-    plt.figure(figsize=(total_width, total_height))
-    plt.title(f"For song start @ {closed_start / sr}")
+    total_height = 12  # 0.9 * screen_height / max(num_signals, num_metrics)
 
-    x_values = [(x + open_start) / sr for x in range(len(correlation))]
+    fig = plt.figure(figsize=(total_width, total_height))
+    plt.style.use("dark_background")
+
+    fig.patch.set_facecolor((0, 0, 0))
+    fig.tight_layout()
+
+    fig.suptitle(f"For song start @ {closed_start / sr}")
 
     all_candidate_indicies = scores_at_index.keys()
 
@@ -392,32 +410,71 @@ def plot_candidate_starting_locations(
     for idx, (signal, (candidate_indicies, correlation, __)) in enumerate(
         peak_indices.items()
     ):
-        plt.subplot(2, max(num_signals, num_metrics), idx + 1)
-        plt.title(signal)
+        if GENERATE_FOR_MAKING_OF and idx > 0:
+            continue
 
-        plt.plot(x_values, correlation)
+        ax = plt.subplot(
+            2 if not GENERATE_FOR_MAKING_OF else 4,
+            max(num_signals, num_metrics),
+            idx + 1,
+        )
+        ax.set_facecolor((0, 0, 0))
 
-        plt.scatter(
-            [int(c[1] / sr + open_start / sr) for c in all_candidate_indicies],
-            [scores_at_index[c[1]][4][signal] for c in all_candidate_indicies],
-            color="blue",
-        )
-        plt.scatter(
-            [int(c[1] / sr + open_start / sr) for c in candidate_indicies],
-            [scores_at_index[c[1]][4][signal] for c in candidate_indicies],
-            color="purple",
-        )
-        plt.scatter(
-            [int(c / sr + open_start / sr) for c in candidates],
-            [scores_at_index[c][4][signal] for c in candidates],
-            color="green",
+        if not GENERATE_FOR_MAKING_OF:
+            ax.set_title(signal)
+
+        if "mfcc" in signal:
+            x_values = np.arange(len(correlation)) * hop_length / sr + open_start / sr
+
+        else:
+            x_values = [(x + open_start) / sr for x in range(len(correlation))]
+
+        if not GENERATE_FOR_MAKING_OF:
+            plt.scatter(
+                [c / sr + open_start / sr + 3 for c in all_candidate_indicies],
+                [scores_at_index[c][4][signal] for c in all_candidate_indicies],
+                color="blue",
+            )
+            plt.scatter(
+                [c[1] / sr + open_start / sr + 3 for c in candidate_indicies],
+                [scores_at_index[c[1]][4][signal] for c in candidate_indicies],
+                color="purple",
+            )
+
+            plt.scatter(
+                [c[0] / sr + open_start / sr + 3 for c in candidates],
+                [scores_at_index[c[0]][4][signal] for c in candidates],
+                color="green",
+            )
+
+        for c in candidates:
+            print(
+                "candidate: ",
+                c[0] / sr + open_start / sr,
+                scores_at_index[c[0]][4][signal],
+            )
+        plt.plot(
+            x_values,
+            correlation,
+            linewidth=0.25,
+            color=(97 / 255, 126 / 255, 252 / 255),
         )
 
-        plt.axhline(
-            y=max_scores[signal] * thresholds[signal], color="b", linestyle="--"
-        )
-        plt.xlabel("Time (s)")
-        plt.grid(True)  # Adds grid lines
+        if not GENERATE_FOR_MAKING_OF:
+            plt.axhline(y=thresholds[signal], color="b", linestyle="--")
+
+        plt.yticks([])
+
+        major_ticks = plt.gca().get_xticks()
+        x_labels = [seconds_to_timestamp(x) for x in major_ticks]
+        plt.xticks(ticks=major_ticks, labels=x_labels)
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+
+        plt.xlabel("Reaction Time (s)", fontsize="x-large", labelpad=24)
+        plt.ylabel("Correlation", fontsize="x-large", labelpad=24)
+        if not GENERATE_FOR_MAKING_OF:
+            plt.grid(True, color=(0.35, 0.35, 0.35))  # Adds grid lines
 
         plt.xlim(left=open_start / sr, right=x_values[-1])
 
@@ -430,28 +487,125 @@ def plot_candidate_starting_locations(
     #     plt.scatter(x_values[adjusted_mfcc_peaks_for_plot], [normalized_aggregate_mfcc_correlation[p] for p in adjusted_mfcc_peaks_for_plot], color='green')
 
     # Iterate through metrics and plot them
-    for idx, metric in enumerate(metrics):
-        plt.subplot(2, max(num_signals, num_metrics), num_signals + idx + 1)
-        plt.title(metric)
 
-        plt.scatter(
-            [int(c[1] / sr + open_start / sr) for c in all_candidate_indicies],
-            [scores_at_index[c[1]][idx] for c in scores],
-            color="red",
+    if not GENERATE_FOR_MAKING_OF:
+        for idx, metric in enumerate(metrics):
+            ax = plt.subplot(
+                2,
+                max(num_signals, num_metrics),
+                max(num_signals, num_metrics) + idx + 1,
+            )
+
+            ax.set_facecolor((0, 0, 0))
+
+            ax.set_title(metric)
+
+            plt.scatter(
+                [c / sr + open_start / sr for c in all_candidate_indicies],
+                [scores_at_index[c][idx] for c in all_candidate_indicies],
+                color="red",
+            )
+
+            plt.scatter(
+                [c[0] / sr + open_start / sr for c in candidates],
+                [scores_at_index[c[0]][idx] for c in candidates],
+                color="green",
+            )
+
+            plt.xlim(left=open_start / sr, right=x_values[-1])
+            plt.ylim(bottom=0)
+
+            plt.xlabel("Time (s)")
+            plt.grid(True)  # Adds grid lines
+    else:
+        # reaction audio waveform
+        ax = plt.subplot(
+            4,
+            1,
+            2,
         )
-        plt.scatter(
-            [int(c / sr + open_start / sr) for c in candidates],
-            [scores_at_index[c][idx] for c in candidates],
-            color="green",
+        x_values = [(x) / sr for x in range(len(reaction.get("reaction_audio_data")))]
+
+        plt.yticks([])
+        plt.plot(x_values, reaction.get("reaction_audio_data"), linewidth=0.025)
+
+        major_ticks = plt.gca().get_xticks()
+        x_labels = [seconds_to_timestamp(x) for x in major_ticks]
+        plt.xticks(ticks=major_ticks, labels=x_labels)
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+
+        reaction_time = x_values[-1]
+        plt.xlim(left=0 / sr, right=reaction_time)
+
+        # song audio waveform
+        ax = plt.subplot(
+            4,
+            1,
+            3,
         )
 
-        plt.xlim(left=open_start / sr, right=x_values[-1])
-        plt.ylim(bottom=0)
+        x_values = [(x) / sr for x in range(len(conf.get("song_audio_data")))]
 
-        plt.xlabel("Time (s)")
-        plt.grid(True)  # Adds grid lines
+        plt.yticks([])
+        plt.plot(
+            x_values,
+            conf.get("song_audio_data"),
+            linewidth=0.025,
+            color=(166 / 255, 142 / 255, 213 / 255),
+        )
+
+        major_ticks = plt.gca().get_xticks()
+        x_labels = [seconds_to_timestamp(x) for x in major_ticks]
+        plt.xticks(ticks=major_ticks, labels=x_labels)
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+
+        plt.xlim(left=0 / sr, right=reaction_time)
+        plt.ylim(top=1.75, bottom=-1.75)
+
+        # 3-min chunk song audio waveform
+        ax = plt.subplot(
+            4,
+            1,
+            4,
+        )
+
+        song_audio = conf.get("song_audio_data")
+        chunk_audio = song_audio[sr : 4 * sr]
+        x_values = [(x) / sr for x in range(len(chunk_audio))]
+
+        plt.yticks([])
+        plt.plot(
+            x_values,
+            chunk_audio,
+            linewidth=0.025,
+            color=(166 / 255, 142 / 255, 213 / 255),
+        )
+
+        major_ticks = plt.gca().get_xticks()
+        x_labels = [seconds_to_timestamp(x) for x in major_ticks]
+        plt.xticks(ticks=major_ticks, labels=x_labels)
+        plt.gca().spines["top"].set_visible(False)
+        plt.gca().spines["right"].set_visible(False)
+
+        plt.xlim(left=-1, right=4)
+        plt.ylim(top=0.5, bottom=-0.5)
+
+        plt.savefig("cross-correlation.pdf")
 
     plt.show()
+
+
+def seconds_to_timestamp(seconds):
+    minutes = seconds // 60
+    remaining_seconds = seconds % 60
+    if remaining_seconds == 0:
+        padded_secs = "00"
+    else:
+        padded_secs = f"{remaining_seconds:02}"
+
+    return f"{int(minutes)}:{padded_secs}".split(".")[0]
 
 
 from screeninfo import get_monitors
@@ -461,4 +615,11 @@ def get_screen_width():
     monitors = get_monitors()
     if monitors:
         return monitors[0].width
+    return None
+
+
+def get_screen_height():
+    monitors = get_monitors()
+    if monitors:
+        return monitors[0].height
     return None
