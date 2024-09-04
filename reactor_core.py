@@ -86,6 +86,9 @@ def clean_up(song_def, on_ice=False):
         f"{song_directory}/bounded/*CROSS-EXPANDER*.mp4", recursive=True
     )
     mp4_files = mp4_files + glob.glob(
+        f"{song_directory}/bounded/*-aside-*.mp4", recursive=True
+    )
+    mp4_files = mp4_files + glob.glob(
         f"{song_directory}/reactions/*.mp4", recursive=True
     )
 
@@ -481,13 +484,22 @@ if __name__ == "__main__":
             loaded.append(defn)
         return loaded
 
-    from library import songs, drafts, refresh_manifest, finished, put_on_ice
+    from library import (
+        songs,
+        drafts,
+        refresh_manifest,
+        finished,
+        put_on_ice,
+        process_transcripts,
+    )
 
     songs = load_songs(songs)
     drafts = load_songs(drafts)
     refresh_manifest = load_songs(refresh_manifest)
     finished = load_songs(finished)
     put_on_ice = load_songs(put_on_ice)
+
+    process_transcripts = load_songs(process_transcripts)
 
     progress = {}
 
@@ -552,6 +564,14 @@ if __name__ == "__main__":
         )
         if len(failed) > 0:
             failures.append((song, failed))
+
+    for song in process_transcripts:
+        make_conf(song, options, results_output_dir)
+        conf.get("load_reactions")()
+
+        from transcription.transcribe_reaction import process_transcripts
+
+        process_transcripts()
 
     print(f"\n\nDone! {len(failures)} songs did not finish")
 

@@ -108,6 +108,7 @@ def make_conf(song_def, options, temp_directory):
             "include_base_video": include_base_video,
             "song_directory": song_directory,
             "reaction_directory": reaction_directory,
+            "transcription_directory": os.path.join(reaction_directory, "transcripts"),
             "compilation_path": compilation_path,
             "temp_directory": full_output_dir,
             "has_asides": None
@@ -213,15 +214,19 @@ def make_conf(song_def, options, temp_directory):
 
             if channel == "Resound":
                 channelId = "XXXXXX"
+                vid = None
+                reaction_manifest = {}
             else:
                 reaction_manifest = None
                 channelId = None
+                vid = None
                 for vidID, reaction_manifest in reactions_manifest.items():
                     reaction_file_prefix = reaction_manifest.get(
                         "file_prefix", reaction_manifest["reactor"]
                     )
                     if channel == reaction_file_prefix:
                         channelId = reaction_manifest.get("channelId")
+                        vid = vidID
                         break
 
             assert channelId is not None, channel
@@ -232,6 +237,7 @@ def make_conf(song_def, options, temp_directory):
             featured = channel in song_def.get("featured", [])
 
             reactions[channel] = {
+                "vid": vid,
                 "channel": channel,
                 "video_path": reaction_video_path,
                 "aligned_path": os.path.join(
@@ -343,8 +349,8 @@ def make_conf(song_def, options, temp_directory):
                 "views": reaction_manifest.get("views", 1),
             }
 
-        views = [0]
-        subscribers = [0]
+        views = [1]
+        subscribers = [1]
         for channel, reaction in reactions.items():
             views.append(metrics[channel]["views"])
             subscribers.append(metrics[channel]["subs"])
