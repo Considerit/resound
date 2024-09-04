@@ -250,7 +250,8 @@ bus = require('statebus').serve
       return {
         alignment: alignment_data,
         unaligned_segments: unaligned_segments,
-        keypoints: keypoints
+        keypoints: keypoints,
+        alignment_score: alignment_data.best_path_score[2]
       }
 
       

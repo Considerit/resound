@@ -658,12 +658,21 @@ dom.LIST_TOOL_BAR = ->
 
     BUTTON
       onClick: (e) => 
-        local.sort_by_marked = !local.sort_by_marked
+        local.filter_to_starred = !local.filter_to_starred
+        local.page = 0
+        save local
+
+      I
+        className: 'glyphicon glyphicon-star'
+
+    BUTTON
+      onClick: (e) => 
+        local.sort_by_alignment_score = !local.sort_by_alignment_score
+        local.page = 0
         save local
 
       I
         className: 'glyphicon glyphicon-exclamation-sign'
-
 
 
 
@@ -698,11 +707,15 @@ dom.REACTION_LIST = ->
 
 
 
-  if @local.sort_by_marked
+  if @local.filter_to_starred
     downloaded_reactions = (d for d in downloaded_reactions when d.marked)    
       # downloaded_reactions.sort( (a,b) -> marked_compare(a,b) )
     # else
-  downloaded_reactions.sort( (a,b) -> alphabetical_compare(a.reactor,b.reactor)     )
+
+  if @local.sort_by_alignment_score
+    downloaded_reactions.sort( (a,b) -> retrieve("/reaction_metadata/#{song}/#{a.id}").alignment_score - retrieve("/reaction_metadata/#{song}/#{b.id}").alignment_score     )
+  else
+    downloaded_reactions.sort( (a,b) -> alphabetical_compare(a.reactor,b.reactor)     )
 
   task = @props.task
 
@@ -739,7 +752,7 @@ dom.REACTION_LIST = ->
       for reaction, i in downloaded_reactions
         metadata = retrieve("/reaction_metadata/#{song}/#{reaction.id}")
         retrieve("/reaction/#{reaction.id}") # subscribe to updates to reaction
-        if metadata.alignment and i >= @local.per_page * @local.page and i <= @local.per_page * (@local.page + 1)
+        if metadata.alignment and i >= @local.per_page * @local.page and i < @local.per_page * (@local.page + 1)
           REACTION_ITEM
             key: "#{reaction.id}"
             song: song
@@ -834,6 +847,14 @@ dom.REACTION_ITEM = ->
         overflow: 'hidden'
         # height: 200
 
+      # if task == 'alignment'
+      #   SPAN 
+      #     style: 
+      #       color: '#555'
+      #       fontSize: 12
+
+      #     "#{Math.round(metadata.alignment_score)}"
+
       BUTTON 
         title: 'Sync media for this reaction'
         style:
@@ -924,7 +945,7 @@ dom.REACTION_ITEM = ->
           e.stopPropagation()
 
         I 
-          className: 'glyphicon glyphicon-exclamation-sign'
+          className: 'glyphicon glyphicon-star'
 
       
 
@@ -949,7 +970,7 @@ dom.REACTION_ITEM = ->
 
         reaction.reactor
 
-
+          
 
 
 
