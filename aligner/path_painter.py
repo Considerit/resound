@@ -1718,7 +1718,6 @@ def should_prune_path(reaction, path, song_length, score=None, threshold_base=0.
         and best_score_cache["best_overall_path"]
         and path_length > 2 * len(best_score_cache["best_overall_path"])
     ):
-        print("prune by path!")
         return True, score
 
     prune_for_location = should_prune_for_location(
@@ -2533,10 +2532,13 @@ def get_candidate_starts(
 def get_lower_bounds(reaction, chunk_size):
     manual_bounds = reaction.get("manual_bounds", None)
     lower_bounds = []
+    if reaction.get("start_reaction_search_at", None):
+        lower_bounds.append((0, reaction.get("start_reaction_search_at")))
+
     if manual_bounds:
         for mbound in manual_bounds:
             ts, upper = mbound
-            lower = upper - 2
+            lower = upper - 1.5
             ts = int(ts * sr)
             lower = int(lower * sr)  # + chunk_size / 2)
             lower_bounds.append((ts, lower))
@@ -2581,6 +2583,15 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
     )
 
     reaction_span = reaction.get("end_reaction_search_at", len(reaction_audio))
+
+    splay_paint(
+        reaction,
+        [],
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="bounds-only",
+    )
 
     all_candidates = []  # used only for painting full alignment
     for i, start in enumerate(starting_points):
@@ -2690,36 +2701,36 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
 
                 already_matched[new_stroke[0]] = True
 
-        if save_to_file or i == len(starting_points) - 1:
-            for y1 in candidates:
-                all_candidates.append(
-                    {
-                        "pruned": False,
-                        "end_points": (
-                            y1,
-                            y1 + chunk_size,
-                            start,
-                            start + chunk_size,
-                        ),
-                        "strokes": (
-                            y1,
-                            y1 + chunk_size,
-                            start,
-                            start + chunk_size,
-                        ),
-                    }
-                )
-
-            splay_paint(
-                reaction,
-                strokes=all_candidates,
-                stroke_alpha=step / chunk_size,
-                stroke_color="blue",
-                show_live=False,
-                chunk_size=chunk_size,
-                id=f"stroke-{start}",
-                copy_to_main=False,
+        for y1 in candidates:
+            all_candidates.append(
+                {
+                    "pruned": False,
+                    "end_points": (
+                        y1,
+                        y1 + chunk_size,
+                        start,
+                        start + chunk_size,
+                    ),
+                    "strokes": (
+                        y1,
+                        y1 + chunk_size,
+                        start,
+                        start + chunk_size,
+                    ),
+                }
             )
+
+            if save_to_file or i == len(starting_points) - 1:
+                splay_paint(
+                    reaction,
+                    strokes=all_candidates,
+                    stroke_alpha=step / chunk_size,
+                    stroke_color="blue",
+                    show_live=False,
+                    chunk_size=chunk_size,
+                    id=f"stroke-{start}",
+                    copy_to_main=False,
+                )
 
         for y1 in candidates:
             if y1 in already_matched:
@@ -2954,8 +2965,8 @@ def splay_paint(
         paint_portfolio, f"{reaction.get('channel')}-painting-{id}.png"
     )
 
-    if os.path.exists(plot_fname):
-        return
+    # if os.path.exists(plot_fname):
+    #     return
 
     fig = plt.figure(figsize=(20, 10))
     plt.style.use("dark_background")
@@ -3110,28 +3121,32 @@ def draw_strokes(
     # Draw the alignment bounds
     if not GENERATE_FULL_ALIGNMENT_VIDEO:
         # Find the min and max values of base_ts for the width of the chart
-        x_min = min(base_ts)
         x_max = max(base_ts)
-        alignment_bound_linewidth = 2
+        alignment_bound_linewidth = 0.5
+
+        # Upper bounds are red
         for xx, c in alignment_bounds:
             c /= sr  # Calculate the y-intercept
             if intercept_based_figure:
                 plt.plot(
-                    [x_min, xx / sr],
+                    [0, xx / sr],
                     [c, c],
                     linewidth=alignment_bound_linewidth,
                     alpha=1,
-                    color="black",
+                    color="red",
+                    linestyle="dotted",
                 )  # Plot the line using the y = mx + c equation
             else:
                 plt.plot(
-                    [x_min, xx / sr],
-                    [x_min + c, xx / sr + c],
+                    [0, xx / sr],
+                    [0 + c, xx / sr + c],
                     linewidth=alignment_bound_linewidth,
                     alpha=1,
-                    color="black",
+                    color="red",
+                    linestyle="dotted",
                 )  # Plot the line using the y = mx + c equation
 
+        # Lower bounds are green
         lower_bounds = get_lower_bounds(reaction, chunk_size)
         for xx, c in lower_bounds:
             c /= sr
@@ -3141,7 +3156,8 @@ def draw_strokes(
                     [c - xx / sr, c - xx / sr],
                     linewidth=alignment_bound_linewidth,
                     alpha=1,
-                    color="red",
+                    color="green",
+                    linestyle="dotted",
                 )  # Plot the line using the y = mx + c equation
             else:
                 plt.plot(
@@ -3149,7 +3165,8 @@ def draw_strokes(
                     [c, c + (x_max - xx / sr)],
                     linewidth=alignment_bound_linewidth,
                     alpha=1,
-                    color="red",
+                    color="green",
+                    linestyle="dotted",
                 )  # Plot the line using the y = mx + c equation
 
     x = conf.get("song_audio_data")
