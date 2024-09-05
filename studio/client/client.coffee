@@ -839,12 +839,16 @@ dom.REACTION_ITEM = ->
       margin: '4px 0'
       borderRadius: 16
       display: if hide_unselected and !@local.selected then 'none' else 'flex'
+    onDoubleClick: =>
+      @local.selected = !@local.selected
+      save @local
 
     DIV 
       style: 
         display: 'flex'
         width: 250
         overflow: 'hidden'
+        alignItems: 'center'
         # height: 200
 
       # if task == 'alignment'
@@ -855,108 +859,138 @@ dom.REACTION_ITEM = ->
 
       #     "#{Math.round(metadata.alignment_score)}"
 
-      BUTTON 
-        title: 'Sync media for this reaction'
-        style:
-          backgroundColor: 'transparent'
-          border: 'none'
-          outline: 'none'
-          cursor: 'pointer'
-          opacity: if @local.disable_sync then .5 else 1
 
-        onClick: => 
-          @local.disable_sync = !@local.disable_sync
-          save @local
+      DIV null,
 
-        I 
-          className: 'glyphicon glyphicon-link'
-
-
-      if task in ['alignment', 'reactors', 'backchannels', 'asides']
-        BUTTON
+        BUTTON 
+          title: 'Sync media for this reaction'
           style:
-            cursor: 'pointer'
-            border: 'none'
             backgroundColor: 'transparent'
+            border: 'none'
             outline: 'none'
-            margin: '0 4px'
-          onClick: =>
-            if task == 'alignment'
-              if confirm('Reset will delete all processed metadata for this reaction. You sure?')
-                action = 
-                  key: "/action/#{reaction.id}"
-                  action: 'delete'
-                  scope: 'alignment'
-                  reaction_id: reaction.id
-                  song: song
-                save action
-            else if task == 'reactors'
-              if confirm('Reset will delete all cropped reactor videos. You sure?')
-                action = 
-                  key: "/action/#{reaction.id}"
-                  action: 'delete'
-                  scope: 'cropped reactors'
-                  reaction_id: reaction.id
-                  song: song
+            cursor: 'pointer'
+            opacity: if @local.disable_sync then .5 else 1
 
-                if confirm('Redo coarse face tracking too? Cancel means just redo fine-grained tracking.')
-                  action.scope = 'cropped reactors including coarse'
+          onClick: => 
+            @local.disable_sync = !@local.disable_sync
+            save @local
+            e.stopPropagation()
 
-                save action
-            else if task == 'backchannels'
-              if confirm('Reset will delete isolated backchannel files. You sure?')
-                action = 
-                  key: "/action/#{reaction.id}"
-                  action: 'delete'
-                  scope: 'isolated backchannel'
-                  reaction_id: reaction.id
-                  song: song
-                save action
-            else if task == 'asides'
-              if confirm('Reset will delete all asides files for this reaction. You sure?')
-                action = 
-                  key: "/action/#{reaction.id}"
-                  action: 'delete'
-                  scope: 'asides'
-                  reaction_id: reaction.id
-                  song: song
-                save action
-
-          I
-            className: 'glyphicon glyphicon-refresh'
+          I 
+            className: 'glyphicon glyphicon-link'
 
 
-      BUTTON 
-        title: 'Mark reaction'
-        style:
-          backgroundColor: 'transparent'
-          border: 'none'
-          outline: 'none'
-          cursor: 'pointer'
-          opacity: if !reaction.marked then .5 else 1
 
-        onClick: (e) => 
-          reaction.marked = !reaction.marked
-          save {
-            key: "/reaction/#{reaction.id}",
-            reaction: reaction, 
-            song: song
-          }
-          e.stopPropagation()
 
-        I 
-          className: 'glyphicon glyphicon-star'
+        if task in ['alignment', 'reactors', 'backchannels', 'asides']
+          BUTTON
+            style:
+              cursor: 'pointer'
+              border: 'none'
+              backgroundColor: 'transparent'
+              outline: 'none'
+              margin: '0 4px'
+            onClick: (e) =>
+              if task == 'alignment'
+                if confirm('Reset will delete all processed metadata for this reaction. You sure?')
+                  action = 
+                    key: "/action/#{reaction.id}"
+                    action: 'delete'
+                    scope: 'alignment'
+                    reaction_id: reaction.id
+                    song: song
+                  save action
+              else if task == 'reactors'
+                if confirm('Reset will delete all cropped reactor videos. You sure?')
+                  action = 
+                    key: "/action/#{reaction.id}"
+                    action: 'delete'
+                    scope: 'cropped reactors'
+                    reaction_id: reaction.id
+                    song: song
 
-      
+                  if confirm('Redo coarse face tracking too? Cancel means just redo fine-grained tracking.')
+                    action.scope = 'cropped reactors including coarse'
+
+                  save action
+              else if task == 'backchannels'
+                if confirm('Reset will delete isolated backchannel files. You sure?')
+                  action = 
+                    key: "/action/#{reaction.id}"
+                    action: 'delete'
+                    scope: 'isolated backchannel'
+                    reaction_id: reaction.id
+                    song: song
+                  save action
+              else if task == 'asides'
+                if confirm('Reset will delete all asides files for this reaction. You sure?')
+                  action = 
+                    key: "/action/#{reaction.id}"
+                    action: 'delete'
+                    scope: 'asides'
+                    reaction_id: reaction.id
+                    song: song
+                  save action
+
+              e.stopPropagation()
+
+            I
+              className: 'glyphicon glyphicon-refresh'
+
+
+        BUTTON 
+          title: 'Mark reaction'
+          style:
+            backgroundColor: 'transparent'
+            border: 'none'
+            outline: 'none'
+            cursor: 'pointer'
+            opacity: if !reaction.marked then .5 else 1
+
+          onClick: (e) => 
+            reaction.marked = !reaction.marked
+            save {
+              key: "/reaction/#{reaction.id}",
+              reaction: reaction, 
+              song: song
+            }
+            e.stopPropagation()
+
+          I 
+            className: 'glyphicon glyphicon-star'
+
+        
+        if task == 'alignment' && @props.show_reaction
+          BUTTON 
+            title: 'Manual bind'
+            style:
+              backgroundColor: 'transparent'
+              border: 'none'
+              outline: 'none'
+              cursor: 'pointer'
+              opacity: if !reaction.marked then .5 else 1
+
+            onClick: (e) => 
+              song_time = retrieve("time-#{@local["video-0-time-key"]}").time
+              reaction_time = retrieve("time-#{@local["video-2-time-key"]}").time
+
+              if confirm("Bind #{reaction_time}s of the reaction to #{song_time}s of the song?")
+                song_config.config.manual_bounds ?= {}
+                song_config.config.manual_bounds[reaction.reactor] ?= []
+                song_config.config.manual_bounds[reaction.reactor].push( [song_time, reaction_time]  )
+                save(song_config)
+
+              e.stopPropagation()
+
+            I 
+              className: 'glyphicon glyphicon-resize-small'
+
 
 
       BUTTON
         onClick: => 
           navigator.clipboard.writeText(reaction.reactor)
-
-        onDoubleClick: =>
-          @local.selected = !@local.selected
-          save @local
+          e.stopPropagation()
 
 
         style: 
@@ -1029,11 +1063,12 @@ dom.REACTION_ITEM = ->
               task: task
               song: song
               reaction_file_prefix: reaction_file_prefix
-              onInitialize: do(idx) => (key) =>
+              onInitialize: do(idx) => (key, time_key) =>
                 @local["video-#{idx}-time-key"] = key
               onTimeClicked: do(idx) => (e, time) => 
                 @local["video-#{idx}-time"] = time
                 save @local
+
               onVideoClicked: (e) => 
                 if task == 'reactors'
                   x = event.offsetX
@@ -1446,7 +1481,7 @@ dom.TIME_DISPLAY = ->
     "#{time}"
 
 dom.TIME_DISPLAY.up = ->
-  @props.onInitialize?(@props.parent_key)
+  @props.onInitialize?(@props.parent_key, @props.time_state)
 
 
 
