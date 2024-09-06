@@ -190,19 +190,6 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
         id="consolidate-segments-3",
     )
 
-    # print("THIN CLUSTERS")
-
-    # pruned_segments = prune_low_quality_segments(reaction, pruned_segments)
-
-    # splay_paint(reaction, pruned_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
-    # if attempts % 3 == 0:
-    # print("PRUNE NEIGHBORS")
-
-    # prune_neighbors(reaction, pruned_segments, allowed_spacing)
-
-    # splay_paint(reaction, pruned_segments, stroke_alpha=.2, show_live=True, chunk_size=chunk_size)
-
     print("PRUNE UNREACHABLE2")
 
     pruned_segments, joinable_segment_map = prune_unreachable_segments(
@@ -251,6 +238,14 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
     micro_aligned = micro_align_path(reaction, best_path, segments_by_key)
 
     best_path = find_best_path(reaction, [best_path, micro_aligned])
+
+    # if the last segment of the best path is fill, replace it by extending the last good segment
+    if best_path[-1][4]:
+        filled = best_path.pop()
+        fill_len = filled[1] - filled[0]
+        best_path[-1][3] += fill_len
+        best_path[-1][1] += fill_len
+
     alignment_duration = (time.perf_counter() - start) / 60  # in minutes
 
     splay_paint(
@@ -518,244 +513,6 @@ def consolidate_segments(all_segments, bridge_gaps=False):
         f"\t\tconsolidate_segments resulted in {len(consolidated_segments)} segments, down from {len(all_segments)}"
     )
     return consolidated_segments
-
-
-def get_neighborhoods(segments, neighborly_distance):
-    # each line segment in segments is a dictionary with an entry 'end_points'. End points is a tuple
-    # (reaction_start, reaction_end, base_start, base_end). (base_start, reaction_start) and
-    # (base_end, reaction_end) are endpoints on a line with a slope of 1. This function returns a list of
-    # "neighborhoods". Each neighborhood is an array of segments such that each segment in the
-    # neighborhood has at least one other segment in the neighborhood where:
-    #    (1) the y-intercept of the two segments are no more than neighborly_distance apart. The intercept for a
-    #        segment is calculated as reaction_start - base_start.
-    #    (2) there is overlap in (base_start1, base_end1) and (base_start2, base_end2) of the two respective
-    #        segments.
-
-    def overlap(seg1, seg2):
-        # Calculate overlap on base axis
-        base_overlap_start = max(seg1["end_points"][2], seg2["end_points"][2])
-        base_overlap_end = min(seg1["end_points"][3], seg2["end_points"][3])
-        base_overlap_length = max(0, base_overlap_end - base_overlap_start)
-
-        seg1_base_length = seg1["end_points"][3] - seg1["end_points"][2]
-        seg2_base_length = seg2["end_points"][3] - seg2["end_points"][2]
-        shortest_base_length = min(seg1_base_length, seg2_base_length)
-
-        # Calculate overlap on reaction axis
-        reaction_overlap_start = max(seg1["end_points"][0], seg2["end_points"][0])
-        reaction_overlap_end = min(seg1["end_points"][1], seg2["end_points"][1])
-        reaction_overlap_length = max(0, reaction_overlap_end - reaction_overlap_start)
-
-        seg1_reaction_length = seg1["end_points"][1] - seg1["end_points"][0]
-        seg2_reaction_length = seg2["end_points"][1] - seg2["end_points"][0]
-        shortest_reaction_length = min(seg1_reaction_length, seg2_reaction_length)
-
-        # Check if both overlaps are at least 25% of the shortest segment
-        base_condition = base_overlap_length >= 0.25 * shortest_base_length
-        reaction_condition = reaction_overlap_length >= 0.25 * shortest_reaction_length
-
-        return base_condition and reaction_condition
-
-    # helper function to check the y-intercept difference criterion
-    def close_enough(seg1, seg2, sr):
-        intercept1 = seg1["end_points"][0] - seg1["end_points"][2]
-        intercept2 = seg2["end_points"][0] - seg2["end_points"][2]
-        return abs(intercept1 - intercept2) <= neighborly_distance
-
-    neighbors = []
-
-    for i, seg1 in enumerate(segments):
-        neighborhood = [i]  # Use index instead of the segment itself
-        for j, seg2 in enumerate(segments):
-            if i != j and overlap(seg1, seg2) and close_enough(seg1, seg2, sr):
-                neighborhood.append(j)  # Append index
-        neighbors.append(neighborhood)
-
-    # Merge neighborhoods if they share a segment index
-    merged = True
-    while merged:
-        merged = False
-        new_neighbors = []
-
-        while neighbors:
-            current = neighbors.pop()
-            merged_with_another = False
-            for other in neighbors:
-                if set(current).intersection(
-                    set(other)
-                ):  # Since we use indices, this is valid now
-                    merged_with_another = True
-                    neighbors.remove(other)
-                    current = current + [o for o in other if o not in current]
-                    break
-
-            new_neighbors.append(current)
-            merged |= merged_with_another
-
-        neighbors = new_neighbors
-
-    # Convert segment indices back to segments for final output
-    neighborhoods = [
-        [segments[i] for i in neighborhood]
-        for neighborhood in neighbors
-        if len(neighborhood) > 1
-    ]
-
-    return neighborhoods
-
-
-def prune_neighbors(reaction, segments, allowed_spacing):
-    neighborly_distance = 4 * sr
-
-    segments = [s for s in segments if not s.get("pruned", False)]
-
-    neighborhoods = get_neighborhoods(segments, neighborly_distance)
-
-    # Now we're going to eliminate each neighbor if:
-    #  1) there exists a different neighbor with base_start less than and base_end
-    #     greater than the neighbor.
-    #  2) the two neighbors are within neighborly_distance intercept of each other
-    #  3) the other neighbor has a better score in the range of overlap
-
-    to_eliminate = []
-    for neighborhood in neighborhoods:
-        for i, segment in enumerate(neighborhood):
-            reaction_start, reaction_end, base_start, base_end = segment["end_points"]
-            for j, segment2 in enumerate(neighborhood):
-                if i == j:
-                    continue
-                reaction_start2, reaction_end2, base_start2, base_end2 = segment2[
-                    "end_points"
-                ]
-
-                base_encompassed = base_start2 <= base_start and base_end2 >= base_end
-                close_enough = (
-                    abs((reaction_start - base_start) - (reaction_start2 - base_start2))
-                    < neighborly_distance
-                )
-
-                if base_encompassed and close_enough:
-                    diff_front = base_start - base_start2
-                    subsegment = (
-                        reaction_start2 + diff_front,
-                        reaction_start2 + diff_front + base_end - base_start,
-                        base_start,
-                        base_end,
-                    )  # subsegment of segment2 that overlaps with segment
-                    score = get_segment_mfcc_cosine_similarity_score(
-                        reaction, segment["end_points"]
-                    )
-                    big_neighbor_score = get_segment_mfcc_cosine_similarity_score(
-                        reaction, subsegment
-                    )
-
-                    # print('Considering!', score, big_neighbor_score)
-                    # print(f"\t  Neighbor ({segment['end_points'][2]/sr:.1f}, {segment['end_points'][3]/sr:.1f}), ({segment['end_points'][0]/sr:.1f}, {segment['end_points'][1]/sr:.1f})")
-                    # print(f"\tSubsegment ({subsegment[2]/sr:.1f}, {subsegment[3]/sr:.1f}), ({subsegment[0]/sr:.1f}, {subsegment[1]/sr:.1f})")
-                    if score < big_neighbor_score:
-                        to_eliminate.append(segment)
-                        segment["pruned"] = True
-                        break
-
-    for neighborhood in neighborhoods:
-        # print(f"Neighborhood #{len(neighborhood)}")
-        for segment in neighborhood:
-            end_points = segment["end_points"]
-            # if segment in to_eliminate:
-            #     print(f"\t*** Segment ({end_points[2]/sr:.1f}, {end_points[3]/sr:.1f}), ({end_points[0]/sr:.1f}, {end_points[1]/sr:.1f})")
-            # else:
-            #     print(f"\tSegment ({end_points[2]/sr:.1f}, {end_points[3]/sr:.1f}), ({end_points[0]/sr:.1f}, {end_points[1]/sr:.1f})")
-
-    to_keep = [s for s in segments if s not in to_eliminate]
-    print(f"Pruned neighbors: kept {len(to_keep)} of {len(segments)} segments to start")
-
-    prune_cache["neighbor"] += len(to_eliminate)
-    # visualize_neighborhoods(segments, neighborhoods)
-
-    return to_keep
-
-
-def visualize_neighborhoods(segments, neighborhoods):
-    plt.figure(figsize=(10, 10))
-
-    # List of colors for visualization
-    colors = plt.cm.tab10.colors
-    num_colors = len(colors)
-
-    # First, plot all segments in gray
-    for segment in segments:
-        end_points = segment["end_points"]
-        plt.plot(
-            [end_points[2] / sr, end_points[3] / sr],
-            [end_points[0] / sr, end_points[1] / sr],
-            color="gray",
-            linewidth=0.5,
-        )
-
-    # Next, overlay segments that belong to neighborhoods with unique colors
-    for idx, neighborhood in enumerate(neighborhoods):
-        color = colors[idx % num_colors]
-        for segment in neighborhood:
-            end_points = segment["end_points"]
-            plt.plot(
-                [end_points[2] / sr, end_points[3] / sr],
-                [end_points[0] / sr, end_points[1] / sr],
-                color=color,
-                linewidth=3,
-            )
-
-    plt.xlabel("Base Time")
-    plt.ylabel("Reaction Time")
-    plt.title("Visualization of Neighborhoods")
-    plt.grid(True)
-    plt.show()
-
-
-# def merge_continuous_segments_separated_by_filler(reaction, path, strokes):
-#     new_path = []
-#     for idx, segment in enumerate(path):
-#         reaction_start, reaction_end, base_start, base_end, is_filler, strokes_key = segment
-#         # print(f"COLLAPSING FOR {base_start/sr}-{base_end/sr}")
-
-#         # if strokes_key is not None:
-#         #     my_strokes = strokes[strokes_key]
-
-#         #     relevant_strokes = []
-#         #     for stroke in my_strokes['strokes']:
-#         #         if stroke[2] >= base_start and stroke[3] <= base_end:
-#         #             relevant_strokes.append(stroke)
-#         #         else:
-#         #             print(f"\tRemoving: {stroke[2]/sr}-{stroke[3]/sr}")
-
-
-#         #     strokes[strokes_key]['strokes'] = relevant_strokes
-
-#         extended = False
-#         if idx > 0 and idx < len(path) - 1:
-#             if is_filler and not path[idx-1][-1] and not path[idx+1][-1]: # if this segment is filler surrounded by non-filler...
-#                 # and prior segment and later segment are continuous with each other...
-#                 prior_segment = path[idx-1]
-#                 later_segment = path[idx+1]
-#                 intercept_prior = prior_segment[0] - prior_segment[2]
-#                 intercept_later = later_segment[0] - later_segment[2]
-
-#                 if abs( intercept_prior - intercept_later ) / sr < .1:
-#                     # remove filler, merge prior into later
-#                     new_path.pop()
-#                     later_segment[0] = prior_segment[0]
-#                     later_segment[2] = prior_segment[2]
-#                     later_segment[1] = prior_segment[0] + later_segment[3] - later_segment[2]
-
-#                     aaa = len(strokes[later_segment[5]])
-#                     strokes[later_segment[5]].extend(strokes[prior_segment[5]])
-#                     # print(f"EXTENDING!!!!! Strokes from {aaa} to {len(strokes[later_segment[5]])} by adding {len(strokes[prior_segment[5]])}", )
-
-#                     extended = True
-
-#         if not extended:
-#             new_path.append(segment)
-
-#     return new_path
 
 
 from sklearn.cluster import DBSCAN
@@ -1155,94 +912,6 @@ def micro_align_path(reaction, path, strokes):
     return new_path
 
 
-#########################################
-# Getting rid of clusters of bad segments
-# 1) Identify clusters of candidate segments where there are 5 or more segments such
-# that each segment overlaps each other segment in the cluster by 80% or more in their
-# position in the song (base_start, base_end)
-
-# 2) For each cluster, use get_segment_mfcc_cosine_similarity_score to score each
-# candidate. Mark the ones that fall below 50% of the best cluster score as
-# prunable.
-
-
-def get_overlap_percentage(segment1, segment2):
-    # Assuming segments are tuples/lists of (base_start, base_end)
-    overlap_start = max(segment1[0], segment2[0])
-    overlap_end = min(segment1[1], segment2[1])
-    overlap_duration = max(0, overlap_end - overlap_start)
-    segment1_duration = segment1[1] - segment1[0]
-    return (overlap_duration / segment1_duration) if segment1_duration > 0 else 0
-
-
-def find_clusters(segments):
-    clusters = []
-
-    overlap_threshold = 0.7
-    for current_segment in segments:
-        found_cluster = False
-        current_segment_range = (
-            current_segment["end_points"][2],
-            current_segment["end_points"][3],
-        )
-        for cluster in clusters:
-            if all(
-                get_overlap_percentage(
-                    current_segment_range, (seg["end_points"][2], seg["end_points"][3])
-                )
-                >= overlap_threshold
-                for seg in cluster
-            ) and all(
-                get_overlap_percentage(
-                    (seg["end_points"][2], seg["end_points"][3]), current_segment_range
-                )
-                >= overlap_threshold
-                for seg in cluster
-            ):
-                cluster.append(current_segment)
-                found_cluster = True
-                break
-        if not found_cluster:
-            clusters.append([current_segment])
-    return [cluster for cluster in clusters if len(cluster) >= 5]
-
-
-def prune_low_quality_segments(reaction, segments):
-    # Step 1: Cluster Identification
-
-    segments = [s for s in segments if not s.get("pruned")]
-    clusters = find_clusters(segments)
-
-    # Step 2 and 3: Scoring and Pruning
-    for cluster in clusters:
-        for segment in cluster:
-            segment["score"] = get_segment_mfcc_cosine_similarity_score(
-                reaction, segment["end_points"]
-            )
-            segment["pruned"] = False  # Assume not pruned initially
-
-        # Find the best score in the cluster
-        best_score = max(segment["score"] for segment in cluster)
-
-        # Prune segments scoring less than 50% of the best score
-        for segment in cluster:
-            if segment["score"] < 0.5 * best_score:
-                segment["pruned"] = True
-
-    # Visualize the clusters
-    base_audio_len = len(conf["song_audio_data"])
-    reaction_audio_len = len(reaction["reaction_audio_data"])
-    # visualize_clusters(clusters, base_audio_len, reaction_audio_len)
-
-    # Filter out the pruned segments
-    final_segments = [
-        segment for cluster in clusters for segment in cluster if not segment["pruned"]
-    ]
-
-    print(f"Kept {len(final_segments)} of {len(segments)} segments after pruning")
-    return final_segments
-
-
 import matplotlib.colors as mcolors
 
 
@@ -1472,20 +1141,16 @@ def construct_all_paths(
 
         fill_len = song_length - path[-1][3]
         if fill_len > 0:
-            if True:  # fill_len < sr:
-                path[-1][3] += fill_len
-                path[-1][1] += fill_len
-            else:
-                completed_path.append(
-                    [
-                        path[-1][1],
-                        path[-1][1] + fill_len,
-                        path[-1][3],
-                        path[-1][3] + fill_len,
-                        True,
-                        None,
-                    ]
-                )
+            completed_path.append(
+                [
+                    path[-1][1],
+                    path[-1][1] + fill_len,
+                    path[-1][3],
+                    path[-1][3] + fill_len,
+                    True,
+                    None,
+                ]
+            )
 
         score = path_score_by_mfcc_cosine_similarity(
             path, reaction
@@ -1501,8 +1166,8 @@ def construct_all_paths(
             print_path(path, reaction)
             time_of_last_best_score = time.perf_counter()
 
-        if score > 0.9 * best_score_cache["best_overall_score"]:
-            paths.append(completed_path)
+        # if score > 0.9 * best_score_cache["best_overall_score"]:
+        paths.append(completed_path)
 
         if GENERATE_FULL_ALIGNMENT_VIDEO:
             splay_paint(
@@ -1555,7 +1220,7 @@ def construct_all_paths(
     while len(partial_paths) > 0:
         i += 1
         prune_eligible = (
-            time.perf_counter() - start_time > 3 * 60
+            time.perf_counter() - start_time > 2 * 60
         )  # True #len(partial_paths) > 100 #or len(paths) > 10000
 
         if time.perf_counter() - time_of_last_best_score > 30 * 60:
@@ -1636,7 +1301,7 @@ def construct_all_paths(
                 id=f"path-test-{i}",
             )
 
-        if should_prune:  # and prune_eligible:
+        if should_prune and prune_eligible:
             continue
 
         print(
@@ -2720,17 +2385,17 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
                 }
             )
 
-            if save_to_file or i == len(starting_points) - 1:
-                splay_paint(
-                    reaction,
-                    strokes=all_candidates,
-                    stroke_alpha=step / chunk_size,
-                    stroke_color="blue",
-                    show_live=False,
-                    chunk_size=chunk_size,
-                    id=f"stroke-{start}",
-                    copy_to_main=False,
-                )
+        if save_to_file or i == len(starting_points) - 1:
+            splay_paint(
+                reaction,
+                strokes=all_candidates,
+                stroke_alpha=step / chunk_size,
+                stroke_color="blue",
+                show_live=False,
+                chunk_size=chunk_size,
+                id=f"stroke-{start}",
+                copy_to_main=False,
+            )
 
         for y1 in candidates:
             if y1 in already_matched:
