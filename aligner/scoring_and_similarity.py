@@ -2,10 +2,10 @@ import numpy as np
 import librosa
 import math
 
-
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
+from aligner.sound_landmarks import find_sound_landmarks_in_reaction, contains_landmark
 
 from prettytable import PrettyTable
 
@@ -114,6 +114,9 @@ def path_score(path, reaction, end=None, start=0):
     total_length = 0
 
     segment_penalty = 1
+
+    sound_landmarks = find_sound_landmarks_in_reaction(reaction)
+
     for segment in path:
         if len(segment) == 5:
             (
@@ -152,8 +155,24 @@ def path_score(path, reaction, end=None, start=0):
             fill += current_end - current_start
             total_length += round((current_end - current_start) / hop_length)
 
-        if not is_filler and current_end - current_start < sr:
+        if current_end - current_start < sr:  # and not is_filler
             segment_penalty *= 0.98
+
+        if not is_filler:
+            landmarks_spanned, landmarks_matched, __ = contains_landmark(
+                sound_landmarks,
+                current_start,
+                current_end,
+                reaction_start,
+                reaction_end,
+            )
+
+            if landmarks_spanned == landmarks_matched:
+                for __ in range(landmarks_spanned):
+                    segment_penalty *= 1.02
+            else:
+                for __ in range(landmarks_spanned - landmarks_matched):
+                    segment_penalty *= 0.99
 
     # Derivation for below:
     #   earliness = |R| / temporal_center
@@ -211,27 +230,29 @@ def path_score_by_mfcc_cosine_similarity(path, reaction):
         total_duration += sequence[1] - sequence[0]
 
     min_sequence_score = 1
+    penalty = 1
 
     for sequence in path:
-        if (
-            len(sequence) == 4
-            or (len(sequence) == 5 and not sequence[-1])
-            or (len(sequence) == 6 and not sequence[-2])
-        ):
+        is_fill = len(sequence) > 4 and sequence[4]
+        if not is_fill:
             mfcc_score = get_segment_mfcc_cosine_similarity_score(reaction, sequence)
             duration_factor = (sequence[1] - sequence[0]) / total_duration
-            mfcc_sequence_sum_score += mfcc_score * duration_factor
-            if mfcc_score < min_sequence_score:
-                min_sequence_score = mfcc_score
+            mfcc_sequence_sum_score += mfcc_score * mfcc_score * duration_factor
+        # else:
+        #     if (sequence[1] - sequence[0]) / sr < 1:  # penalize short fills
+        #         penalty *= 0.985
 
-    if min_sequence_score < 0.750:
-        mfcc_sequence_sum_score *= 0.95
-    if min_sequence_score < 0.500:
-        mfcc_sequence_sum_score *= 0.95
-    if min_sequence_score < 0.350:
-        mfcc_sequence_sum_score *= 0.95
+        # if mfcc_score < min_sequence_score:
+        #     min_sequence_score = mfcc_score
 
-    return mfcc_sequence_sum_score
+    # if min_sequence_score < 0.750:
+    #     mfcc_sequence_sum_score *= 0.95
+    # if min_sequence_score < 0.500:
+    #     mfcc_sequence_sum_score *= 0.95
+    # if min_sequence_score < 0.350:
+    #     mfcc_sequence_sum_score *= 0.95
+
+    return mfcc_sequence_sum_score * penalty
 
 
 def path_score_by_raw_cosine_similarity(path, reaction):
@@ -278,7 +299,7 @@ def path_score_by_mfcc_mse_similarity(path, reaction):
 
 def get_chunk_score(reaction, reaction_start, reaction_end, current_start, current_end):
     segment = (reaction_start, reaction_end, current_start, current_end, False)
-    mse_score = get_segment_mfcc_mse_score(reaction, segment)
+    # mse_score = get_segment_mfcc_mse_score(reaction, segment)
     cosine_score = get_segment_mfcc_cosine_similarity_score(reaction, segment)
     # raw_cosine_score = get_segment_raw_cosine_similarity_score(reaction, segment)
 
@@ -347,7 +368,7 @@ def find_best_path(reaction, candidate_paths):
     normalized_scores.sort(key=lambda x: x[1][0], reverse=True)
 
     print("Paths by score:")
-    for idx, (path, scores) in enumerate(normalized_scores[:1]):
+    for idx, (path, scores) in enumerate(normalized_scores[:100]):
         if gt:
             gtpp = ground_truth_overlap(path, gt)
             gtp = f"Ground Truth: {gtpp}%"

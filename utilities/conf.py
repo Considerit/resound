@@ -1,6 +1,5 @@
 import glob, os
 import librosa
-import soundfile as sf
 import ffmpeg
 import numpy as np
 
@@ -99,6 +98,9 @@ def make_conf(song_def, options, temp_directory):
         "center / bottom" if song_def.get("include_base_video") else "centered"
     )
 
+    min_segment_length_in_seconds = 3
+    first_n_samples = int(min_segment_length_in_seconds * sr)
+
     conf.update(
         {
             "artist": song_def["artist"],
@@ -135,6 +137,12 @@ def make_conf(song_def, options, temp_directory):
             ),
             "zoom_pans": song_def.get("zoom_pans", []),
             "background.reverse": song_def.get("background.reverse", False),
+            "sound_landmarks": song_def.get("sound_landmarks", []),
+            # alignment parameters
+            "step_size": 1,
+            "min_segment_length_in_seconds": min_segment_length_in_seconds,
+            "peak_tolerance": 0.5,
+            "first_n_samples": first_n_samples,
         }
     )
 
@@ -242,6 +250,9 @@ def make_conf(song_def, options, temp_directory):
                 "video_path": reaction_video_path,
                 "aligned_path": os.path.join(
                     temp_directory, os.path.basename(channel) + f"-CROSS-EXPANDER.mp4"
+                ),
+                "alignment_metadata": os.path.join(
+                    temp_directory, os.path.basename(channel) + f"-CROSS-EXPANDER.json"
                 ),
                 "featured": featured,
                 "asides": None
