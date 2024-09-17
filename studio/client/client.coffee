@@ -674,6 +674,15 @@ dom.LIST_TOOL_BAR = ->
       I
         className: 'glyphicon glyphicon-exclamation-sign'
 
+    BUTTON
+      onClick: (e) => 
+        local.filter_to_alignment_incomplete = !local.filter_to_alignment_incomplete
+        local.page = 0
+        save local
+
+      I
+        className: 'glyphicon glyphicon-ban-circle'
+
 
 
 dom.REACTION_LIST = -> 
@@ -711,6 +720,9 @@ dom.REACTION_LIST = ->
     downloaded_reactions = (d for d in downloaded_reactions when d.marked)    
       # downloaded_reactions.sort( (a,b) -> marked_compare(a,b) )
     # else
+
+  if @local.filter_to_alignment_incomplete
+    downloaded_reactions = (d for d in downloaded_reactions when !d.alignment_done) 
 
   if @local.sort_by_alignment_score
     downloaded_reactions.sort( (a,b) -> retrieve("/reaction_metadata/#{song}/#{a.id}").alignment_score - retrieve("/reaction_metadata/#{song}/#{b.id}").alignment_score     )
@@ -959,31 +971,29 @@ dom.REACTION_ITEM = ->
           I 
             className: 'glyphicon glyphicon-star'
 
+        BUTTON 
+          title: 'Alignment Complete'
+          style:
+            backgroundColor: 'transparent'
+            border: 'none'
+            outline: 'none'
+            cursor: 'pointer'
+            opacity: if !reaction.alignment_done then .5 else 1
+
+          onClick: (e) => 
+            reaction.alignment_done = !reaction.alignment_done
+            save {
+              key: "/reaction/#{reaction.id}",
+              reaction: reaction, 
+              song: song
+            }
+            e.stopPropagation()
+
+          I 
+            className: 'glyphicon glyphicon-ok'
+
         
-        if task == 'alignment' && @props.show_reaction
-          BUTTON 
-            title: 'Manual bind'
-            style:
-              backgroundColor: 'transparent'
-              border: 'none'
-              outline: 'none'
-              cursor: 'pointer'
-              opacity: if !reaction.marked then .5 else 1
 
-            onClick: (e) => 
-              song_time = retrieve("time-#{@local["video-0-time-key"]}").time
-              reaction_time = retrieve("time-#{@local["video-2-time-key"]}").time
-
-              if confirm("Bind #{reaction_time}s of the reaction to #{song_time}s of the song?")
-                song_config.config.manual_bounds ?= {}
-                song_config.config.manual_bounds[reaction.reactor] ?= []
-                song_config.config.manual_bounds[reaction.reactor].push( [song_time, reaction_time]  )
-                save(song_config)
-
-              e.stopPropagation()
-
-            I 
-              className: 'glyphicon glyphicon-resize-small'
 
 
 
@@ -1078,6 +1088,74 @@ dom.REACTION_ITEM = ->
 
                   @local.clicked_at = [x / w, y / h]
                   save @local
+
+          if task == 'alignment' && @props.show_reaction && idx == 2
+            DIV null, 
+              BUTTON 
+                title: 'Mark start of reaction'
+                style:
+                  backgroundColor: 'transparent'
+                  border: 'none'
+                  outline: 'none'
+                  cursor: 'pointer'
+
+                onClick: (e) => 
+                  reaction_time = retrieve("time-#{@local["video-2-time-key"]}").time
+
+                  if confirm("Mark #{reaction_time}s as the start of the reaction?")
+                    song_config.config.start_reaction_search_at ?= {}
+                    song_config.config.start_reaction_search_at[reaction.reactor] = reaction_time
+                    save(song_config)
+
+                  e.stopPropagation()
+
+                I 
+                  className: 'glyphicon glyphicon-triangle-right'
+
+              BUTTON 
+                title: 'Mark end of reaction'
+                style:
+                  backgroundColor: 'transparent'
+                  border: 'none'
+                  outline: 'none'
+                  cursor: 'pointer'
+
+                onClick: (e) => 
+                  reaction_time = retrieve("time-#{@local["video-2-time-key"]}").time
+
+                  if confirm("Mark #{reaction_time}s as the start of the reaction?")
+                    song_config.config.end_reaction_search_at ?= {}
+                    song_config.config.end_reaction_search_at[reaction.reactor] = reaction_time
+                    save(song_config)
+
+                  e.stopPropagation()
+
+                I 
+                  className: 'glyphicon glyphicon-triangle-left'
+
+              BUTTON 
+                title: 'Manual bind'
+                style:
+                  backgroundColor: 'transparent'
+                  border: 'none'
+                  outline: 'none'
+                  cursor: 'pointer'
+
+                onClick: (e) => 
+                  song_time = retrieve("time-#{@local["video-0-time-key"]}").time
+                  reaction_time = retrieve("time-#{@local["video-2-time-key"]}").time
+
+                  if confirm("Bind #{reaction_time}s of the reaction to #{song_time}s of the song?")
+                    song_config.config.manual_bounds ?= {}
+                    song_config.config.manual_bounds[reaction.reactor] ?= []
+                    song_config.config.manual_bounds[reaction.reactor].push( [song_time, reaction_time]  )
+                    save(song_config)
+
+                  e.stopPropagation()
+
+                I 
+                  className: 'glyphicon glyphicon-resize-small'
+
 
     if task == 'asides'
 

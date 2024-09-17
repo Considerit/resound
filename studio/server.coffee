@@ -156,6 +156,8 @@ bus = require('statebus').serve
           reaction['download'] = obj.reaction.download
           if obj.reaction.marked?
             reaction['marked'] = obj.reaction.marked
+          if obj.reaction.alignment_done?
+            reaction['alignment_done'] = obj.reaction.alignment_done
           break
 
       write_manifest(song, manifest_json)
