@@ -26,9 +26,7 @@ from aligner.images.embedded_video_finder import (
 )
 
 
-def build_image_matches(
-    reaction, use_dhash=True, use_phash=True, fps=2, min_coverage=0.8, visualize=True
-):
+def build_image_matches(reaction, fps=2, min_coverage=0.8, visualize=True):
     channel = reaction.get("channel")
 
     music_video_path = conf.get("base_video_path")
@@ -106,42 +104,29 @@ def build_image_matches(
     for k, v in hash_matches.items():
         hash_matches[k] = {float(key): value for key, value in v.items()}
 
-    match_groups = []
-    if use_phash:
-        match_groups.append(hash_matches["phash_matches"])
+    matches_by_music = {}
+    for match_group in hash_matches.values():
+        for music_time, reaction_times in match_group.items():
+            if music_time not in matches_by_music:
+                matches_by_music[music_time] = []
+            matches_by_music[music_time] += reaction_times
 
-    if use_dhash:
-        match_groups.append(hash_matches["dhash_matches"])
+    matches = []
+    for mt, reaction_times in matches_by_music.items():
+        for rt in reaction_times:
+            matches.append([mt, rt, True])  # True means not rejected
 
     # Step 4: Refine the matches
-    unzipped_hash_matches = []
 
-    music_times = []
-    reaction_times = []
-
-    for matches in match_groups:
-        for music_time, reaction_time in matches.items():
-            for reaction_time in reaction_time:
-                music_times.append(music_time)
-                reaction_times.append(reaction_time)
-
-    unzipped_hash_matches.append([music_times, reaction_times])
-
-    filtered_matches = filter_matches_by_intercept(unzipped_hash_matches[0], fps=fps)
-    filtered_first = filtered_matches[1]
-
-    # filtered_matches = unzipped_hash_matches
-
-    num_rejected = len(filtered_matches[1][0])
-    while num_rejected > 0:
-        filtered_matches = filter_matches_by_intercept(filtered_matches[0], fps=fps)
-        num_rejected = len(filtered_matches[1][0])
+    while True:
+        num_rejected = filter_matches_by_intercept(matches, fps=fps)
         print("num_rejected", num_rejected)
 
+        if num_rejected == 0:
+            break
+
     # Step 5: Create segments from the matches
-    segments = create_segments_from_matches(
-        list(zip(filtered_matches[0][0], filtered_matches[0][1]))
-    )
+    segments = create_segments_from_matches(matches)
 
     # Get the end points (and filter out segments outside those bounds)
     segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
@@ -365,12 +350,15 @@ def filter_matches_by_intercept(
     :return: Filtered list of matches.
     """
 
+    matches = [m for m in matches if m[2]]
+
     num_samples_in_window = time_window * fps
     peers_sharing_intercept = int(num_samples_in_window * density)
 
-    music_times, reaction_times = np.array(matches[0]), np.array(matches[1])
+    music_times = np.array([m[0] for m in matches])
+    reaction_times = np.array([m[1] for m in matches])
 
-    print(f"Filtering matches by slope for {len(music_times)} matches")
+    print(f"Filtering {len(matches)} matches by slope")
 
     # Calculate intercepts for all matches
     intercepts = reaction_times - music_times
@@ -379,45 +367,33 @@ def filter_matches_by_intercept(
     points = np.vstack([music_times, reaction_times]).T
     tree = KDTree(points)
 
-    # List to store filtered matches
-    filtered_music_times = []
-    filtered_reaction_times = []
-
-    rejected_music_times = []
-    rejected_reaction_times = []
-
+    num_rejected = 0
     # Loop through each point
-    for i, (m1, r1) in enumerate(zip(music_times, reaction_times)):
+    for i, (m1, r1, __) in enumerate(matches):
         intercept1 = intercepts[i]
 
         # Query neighbors within the time_window around the current point (m1, r1)
         indices = tree.query_radius([[m1, r1]], r=time_window / 2)[0]
 
         # Count valid neighbors based on intercept similarity
-        found_valid_neighbor = 0
+        valid_neighbors = 0
         for j in indices:
-            if i == j:
-                continue  # Skip self-comparison
+            if i == j or not matches[j][2]:
+                continue  # Skip self-comparison or comparison to rejects
 
-            m2, r2 = music_times[j], reaction_times[j]
+            m2, r2, __ = matches[j]
             intercept2 = intercepts[j]
 
             # Check if the intercept difference is within tolerance
             if abs(intercept1 - intercept2) <= intercept_tolerance:
-                found_valid_neighbor += 1
+                valid_neighbors += 1
 
-        # If we found enough valid neighbors with the correct slope, keep this point
-        if found_valid_neighbor >= peers_sharing_intercept:
-            filtered_music_times.append(m1)
-            filtered_reaction_times.append(r1)
-        else:
-            rejected_music_times.append(m1)
-            rejected_reaction_times.append(r1)
+        # If we didn't find enough valid neighbors with the correct slope, reject this point
+        if valid_neighbors < peers_sharing_intercept:
+            matches[i][2] = False
+            num_rejected += 1
 
-    return [
-        [filtered_music_times, filtered_reaction_times],
-        [rejected_music_times, rejected_reaction_times],
-    ]
+    return num_rejected
 
 
 def calculate_median_of_averages_intercept(cluster):
@@ -444,16 +420,18 @@ def create_segments_from_matches(
     """
     Cluster matches into segments based on the y-intercept with a time constraint.
 
-    :param matches: List of tuples (music_time, reaction_time).
+    :param matches: List of tuples (music_time, reaction_time, rejected).
     :param time_constraint: Maximum allowed time gap between matches in music_time.
     :param intercept_eps: Maximum allowed distance between intercepts for DBSCAN clustering.
     :param min_samples: Minimum number of matches to form a valid cluster.
     :return: List of valid clusters, each containing matches that satisfy the constraints.
     """
 
+    matches = [m for m in matches if m[2]]
+
     # Step 1: Calculate y-intercept for each match
     intercepts = np.array(
-        [reaction_time - music_time for music_time, reaction_time in matches]
+        [reaction_time - music_time for music_time, reaction_time, rejected in matches]
     )
 
     # Step 2: Apply DBSCAN clustering on y-intercepts
@@ -480,6 +458,8 @@ def create_segments_from_matches(
         segments[label]["matches"].append(match)
 
     # Step 4: Apply time constraint to segments
+    stacked_matches_rejected = 0
+
     for segment in segments.values():
         # cluster the matches by music time, subject to time_constraint
         music_time_clusters = []
@@ -532,14 +512,19 @@ def create_segments_from_matches(
         intercepts = np.array(
             [
                 reaction_time - music_time
-                for music_time, reaction_time in segment["matches"]
+                for music_time, reaction_time, __ in segment["matches"]
             ]
         )
         median_intercept = segment["y-intercept"] = np.median(intercepts)
 
-        music_times = [music_time for music_time, reaction_time in segment["matches"]]
+        music_times = [
+            music_time for music_time, reaction_time, __ in segment["matches"]
+        ]
         segment["min_music_time"] = min(music_times)
         segment["max_music_time"] = max(music_times)
+
+        # Identify all music_times where there is a "stack" of matched reaction times.
+        # In that stack, reject all matches within a certain distance of the median intercept
 
         assert segment["min_music_time"] < segment["max_music_time"]
 
