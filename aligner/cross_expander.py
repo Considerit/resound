@@ -29,8 +29,8 @@ def create_aligned_reaction_video(reaction, extend_by=0):
 
     output_file = reaction.get("aligned_path")
 
-    if conf["create_alignment"] or conf["alignment_test"]:
-        alignment_metadata_file = os.path.splitext(output_file)[0] + ".json"
+    if conf.get("create_alignment") or conf.get("alignment_test"):
+        alignment_metadata_file = reaction.get("alignment_metadata")
 
         if not os.path.exists(alignment_metadata_file):
             conf["load_reaction"](reaction["channel"])
@@ -57,7 +57,7 @@ def create_aligned_reaction_video(reaction, extend_by=0):
                 "alignment_duration": alignment_duration,
             }
 
-            if conf["save_alignment_metadata"]:
+            if conf.get("save_alignment_metadata"):
                 save_object_to_file(alignment_metadata_file, metadata)
         else:
             metadata = read_object_from_file(alignment_metadata_file)

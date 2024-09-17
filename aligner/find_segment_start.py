@@ -53,7 +53,6 @@ def initialize_segment_start_cache(reaction):
 
 # TODO:
 #   - ditch the open chunk / closed chunk and use song / reaction
-from scipy.signal import correlate, find_peaks
 
 
 def find_segment_starts(
@@ -243,9 +242,11 @@ def score_start_candidates(
 
             for ssignal, (__, correlation, __) in peak_indices.items():
                 hop_length = signals[ssignal][0]
-                signal_scores[ssignal] = correlation[
-                    int(unadjusted_candidate_index / hop_length)
-                ]
+                my_idx = math.floor(unadjusted_candidate_index / hop_length)
+                if my_idx < correlation.shape[0]:
+                    signal_scores[ssignal] = correlation[my_idx]
+                else:
+                    print("WEIRD! correlation index is out of bounds", ssignal, my_idx)
 
             correlation_score = signal_scores[signal]
 

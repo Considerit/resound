@@ -1,4 +1,3 @@
-
 #############################
 # Video processing ##
 #############################
@@ -7,6 +6,7 @@ import cv2
 import imagehash
 from PIL import Image
 import numpy as np
+
 
 def extract_frames(video_file, region=None, resolution=1000):
     video = cv2.VideoCapture(video_file)
@@ -19,35 +19,47 @@ def extract_frames(video_file, region=None, resolution=1000):
     height, width, _ = frame.shape
     print("%region", region)
 
-    if not region: 
+    if not region:
         region = (0, 0, 1, 1)
 
-    region = (int(region[0] * width ), int(region[1] * height ), 
-              int(region[2] * width ), int(region[3] * height ))
+    region = (
+        int(region[0] * width),
+        int(region[1] * height),
+        int(region[2] * width),
+        int(region[3] * height),
+    )
 
     print("region", region)
     middle_frame_timestamp = 1000 * (duration_ms / 1000 // 16)
 
-    for timestamp_ms in range(0, duration_ms, resolution):  # Step through the video by seconds
+    for timestamp_ms in range(
+        0, duration_ms, resolution
+    ):  # Step through the video by seconds
         video.set(cv2.CAP_PROP_POS_MSEC, timestamp_ms)
         success, frame = video.read()
-        print("READING FRAME", timestamp_ms / 1000, end='\r')
+        print("READING FRAME", timestamp_ms / 1000, end="\r")
         if success:
-            frame = frame[region[1]:region[1] + region[3], region[0]:region[0] + region[2]]
+            frame = frame[
+                region[1] : region[1] + region[3], region[0] : region[0] + region[2]
+            ]
             frames.append(frame)
             if timestamp_ms == middle_frame_timestamp:
-                cv2.imwrite('middle_frame.jpg', frame)
+                cv2.imwrite("middle_frame.jpg", frame)
 
     video.release()
     return frames
 
 
-
 def compute_hashes(frames):
-    return [imagehash.phash(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))) for frame in frames]
+    return [
+        imagehash.phash(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+        for frame in frames
+    ]
 
 
-SIMILARITY_THRESH = .5
+SIMILARITY_THRESH = 0.5
+
+
 def find_first_occurrences(react_hashes, resolution):
     timestamps = []
     seen_hashes = {}
@@ -70,120 +82,54 @@ def find_first_occurrences(react_hashes, resolution):
 import os
 import subprocess
 import tempfile
-from typing import List
-
-def create_video_segments(video_file: str, timestamps: List[int], ext: str, resolution):
-    # Make sure timestamps are sorted
-    timestamps.sort()
-
-    temp_files = []
-
-    # Start of first segment is 0
-    start = timestamps[0]
-
-    # Current end of segment
-    end = start
-
-    increment = resolution / 1000
-
-    STUTTER_THRESH = .5
-
-    for i in range(1, len(timestamps)):
-        if timestamps[i] - end > increment + .0001:
-            # This timestamp is not contiguous with the previous ones, so it starts a new segment.
-            # We'll end the previous segment here.
-
-            eenndd = end + (resolution - 1) / 1000
-
-            if end - start > STUTTER_THRESH:
-
-                temp_file = os.path.join(tempfile.gettempdir(), f"temp_{len(temp_files)}{ext}")
-                temp_files.append(temp_file)
-
-                
-                command = f'ffmpeg -y -i "{video_file}" -ss {start} -to {eenndd} -c:v libx264 -c:a aac "{temp_file}"'
-                print(command)
-                subprocess.run(command, shell=True, check=True)
-
-            # Start the new segment
-            start = timestamps[i]
-
-        # Extend the current segment
-        end = timestamps[i]
-
-    # Last segment from the last start to the end
-    temp_file = os.path.join(tempfile.gettempdir(), f"temp_{len(temp_files)}{ext}")
-    temp_files.append(temp_file)
-
-    command = f'ffmpeg -y -i "{video_file}" -ss {start} -to {end} -c:v libx264 -c:a aac "{temp_file}"'
-    subprocess.run(command, shell=True, check=True)
-
-    return temp_files
-
-def concatenate_video_segments(segments: List[str], output_file: str):
-    # Write the list of file paths to a temporary file
-    concat_file = os.path.join(tempfile.gettempdir(), "concat.txt")
-    with open(concat_file, 'w') as f:
-        for segment in segments:
-            f.write(f"file '{segment}'\n")
-
-    # Use ffmpeg to concatenate the video segments
-    command = f'ffmpeg -y -f concat -safe 0 -i "{concat_file}" -c copy "{output_file}"'
-    subprocess.run(command, shell=True, check=True)
-
 
 
 def crop_video(reaction_vid, region):
-    # Uses ffmpeg to crop a given video the specified region. 
+    # Uses ffmpeg to crop a given video the specified region.
     # The cropped video should be written to a temporary file.
     # Returns a path to the cropped video.
     # reaction_vid: the target video to crop
-    # region: the area of the video to crop, as a tuple of 
+    # region: the area of the video to crop, as a tuple of
     # (% from left edge, % from top, % of total width, % of total height)
 
-    nam,ext = os.path.splitext(os.path.basename(reaction_vid))
+    nam, ext = os.path.splitext(os.path.basename(reaction_vid))
     fname = f"{nam}-cropped{ext}"
     temp_file = os.path.join(tempfile.gettempdir(), fname)
-
 
     if not os.path.exists(temp_file):
         # Region parameters (assumed to be percentages)
         left_percent, top_percent, width_percent, height_percent = region
-        
+
         # ffmpeg command for cropping (using the "crop" filter)
         # Note: ffmpeg takes crop parameters as: width:height:x:y
         command = f'ffmpeg -y -i "{reaction_vid}" -vf "crop=in_w*{width_percent}:in_h*{height_percent}:in_w*{left_percent}:in_h*{top_percent}" "{temp_file}"'
 
         print("Cropping to", temp_file)
         print(command)
-        
+
         # Run the command
         subprocess.run(command, shell=True, check=True)
-    
+
     return temp_file
-
-
 
 
 def downsample(reaction_vid, target_resolution):
     # Create a temp file for the downscaled video
-    nam,ext = os.path.splitext(os.path.basename(reaction_vid))
+    nam, ext = os.path.splitext(os.path.basename(reaction_vid))
     fname = f"{nam}-downsampled-{target_resolution}{ext}"
     temp_file = os.path.join(tempfile.gettempdir(), fname)
     if not os.path.exists(temp_file):
         # Command to downscale the video
         command = f'ffmpeg -y -i "{reaction_vid}" -vf "scale={target_resolution}:-2" "{temp_file}"'
         print("Downsampling to", temp_file)
-        print(command)    
+        print(command)
         # Run the command
         subprocess.run(command, shell=True, check=True)
 
     return temp_file
 
 
-
 def filter_by_video_analysis(reaction_vid, region, resolution=1):
-
     cropped_video = crop_video(reaction_vid, region)
     downsampled_reaction_vid = downsample(cropped_video, target_resolution=80)
     react_frames = extract_frames(downsampled_reaction_vid, resolution=resolution)
@@ -192,12 +138,9 @@ def filter_by_video_analysis(reaction_vid, region, resolution=1):
     timestamps = find_first_occurrences(react_hashes, resolution)
     print(timestamps)
 
-    base,ext = os.path.splitext(reaction_vid)
+    base, ext = os.path.splitext(reaction_vid)
     segments = create_video_segments(reaction_vid, timestamps, ext, resolution)
-    concatenate_video_segments(segments, f"{base}-vidstripped-{resolution}{ext}" )
-
-
-
+    concatenate_video_segments(segments, f"{base}-vidstripped-{resolution}{ext}")
 
 
 # # Knox Hill / The Hunger
@@ -236,7 +179,6 @@ def filter_by_video_analysis(reaction_vid, region, resolution=1):
 # filter_by_video_analysis(reaction_vid, region, resolution)
 
 
-
 # # Anthony Ray
 # width = 1790
 # height = 1007
@@ -273,7 +215,6 @@ def filter_by_video_analysis(reaction_vid, region, resolution=1):
 # filter_by_video_analysis(reaction_vid, region, resolution)
 
 
-
 # # thatsingerreacts
 # width = 1790
 # height = 1007
@@ -290,5 +231,3 @@ def filter_by_video_analysis(reaction_vid, region, resolution=1):
 # resolution = 1
 
 # filter_by_video_analysis(reaction_vid, region, resolution)
-
-
