@@ -194,7 +194,16 @@ def foreground_background_backchannel_segments(
             # score = seg[0][1] - seg[0][0]
             # score = np.sum(calculate_perceptual_loudness(reaction_audio[start:end]))
 
-            loudness = meter.integrated_loudness(reaction_audio[start:end])
+            # if the audio segment is smaller than the minimum pyloudnorm requires to measure loudness, pad the audio
+            if end - start < meter.block_size * sr:
+                padding = math.ceil(sr * meter.block_size) - (end - start)
+                seg_audio = np.pad(
+                    reaction_audio[start:end], ((0, padding), (0, 0)), mode="constant"
+                )
+            else:
+                seg_audio = reaction_audio[start:end]
+
+            loudness = meter.integrated_loudness(seg_audio)
             perc_of_song = 100 * (end - start) / base_audio_as_array.shape[0]
 
             segment_length = (end - start) / sr
