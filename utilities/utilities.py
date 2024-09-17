@@ -1,4 +1,4 @@
-import glob, os
+import glob, os, math
 import tempfile
 from typing import List, Tuple
 import soundfile as sf
@@ -7,80 +7,75 @@ import subprocess
 import cv2
 import json
 from silence import get_edge_silence
-from moviepy.editor import VideoFileClip, concatenate_videoclips, ColorClip, CompositeVideoClip
+from moviepy.editor import (
+    VideoFileClip,
+    concatenate_videoclips,
+    ColorClip,
+    CompositeVideoClip,
+)
 from decimal import Decimal, getcontext
 
 
-
-# def create_reaction_audio_from_path(reaction_audio, base_audio, segments):
-#     # Calculate the total length required for the new audio data
-
-#     total_length = 0
-#     for reaction_start, reaction_end, current_start, current_end, is_filler in segments:
-#         if not is_filler:
-#             total_length += reaction_end - reaction_start
-#         else:
-#             total_length += current_end - current_start
-    
-#     # Preallocate the array
-#     segmented_audio_data = np.empty(total_length, dtype=base_audio.dtype)  # Assuming both audios are of the same dtype
-#     insert_at = 0
-
-#     for reaction_start, reaction_end, current_start, current_end, is_filler in segments:
-#         if is_filler:
-#             segment_len = current_end - current_start
-#             segmented_audio_data[insert_at:insert_at+segment_len] = base_audio[current_start:current_end]
-#         else: 
-#             segment_len = reaction_end - reaction_start
-#             segmented_audio_data[insert_at:insert_at+segment_len] = reaction_audio[reaction_start:reaction_end]
-        
-#         insert_at += segment_len
-
-#     return segmented_audio_data
-
+def sec_to_time(sec):
+    minutes = math.floor(sec / 60)
+    seconds = round(sec % 60, 1)  # Round seconds to 1 decimal place
+    return f"{minutes}:{seconds:04.1f}"  # Ensure seconds are always two places
 
 
 import pickle, json
 
-def save_object_to_file(output_file, object):
+
+def save_object_to_file(output_file, object, check_collisions=False):
+    if check_collisions:
+        data_on_disk = read_object_from_file(output_file)
+        for k, v in data_on_disk.items():
+            if k not in object:
+                object[k] = v
+
     # Open the file in binary mode for pickle, text mode for JSON
-    if output_file.endswith('.pckl'):
-        with open(output_file, 'wb') as f:
+    if output_file.endswith(".pckl"):
+        with open(output_file, "wb") as f:
             pickle.dump(object, f)
     else:
-        with open(output_file, 'w') as f:  # Open in text mode for JSON
+        with open(output_file, "w") as f:  # Open in text mode for JSON
             json.dump(object, f, indent=4)
 
+
 def read_object_from_file(input_file):
-    print(f"reading {input_file}")
-    if input_file.endswith('.pckl'):
-        with open(input_file, 'rb') as f:  # Open in binary mode for pickle
-            data = pickle.load(f)
+    if os.path.exists(input_file):
+        # print(f"reading {input_file}")
+        if input_file.endswith(".pckl"):
+            with open(input_file, "rb") as f:  # Open in binary mode for pickle
+                data = pickle.load(f)
+        else:
+            with open(input_file, "r") as f:  # Open in text mode for JSON
+                data = json.load(f)
     else:
-        with open(input_file, 'r') as f:  # Open in text mode for JSON
-            data = json.load(f)
-        
+        return None
+
     return data
 
 
-
-
-conversion_frame_rate = 60 
+conversion_frame_rate = 60
 conversion_audio_sample_rate = 44100
+
 
 def samples_per_frame():
     return int(conversion_audio_sample_rate / conversion_frame_rate)
 
-def universal_frame_rate(): 
+
+def universal_frame_rate():
     return conversion_frame_rate
 
 
-
-
-
-
-
-def extract_audio(video_file, output_dir=None, sample_rate=None, preserve_silence=True, convert_to_mono=True, keep_file=True):
+def extract_audio(
+    video_file,
+    output_dir=None,
+    sample_rate=None,
+    preserve_silence=True,
+    convert_to_mono=True,
+    keep_file=True,
+):
     if output_dir is None:
         output_dir = os.path.dirname(video_file)
     if sample_rate is None:
@@ -89,22 +84,30 @@ def extract_audio(video_file, output_dir=None, sample_rate=None, preserve_silenc
     # Construct the output file path
     base_name = os.path.splitext(os.path.basename(video_file))[0]
     output_file = os.path.join(output_dir, f"{base_name}.wav")
-    
+
     if not os.path.exists(output_file):
         # Construct the ffmpeg command
-        command = f'ffmpeg -i "{video_file}" -vn -acodec pcm_s16le -ar {sample_rate} -ac 2'
-        
+        command = (
+            f'ffmpeg -i "{video_file}" -vn -acodec pcm_s16le -ar {sample_rate} -ac 2'
+        )
+
         # If preserving silence is desired, get the video duration and apply the atrim filter
         if preserve_silence:
             duration_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_file}"'
-            duration = float(subprocess.check_output(duration_command, shell=True).decode('utf-8').strip())
-            pad_duration = int(duration * sample_rate)  # Calculate the number of samples to pad
+            duration = float(
+                subprocess.check_output(duration_command, shell=True)
+                .decode("utf-8")
+                .strip()
+            )
+            pad_duration = int(
+                duration * sample_rate
+            )  # Calculate the number of samples to pad
             command += f" -af apad=whole_len={pad_duration}"
-        
+
         command += f' "{output_file}"'
         print(command)
         # Execute the command
-        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)    
+        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
 
     audio_data, sample_rate = sf.read(output_file)
     if audio_data.ndim > 1 and convert_to_mono:  # convert to mono
@@ -117,14 +120,12 @@ def extract_audio(video_file, output_dir=None, sample_rate=None, preserve_silenc
     return (audio_data, sample_rate, output_file)
 
 
-
-
 def get_frame_rate(video_file: str) -> float:
     cmd = "ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1"
     args = cmd.split(" ") + [video_file]
-    ffprobe_output = subprocess.check_output(args).decode('utf-8')
+    ffprobe_output = subprocess.check_output(args).decode("utf-8")
     # The output has the form 'num/den' so we compute the ratio to get the frame rate as a decimal number
-    num, den = map(int, ffprobe_output.split('/'))
+    num, den = map(int, ffprobe_output.split("/"))
     return num / den
 
 
@@ -134,18 +135,21 @@ def compute_precision_recall(output_segments, ground_truth, tolerance=0.5):
     fn = 0  # false negatives
 
     # Create a list to keep track of which ground truth segments have been matched
-    matched = [False]*len(ground_truth)
+    matched = [False] * len(ground_truth)
 
     for out_start, out_end, base_start, base_end, filler in output_segments:
         out_start = float(out_start)
         out_end = float(out_end)
 
-        if filler: 
+        if filler:
             continue
 
         match_found = False
         for i, (gt_start, gt_end) in enumerate(ground_truth):
-            if abs(out_start - gt_start) <= tolerance and abs(out_end - gt_end) <= tolerance:
+            if (
+                abs(out_start - gt_start) <= tolerance
+                and abs(out_end - gt_end) <= tolerance
+            ):
                 match_found = True
                 matched[i] = True
                 break
@@ -160,19 +164,16 @@ def compute_precision_recall(output_segments, ground_truth, tolerance=0.5):
     precision = tp / (tp + fp) if tp + fp > 0 else 0
     recall = tp / (tp + fn) if tp + fn > 0 else 0
 
-
     print("ground truth:", ground_truth)
 
     print(f"\nPrecision = {precision}, Recall = {recall}\n")
     return precision, recall
 
 
-
-
 def is_close(a, b, rel_tol=None, abs_tol=None):
     if rel_tol is None and abs_tol is None:
-        rel_tol = Decimal('1e-09')
-        abs_tol = Decimal('0.0')
+        rel_tol = Decimal("1e-09")
+        abs_tol = Decimal("0.0")
     elif rel_tol is None:
         rel_tol = abs_tol
     elif abs_tol is None:
@@ -195,13 +196,10 @@ def is_close(a, b, rel_tol=None, abs_tol=None):
     return difference <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
 
-
-
-
-
 from pympler import muppy, summary
 
 import sys
+
 
 def get_size(obj, seen=None):
     """Recursively find the size of an object and its attributes."""
@@ -218,10 +216,11 @@ def get_size(obj, seen=None):
     # If the object is a container, add the sizes of its items
     if isinstance(obj, (list, tuple, set, dict)):
         size += sum(get_size(i, seen) for i in obj)
-    elif hasattr(obj, '__dict__') and isinstance(obj.__dict__, dict):
+    elif hasattr(obj, "__dict__") and isinstance(obj.__dict__, dict):
         size += sum(get_size(v, seen) for v in obj.__dict__.values())
 
     return size
+
 
 def print_memory_consumption():
     # Get all objects currently in memory
@@ -233,6 +232,7 @@ def print_memory_consumption():
     for obj in largest_objs[:5]:
         print(object_description(obj), get_size(obj))
 
+
 def object_description(obj):
     """Provide a short description of the object along with a small part of its content."""
     if isinstance(obj, (list, tuple)):
@@ -243,16 +243,14 @@ def object_description(obj):
         preview = ", ".join([f"{k}: {v}" for k, v in preview_items])
         return f"Dict of size {len(obj)}: {{{preview}}}..."
     elif isinstance(obj, str):
-        return f"String of length {len(obj)}: {obj[:100]}..."  # Print only first 100 chars
+        return (
+            f"String of length {len(obj)}: {obj[:100]}..."  # Print only first 100 chars
+        )
     elif isinstance(obj, bytes):
         # For simplicity, display the first few bytes in hexadecimal
         return f"Bytes of length {len(obj)}: {obj[:10].hex()}..."
     else:
         return str(type(obj))
-
-
-
-
 
 
 ###### For input
@@ -263,11 +261,13 @@ import threading
 # A dictionary to store key-callback mappings
 input_events = {}
 
+
 # Function to set the callback for a specific key
 def on_press_key(key, callback):
     global input_events
     input_events[key] = callback
     # print('set callback for', key)
+
 
 # Function that will be called whenever a key is pressed
 def on_press(key):
@@ -276,7 +276,7 @@ def on_press(key):
         char = key.char
     except AttributeError:
         char = None
-        
+
     # If the character is in our input events, call the associated function
     if char in input_events:
         input_events[char]()
@@ -291,10 +291,12 @@ listener_thread.start()
 # set up profiling on demand
 import cProfile
 import pstats
+
 # import asyncio
 
 profile_when_possible = False
 profiler = None
+
 
 def toggle_profiling():
     global profile_when_possible
@@ -307,16 +309,16 @@ def toggle_profiling():
         profiler = cProfile.Profile()
         profiler.enable()
 
+
 def print_profiling():
     global profile_when_possible
     global profiler
     if profile_when_possible and profiler:
         profiler.disable()
-        stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+        stats = pstats.Stats(profiler).sort_stats("tottime")  # 'tottime' for total time
         stats.print_stats()
         profiler.enable()
         profile_when_possible = False
 
 
-on_press_key('¬', toggle_profiling) # option-i
-
+on_press_key("¬", toggle_profiling)  # option-i

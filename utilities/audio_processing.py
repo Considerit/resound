@@ -3,10 +3,15 @@ from scipy.signal import correlate
 from scipy.interpolate import interp1d
 
 import numpy as np
-from utilities import conversion_audio_sample_rate as sr
 import librosa
 import math
 import os
+from utilities import (
+    save_object_to_file,
+    read_object_from_file,
+    conversion_audio_sample_rate as sr,
+)
+from tqdm import tqdm  # For the progress bar
 
 
 def apply_compression(audio_data, threshold_db=-30.0, ratio=2.0):
@@ -106,19 +111,20 @@ def normalize_audio_manually(song_data, reaction_data, ref_tuple, search_window=
     return song_data, normalized_reaction_data, normalization_factor
 
 
-def get_highest_amplitude_segments(audio, segment_length, top_n):
+def get_highest_amplitude_segments(audio, segment_length):
     from scipy.signal import find_peaks
 
-    print(f"Finding the top {top_n} amplitude segments")
-
-    if top_n < 20:
-        dist = 10 * sr
-    elif top_n < 50:
-        dist = 5 * sr
-    else:
-        dist = sr
+    # if top_n < 20:
+    #     dist = 10 * sr
+    # elif top_n < 50:
+    #     dist = 5 * sr
+    # else:
+    #     dist = sr
 
     window_length = int(segment_length * sr)
+
+    dist = 2 * window_length
+
     step_size = int(0.5 * sr)
 
     amplitude_sums = np.array(
@@ -132,8 +138,8 @@ def get_highest_amplitude_segments(audio, segment_length, top_n):
     # Since we want the segments of highest amplitude, we search for the valleys of the negative signal
     peaks, _ = find_peaks(-amplitude_sums, distance=dist // step_size)
 
-    # Sort the peaks based on the amplitude and take the top_n segments
-    top_indices = peaks[np.argsort(amplitude_sums[peaks])][-top_n:] * step_size
+    # Sort the peaks based on the amplitude
+    top_indices = peaks[np.argsort(amplitude_sums[peaks])] * step_size
 
     return top_indices
 
@@ -152,7 +158,7 @@ def best_matching_segment(
 
     potential_match_start_mfcc = int(potential_match_start / hop_length)
 
-    return potential_match_start, mfcc_cosine_similarity(
+    similarity = mfcc_cosine_similarity(
         song_mfcc_segment,
         reaction_mfcc[
             :,
@@ -161,8 +167,135 @@ def best_matching_segment(
         ],
     )
 
+    return int(potential_match_start), float(similarity)
+
 
 import statistics
+
+
+def find_matches_for_loudest_parts_of_song(
+    reaction,
+    song_audio,
+    reaction_audio,
+    song_mfcc,
+    reaction_mfcc,
+    segment_length,
+    top_n,
+    good_match_threshold,
+    is_valid=None,
+):
+    print(f"Finding the best {top_n} matches for the loudest parts of the song")
+
+    from utilities import conf
+
+    match_file = os.path.join(
+        conf.get("temp_directory"), f"{reaction.get('channel')}-loudest_matches.json"
+    )
+
+    modified = False
+    cached = read_object_from_file(match_file)
+    if cached is None:
+        cached = {}
+
+    if f"{segment_length}" not in cached:
+        cached[f"{segment_length}"] = {
+            "top_song_indices": [
+                int(s)
+                for s in get_highest_amplitude_segments(song_audio, segment_length)
+            ],
+            "matches": {},
+        }
+        modified = True
+
+    top_song_indices = cached[f"{segment_length}"]["top_song_indices"]
+    matches = {int(k): v for k, v in cached[f"{segment_length}"]["matches"].items()}
+
+    hop_length = conf.get("hop_length")
+    window_length = int(segment_length * sr)
+
+    best_matching_indices = []
+    rejects = []
+
+    for song_time in tqdm(
+        top_song_indices,
+        desc="Matching loudest part of song in reaction",
+        ncols=100,
+    ):
+        if song_time not in matches:
+            song_segment = song_audio[song_time : song_time + window_length]
+            song_mfcc_segment = song_mfcc[
+                :,
+                int(song_time / hop_length) : int(
+                    (song_time + window_length) / hop_length
+                ),
+            ]
+
+            try:
+                reaction_start = max(
+                    song_time, reaction.get("start_reaction_search_at", 0)
+                )
+                reaction_end = reaction.get(
+                    "end_reaction_search_at", len(reaction_audio)
+                )
+                reaction_audio_segment = reaction_audio[reaction_start:reaction_end]
+                reaction_mfcc_segment = reaction_mfcc[
+                    :, int(reaction_start / hop_length) : int(reaction_end / hop_length)
+                ]
+
+            except:
+                reaction_start = song_time
+                reaction_end = len(reaction_audio)
+                reaction_audio_segment = reaction_audio[reaction_start:reaction_end]
+                reaction_mfcc_segment = reaction_mfcc[
+                    :, int(reaction_start / hop_length) : int(reaction_end / hop_length)
+                ]
+
+            match, score = best_matching_segment(
+                song_segment,
+                reaction_audio_segment,
+                song_mfcc_segment,
+                reaction_mfcc_segment,
+                hop_length,
+            )
+
+            if not math.isnan(score):
+                reaction_time = reaction_start + match
+                rs_match = ((song_time, reaction_time), score)
+            else:
+                rs_match = None
+
+            matches[song_time] = rs_match
+            modified = True
+
+        rs_match = matches[song_time]
+
+        if rs_match is not None:
+            score = rs_match[1]
+            if score >= good_match_threshold and (
+                not is_valid or is_valid(rs_match[0][0], rs_match[0][1])
+            ):
+                best_matching_indices.append(rs_match)
+            else:
+                rejects.append(rs_match)
+
+        if len(best_matching_indices) >= top_n:
+            break
+
+    if modified:
+        cached[f"{segment_length}"]["matches"] = matches
+        save_object_to_file(match_file, cached)
+
+    if len(best_matching_indices) < top_n:
+        missing = top_n - len(best_matching_indices)
+        rejects.sort(key=lambda x: x[1], reverse=True)
+        cheats = rejects[:missing]
+    else:
+        cheats = []
+
+    top_matches = best_matching_indices + cheats
+    top_matches.sort(key=lambda x: x[1], reverse=True)
+
+    return top_matches
 
 
 def normalize_reaction_audio(
@@ -181,44 +314,16 @@ def normalize_reaction_audio(
     print("\tNormalizing audio")
     print("\t\tGetting highest amplitude segments")
 
-    hop_length = conf.get("hop_length")
-
-    top_song_indices = get_highest_amplitude_segments(song_audio, segment_length, top_n)
-    window_length = int(segment_length * sr)
-
-    best_matching_indices = []
-
-    for idx, index in enumerate(top_song_indices):
-        song_segment = song_audio[index : index + window_length]
-        song_mfcc_segment = song_mfcc[
-            :, int(index / hop_length) : int((index + window_length) / hop_length)
-        ]
-
-        reaction_start = max(index, reaction.get("start_reaction_search_at", 0))
-        reaction_end = reaction.get("end_reaction_search_at", len(reaction_audio))
-
-        reaction_audio_segment = reaction_audio[reaction_start:reaction_end]
-        reaction_mfcc_segment = reaction_mfcc[
-            :, int(reaction_start / hop_length) : int(reaction_end / hop_length)
-        ]
-
-        match, score = best_matching_segment(
-            song_segment,
-            reaction_audio_segment,
-            song_mfcc_segment,
-            reaction_mfcc_segment,
-            hop_length,
-        )
-        if not math.isnan(score):
-            best_matching_indices.append(((index, reaction_start + match), score))
-            print(
-                f"\t\t{idx}: {score}  {index / sr} <=> {(reaction_start + match) / sr}"
-            )
-
-            # if score > good_match_threshold and top_n > 50:
-            #     break
-
-    top_matches = [b for b in best_matching_indices if b[1] > good_match_threshold]
+    top_matches = find_matches_for_loudest_parts_of_song(
+        reaction,
+        song_audio,
+        reaction_audio,
+        song_mfcc,
+        reaction_mfcc,
+        segment_length,
+        top_n,
+        good_match_threshold,
+    )
 
     if len(top_matches) > 0:
         top_matches.sort(key=lambda x: x[1], reverse=True)
