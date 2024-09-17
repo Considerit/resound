@@ -11,7 +11,10 @@ import matplotlib.pyplot as plt
 from scipy import signal
 from scipy.stats import mode
 
-from backchannel_isolator.track_separation import separate_vocals
+from backchannel_isolator.track_separation import (
+    separate_vocals_for_song,
+    separate_vocals_for_aligned_reaction,
+)
 
 from utilities.audio_processing import audio_percentile_loudness, convert_to_mono
 from utilities import conversion_audio_sample_rate as sr
@@ -497,14 +500,15 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
     if len(song) > len(reaction_audio):
         song = song[: len(reaction_audio)]
     else:
-        conf.get("load_aligned_reaction_data")(reaction.get("channel"))
-
-        original_reaction = reaction.get("aligned_reaction_data")
-
-        extra_reaction = original_reaction[
-            len(song) :
-        ]  # extract this from the original reaction audio, not the source separated content
         reaction_audio = reaction_audio[: len(song)]
+
+    conf.get("load_aligned_reaction_data")(reaction.get("channel"))
+
+    original_reaction = reaction.get("aligned_reaction_data")
+
+    extra_reaction = original_reaction[
+        len(song) :
+    ]  # extract this from the original reaction audio, not the source separated content
 
     if not os.path.exists(output_path):
         min_segment_length = 0.01
@@ -692,43 +696,19 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
     backchannel_audio_path = get_reactor_backchannel_path(reaction)
     if not os.path.exists(backchannel_audio_path):
         output_dir = conf.get("temp_directory")
-        reaction_audio = reaction.get("aligned_audio_path")
-        base_audio = conf.get("base_audio_path")
-
-        vocal_path_filename = "vocals-post-high-passed.wav"
-        base_dir = os.path.splitext(base_audio)[0].split("/")[-1]
-
-        song_separation_path = os.path.join(output_dir, base_dir)
-        react_separation_path = os.path.join(
-            output_dir, os.path.splitext(reaction_audio)[0].split("/")[-1]
-        )
-
-        reaction_vocals_path = os.path.join(react_separation_path, vocal_path_filename)
-        song_vocals_path = os.path.join(song_separation_path, vocal_path_filename)
 
         backchannel_filename = f"{reaction.get('channel')}-isolated_backchannel.json"
         backchannel_path = os.path.join(output_dir, backchannel_filename)
 
         song_length = len(conf.get("song_audio_data")) / sr + 1
 
-        if not os.path.exists(reaction_vocals_path):
-            separate_vocals(
-                react_separation_path,
-                reaction_audio,
-                vocal_path_filename,
-                duration=song_length,
-            )
-
-        if not os.path.exists(song_vocals_path):
-            print(
-                f"\tIsolating backchannel from {reaction_audio} to {backchannel_path}"
-            )
-            separate_vocals(
-                song_separation_path,
-                base_audio,
-                vocal_path_filename,
-                duration=song_length,
-            )
+        (
+            __,
+            __,
+            reaction_vocals_path,
+            react_separation_path,
+        ) = separate_vocals_for_aligned_reaction(reaction)
+        __, __, song_vocals_path, __ = separate_vocals_for_song()
 
         print(f"\tWriting backchannel to {backchannel_audio_path}")
 
