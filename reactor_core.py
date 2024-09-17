@@ -29,6 +29,13 @@ import cProfile
 import pstats
 
 from utilities import print_profiling
+from utilities.locks import (
+    is_locked,
+    request_lock,
+    free_lock,
+    free_all_locks,
+    other_locks,
+)
 
 
 def remove_unneeded_files(song_def):
@@ -132,7 +139,7 @@ def handle_reaction_video(reaction, extend_by=15):
 
     create_aligned_reaction_video(reaction, extend_by=extend_by)
 
-    if not conf["isolate_commentary"]:
+    if not conf.get("isolate_commentary"):
         return []
 
     _, _, aligned_reaction_audio_path = extract_audio(
@@ -145,7 +152,7 @@ def handle_reaction_video(reaction, extend_by=15):
         reaction, extended_by=extend_by
     )
 
-    if not conf["create_reactor_view"]:
+    if not conf.get("create_reactor_view"):
         return []
 
     # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
@@ -153,64 +160,6 @@ def handle_reaction_video(reaction, extend_by=15):
 
     if reaction["asides"]:
         create_asides(reaction)
-
-
-current_locks = {}
-
-
-def is_locked(lock_str):
-    full_output_dir = conf.get("temp_directory")
-    lock_file = os.path.join(full_output_dir, f"locked-{lock_str}")
-    if os.path.exists(lock_file):
-        return True
-    return False
-
-
-def request_lock(lock_str):
-    full_output_dir = conf.get("temp_directory")
-    lock_file = os.path.join(full_output_dir, f"locked-{lock_str}")
-    if os.path.exists(lock_file):
-        return False
-
-    if lock_str == "compilation":
-        if len(other_locks()) > 0:
-            return False
-
-    global current_locks
-    lock = open(lock_file, "w")
-    lock.write(f"yo")
-    lock.close()
-    current_locks[lock_str] = True
-
-    return True
-
-
-def free_lock(lock_str):
-    global current_locks
-    full_output_dir = conf.get("temp_directory")
-    lock_file = os.path.join(full_output_dir, f"locked-{lock_str}")
-    if os.path.exists(lock_file):
-        os.remove(lock_file)
-    del current_locks[lock_str]
-
-
-def free_all_locks():
-    global current_locks
-    locks = list(current_locks.keys())
-    for lock in locks:
-        free_lock(lock)
-
-
-def other_locks():
-    global current_locks
-    full_output_dir = conf.get("temp_directory")
-    # Use glob to get all files that match the pattern "locked-*"
-    lock_files = glob.glob(os.path.join(full_output_dir, "locked-*"))
-
-    # Strip off the "locked-" prefix and directory structure for each file
-    stripped_files = [os.path.basename(f)[7:] for f in lock_files]
-
-    return [lock for lock in stripped_files if lock not in current_locks]
 
 
 from moviepy.editor import VideoFileClip
@@ -231,20 +180,12 @@ def create_reaction_compilation(
         if is_locked("compilation"):
             return []
 
-        conf.setdefault("step_size", 1)
-        conf.setdefault("min_segment_length_in_seconds", 3)
-        conf.setdefault("reverse_search_bound", conf["min_segment_length_in_seconds"])
-        conf.setdefault("peak_tolerance", 0.5)
-        conf.setdefault("expansion_tolerance", 0.7)
         step_size = conf.get("step_size")
         min_segment_length_in_seconds = conf.get("min_segment_length_in_seconds")
 
         # Convert seconds to samples
         n_samples = int(step_size * sr)
         first_n_samples = int(min_segment_length_in_seconds * sr)
-
-        conf["n_samples"] = n_samples
-        conf["first_n_samples"] = first_n_samples
 
         temp_directory = conf.get("temp_directory")
         song_directory = conf.get("song_directory")
@@ -343,7 +284,7 @@ def create_reaction_compilation(
         print("COMP EXISTS?", compilation_exists, compilation_path)
         if (
             not compilation_exists
-            and conf["create_compilation"]
+            and conf.get("create_compilation")
             and request_lock("compilation")
         ):
             # handle_all_reaction_videos(False)
@@ -471,19 +412,19 @@ def print_progress(progress):
 results_output_dir = "bounded"
 
 
+def load_songs(lst):
+    loaded = []
+    for s in lst:
+        f = os.path.join(f"library/{s}.json")
+        print(f)
+        defn = json.load(open(f))
+        loaded.append(defn)
+    return loaded
+
+
 import traceback
 
 if __name__ == "__main__":
-
-    def load_songs(lst):
-        loaded = []
-        for s in lst:
-            f = os.path.join(f"library/{s}.json")
-            print(f)
-            defn = json.load(open(f))
-            loaded.append(defn)
-        return loaded
-
     from library import (
         songs,
         drafts,
@@ -509,16 +450,6 @@ if __name__ == "__main__":
     for song in put_on_ice:
         clean_up(song, on_ice=True)
 
-    for song in load_songs(
-        [
-            "Ren - Humble",
-            "Ren - Ocean",
-            "Ren x Chinchilla - Chalk Outlines",
-            "Ren - Crutch",
-        ]
-    ):
-        remove_unneeded_files(song)
-
     manifest_options = {
         "only_manifest": True,
         "refresh_manifest": True,
@@ -539,9 +470,9 @@ if __name__ == "__main__":
         "create_alignment": True,
         "save_alignment_metadata": True,
         "output_alignment_video": True,
-        "isolate_commentary": True,
-        "create_reactor_view": True,
-        "create_compilation": True,
+        "isolate_commentary": False,
+        "create_reactor_view": False,
+        "create_compilation": False,
         "download_and_parse": True,
         "alignment_test": False,
         "draft": True,
