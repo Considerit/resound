@@ -27,7 +27,7 @@ from aligner.images.embedded_video_finder import (
 
 
 def build_image_matches(
-    reaction, use_dhash=True, use_phash=True, fps=4, visualize=True
+    reaction, use_dhash=True, use_phash=True, fps=2, min_coverage=0.8, visualize=True
 ):
     channel = reaction.get("channel")
 
@@ -127,14 +127,14 @@ def build_image_matches(
 
     unzipped_hash_matches.append([music_times, reaction_times])
 
-    filtered_matches = filter_matches_by_intercept(unzipped_hash_matches[0])
+    filtered_matches = filter_matches_by_intercept(unzipped_hash_matches[0], fps=fps)
     filtered_first = filtered_matches[1]
 
     # filtered_matches = unzipped_hash_matches
 
     num_rejected = len(filtered_matches[1][0])
     while num_rejected > 0:
-        filtered_matches = filter_matches_by_intercept(filtered_matches[0])
+        filtered_matches = filter_matches_by_intercept(filtered_matches[0], fps=fps)
         num_rejected = len(filtered_matches[1][0])
         print("num_rejected", num_rejected)
 
@@ -143,10 +143,26 @@ def build_image_matches(
         list(zip(filtered_matches[0][0], filtered_matches[0][1]))
     )
 
+    # Get the end points (and filter out segments outside those bounds)
+    segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
+
+    # Calculate coverage of the song by segments. If coverage is too little, then
+    # we consider image alignment to have failed and be too unreliable with this
+    # reaction.
+
     # Step 6: Plot the matches
     print("Plotting")
     if visualize:
         plot_matches(reaction, segments)
+
+    coverage = segment_coverage_of_song(segments, fps=fps)
+    if coverage < min_coverage:
+        print(
+            f"**** {channel}: Failed to get reliable image alignment (coverage={coverage})"
+        )
+        return None
+    else:
+        print(f"**** {channel}: Segment coverage of image alignment is {coverage}")
 
     return segments
 
@@ -156,6 +172,92 @@ def build_image_matches(
     # metadata = read_object_from_file(alignment_metadata_file)
     # reaction.update(metadata)
     # best_path = reaction.get("best_path")
+
+
+def segment_coverage_of_song(segments, fps):
+    song_length = len(conf.get("song_audio_data")) / sr
+
+    checks = 0
+    covered = 0
+
+    for t in range(0, int(song_length), 4):
+        for s in segments:
+            if s["min_music_time"] <= t <= s["max_music_time"]:
+                covered += 1
+                break
+
+        checks += 1
+
+    return covered / checks
+
+
+def find_reaction_endpoints(segments, max_dist_from_end=10):
+    song_length = len(conf.get("song_audio_data")) / sr
+
+    # Identify reaction_start and reaction_end.
+    reaction_start = None
+    start_intercept = None
+    reaction_end = None
+    end_intercept = None
+
+    for segment in segments:
+        y_int = segment["y-intercept"]
+        min_t = segment["min_music_time"]
+        max_t = segment["max_music_time"]
+
+        if min_t - max_dist_from_end <= 0 and (
+            not reaction_start or start_intercept > y_int
+        ):
+            start_intercept = y_int
+            reaction_start = segment
+
+        if max_t + max_dist_from_end >= song_length and (
+            not reaction_end or end_intercept < y_int
+        ):
+            end_intercept = y_int
+            reaction_end = segment
+
+    # Fill to start or end if necessary
+    if reaction_start:
+        min_t = reaction_start["min_music_time"]
+        if min_t > 1:
+            reaction_start["backfilled_by"] = min_t
+
+        reaction_start["min_music_time"] = 0
+
+    if reaction_end:
+        max_t = reaction_end["max_music_time"]
+        if song_length - max_t > 1:
+            reaction_end["backfilled_by"] = song_length - max_t
+        reaction_end["max_music_time"] = song_length
+
+    # Filter out segments that aren't within the new bounds
+    if reaction_start and reaction_end:
+        segments = [
+            s
+            for s in segments
+            if s["y-intercept"] >= start_intercept and s["y-intercept"] <= end_intercept
+        ]
+
+    return segments, reaction_start, reaction_end
+
+
+def get_frame_sample(video_path, fps, video=None):
+    if video is None:
+        video = cv2.VideoCapture(video_path)
+
+    # Get video properties
+    total_fps = video.get(cv2.CAP_PROP_FPS)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = total_frames / total_fps  # total duration in seconds
+
+    # Frame interval based on target FPS
+    frame_interval = int(total_fps / fps)
+
+    # Create list of frame indices to extract
+    frame_indices = list(range(0, total_frames, frame_interval))
+
+    return frame_indices, total_fps
 
 
 def extract_frames(video_path, fps=4, crop_coords=None):
@@ -168,18 +270,10 @@ def extract_frames(video_path, fps=4, crop_coords=None):
     :return: List of tuples (timestamp, frame) where each frame is a resized PIL image.
     """
     video = cv2.VideoCapture(video_path)
+
     frames = []
 
-    # Get video properties
-    total_fps = video.get(cv2.CAP_PROP_FPS)
-    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = total_frames / total_fps  # total duration in seconds
-
-    # Frame interval based on target FPS
-    frame_interval = int(total_fps / fps)
-
-    # Create list of frame indices to extract
-    frame_indices = list(range(0, total_frames, frame_interval))
+    frame_indices, total_fps = get_frame_sample(fps=fps, video=video)
 
     for frame_idx in tqdm(frame_indices, desc="Extracting frames", ncols=100):
         # Set the video position to the desired frame
@@ -258,7 +352,7 @@ def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):
 
 
 def filter_matches_by_intercept(
-    matches, time_window=8, intercept_tolerance=0.1, peers_sharing_intercept=8
+    matches, fps, time_window=8, intercept_tolerance=0.1, density=0.25
 ):
     """
     Filters out (music_vid_time, reaction_vid_time) matches that do not form a line
@@ -267,9 +361,12 @@ def filter_matches_by_intercept(
     :param matches: List of tuples (music_vid_time, reaction_vid_time).
     :param time_window: The window of time (in seconds) to look for nearby points.
     :param intercept_tolerance: The allowed deviation from a slope of 1.
-    :param peers_sharing_intercept: The number of neighboring peers that must form a slope of 1.
+    :param density: The % of peers in region that must form a slope of 1.
     :return: Filtered list of matches.
     """
+
+    num_samples_in_window = time_window * fps
+    peers_sharing_intercept = int(num_samples_in_window * density)
 
     music_times, reaction_times = np.array(matches[0]), np.array(matches[1])
 
@@ -444,8 +541,7 @@ def create_segments_from_matches(
         segment["min_music_time"] = min(music_times)
         segment["max_music_time"] = max(music_times)
 
-    # Step 5: Absorb segments to get rid of inferior segments
-    segments_to_keep = []
+        assert segment["min_music_time"] < segment["max_music_time"]
 
     return segments.values()
 
@@ -474,7 +570,9 @@ def plot_matches(reaction, segments):
 
     for segment in segments:
         plt.scatter(
-            [r[0] for r in segment["matches"]], [r[1] for r in segment["matches"]], s=5
+            [r[0] for r in segment["matches"]],
+            [r[1] for r in segment["matches"]],
+            s=5,
         )
 
     for segment in segments:
