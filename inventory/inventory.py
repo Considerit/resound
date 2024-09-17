@@ -165,14 +165,16 @@ def search_reactions(
             print(f"Error fetching video data: {e}")
 
 
-def search_recommended_channels(artist, song, search, reactions, test):
+def search_recommended_channels(
+    artist, song, search, reactions, test, manifest, force=False
+):
     channels = get_recommended_channels()  # include_all=True)
 
     song_string = f'"{artist} {song} {search[0]}"'
 
     print("\tSearching recommended channels")
     for idx, channel in enumerate(channels):
-        if channel.get("searched_for", {}).get(song_string, False):
+        if not force and channel.get("searched_for", {}).get(song_string, False):
             continue
 
         print(f"\t\t[{100 * idx / len(channels):.1f}%] Checking {channel.get('title')}")
@@ -216,6 +218,7 @@ def search_recommended_channels(artist, song, search, reactions, test):
             }
 
             reactions[item["id"]] = reaction
+            save_reactions_manifest(manifest, artist, song)
 
 
 def search_for_song(artist, song, search):
@@ -289,7 +292,7 @@ def create_manifest(song_def, artist, song_title, song_search, search, test=None
     query = generate_youtube_search_string(search_defs.get(song_key))
     print(query)
 
-    for sort in ["relevance", "date", "rating", "viewCount", "title"]:
+    for sort in ["relevance", "date"]:  # , "rating", "viewCount", "title"]:
         search_reactions(
             artist,
             song_title,
@@ -305,7 +308,13 @@ def create_manifest(song_def, artist, song_title, song_search, search, test=None
 
     if not song_def.get("search_channel_id", None):
         search_recommended_channels(
-            artist, song_title, search, manifest["reactions"], test
+            artist,
+            song_title,
+            search,
+            manifest["reactions"],
+            test,
+            manifest,
+            force=True,
         )
 
     save_reactions_manifest(manifest, artist, song_title)
@@ -607,9 +616,15 @@ def filter_and_augment_manifest(artist, song, force=False):
             except:
                 reaction["views"] = -1
 
-            reaction_duration = int(duration.split(":")[0]) * 60 + int(
-                duration.split(":")[1]
-            )
+            if isinstance(duration, str):
+                minutes, seconds = duration.split(":")
+                minutes = int(minutes) * 60
+                seconds = int(seconds)
+            else:
+                minutes = 0
+                seconds = duration
+
+            reaction_duration = minutes + seconds
             if song_duration > reaction_duration - 5:
                 print(
                     "DELETING for DURATION",

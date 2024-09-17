@@ -25,7 +25,7 @@ class YoutubeSearch:
         response = None
         try:
             response = requests.get(url, timeout=5).text
-            time.sleep(0.75)
+            time.sleep(0.4)
         except Exception as e:
             print("Problem with the request, pausing for 10 sec")
             time.sleep(10)
