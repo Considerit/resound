@@ -5,8 +5,6 @@ import math
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
-from aligner.sound_landmarks import find_sound_landmarks_in_reaction, contains_landmark
-
 from prettytable import PrettyTable
 
 
@@ -115,8 +113,6 @@ def path_score(path, reaction, end=None, start=0):
 
     segment_penalty = 1
 
-    sound_landmarks = find_sound_landmarks_in_reaction(reaction)
-
     for segment in path:
         if len(segment) == 5:
             (
@@ -157,22 +153,6 @@ def path_score(path, reaction, end=None, start=0):
 
         if current_end - current_start < sr:  # and not is_filler
             segment_penalty *= 0.98
-
-        if not is_filler:
-            landmarks_spanned, landmarks_matched, __ = contains_landmark(
-                sound_landmarks,
-                current_start,
-                current_end,
-                reaction_start,
-                reaction_end,
-            )
-
-            if landmarks_spanned == landmarks_matched:
-                for __ in range(landmarks_spanned):
-                    segment_penalty *= 1.02
-            else:
-                for __ in range(landmarks_spanned - landmarks_matched):
-                    segment_penalty *= 0.99
 
     # Derivation for below:
     #   earliness = |R| / temporal_center
