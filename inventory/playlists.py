@@ -32,11 +32,9 @@ except:
 if last_updated is None or datetime.now() - last_updated > timedelta(days=1):
     # if the access token expires, you need to delete the access token line in the .env file,
     #   and make sure redirect_url is None, to reset the process.
-    redirect_url = "https://localhost/?state=Python-YouTube&code=4/0AdLIrYfgwApJE1265RaaQuI1CUI6cTd82yTsyQho7EKlci_69n-sJ1RPCL4toK1Xs3vxuQ&scope=profile%20https://www.googleapis.com/auth/youtube%20https://www.googleapis.com/auth/userinfo.profile"
+    redirect_url = "https://localhost/?state=Python-YouTube&code=4/0AQlEd8w7iCwTNGMrIQV9KGk7Azj6tSvt_RJqvlG2c8MZRi29B6urFaM62VPMfYIT47zvzA&scope=profile%20https://www.googleapis.com/auth/youtube%20https://www.googleapis.com/auth/userinfo.profile"
 
-    client = Client(
-        client_id=youtube_oauth_client_id, client_secret=youtube_client_secret
-    )
+    client = Client(client_id=youtube_oauth_client_id, client_secret=youtube_client_secret)
 
     if redirect_url is not None:
         existing_values = {}
@@ -53,9 +51,9 @@ if last_updated is None or datetime.now() - last_updated > timedelta(days=1):
             ).access_token
 
             existing_values["youtube_access_token"] = access_token
-            existing_values[
-                "youtube_access_token_last_updated"
-            ] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            existing_values["youtube_access_token_last_updated"] = datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
 
             # Write everything back to the .env file
             with open(".env", "w") as file:
@@ -104,9 +102,7 @@ def get_or_create_playlist(title, description):
             part="snippet,status",
             body={
                 "snippet": {"title": title, "description": description},
-                "status": {
-                    "privacyStatus": "public"  # Can be public, private, or unlisted
-                },
+                "status": {"privacyStatus": "public"},  # Can be public, private, or unlisted
             },
         )
         return new_playlist.id  # Return new playlist ID
@@ -189,7 +185,9 @@ if __name__ == "__main__":
     from inventory.inventory import get_manifest_path
 
     playlist_title = "Reactions to Crutch by Ren (ft Bibi)"
-    playlist_description = "Reactions to Crutch that were included in this channel's respective Reaction Concert."
+    playlist_description = (
+        "Reactions to Crutch that were included in this channel's respective Reaction Concert."
+    )
 
     playlist_id = get_or_create_playlist(playlist_title, playlist_description)
     print(playlist_id)

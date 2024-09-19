@@ -14,6 +14,10 @@ from moviepy.editor import (
     CompositeVideoClip,
 )
 from decimal import Decimal, getcontext
+import os
+import subprocess
+import glob
+import ffmpeg
 
 
 def sec_to_time(sec):
@@ -87,21 +91,15 @@ def extract_audio(
 
     if not os.path.exists(output_file):
         # Construct the ffmpeg command
-        command = (
-            f'ffmpeg -i "{video_file}" -vn -acodec pcm_s16le -ar {sample_rate} -ac 2'
-        )
+        command = f'ffmpeg -i "{video_file}" -vn -acodec pcm_s16le -ar {sample_rate} -ac 2'
 
         # If preserving silence is desired, get the video duration and apply the atrim filter
         if preserve_silence:
             duration_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_file}"'
             duration = float(
-                subprocess.check_output(duration_command, shell=True)
-                .decode("utf-8")
-                .strip()
+                subprocess.check_output(duration_command, shell=True).decode("utf-8").strip()
             )
-            pad_duration = int(
-                duration * sample_rate
-            )  # Calculate the number of samples to pad
+            pad_duration = int(duration * sample_rate)  # Calculate the number of samples to pad
             command += f" -af apad=whole_len={pad_duration}"
 
         command += f' "{output_file}"'
@@ -146,10 +144,7 @@ def compute_precision_recall(output_segments, ground_truth, tolerance=0.5):
 
         match_found = False
         for i, (gt_start, gt_end) in enumerate(ground_truth):
-            if (
-                abs(out_start - gt_start) <= tolerance
-                and abs(out_end - gt_end) <= tolerance
-            ):
+            if abs(out_start - gt_start) <= tolerance and abs(out_end - gt_end) <= tolerance:
                 match_found = True
                 matched[i] = True
                 break
@@ -243,9 +238,7 @@ def object_description(obj):
         preview = ", ".join([f"{k}: {v}" for k, v in preview_items])
         return f"Dict of size {len(obj)}: {{{preview}}}..."
     elif isinstance(obj, str):
-        return (
-            f"String of length {len(obj)}: {obj[:100]}..."  # Print only first 100 chars
-        )
+        return f"String of length {len(obj)}: {obj[:100]}..."  # Print only first 100 chars
     elif isinstance(obj, bytes):
         # For simplicity, display the first few bytes in hexadecimal
         return f"Bytes of length {len(obj)}: {obj[:10].hex()}..."
@@ -280,6 +273,57 @@ def on_press(key):
     # If the character is in our input events, call the associated function
     if char in input_events:
         input_events[char]()
+
+
+def get_video_fps(video_file):
+    """Get the FPS of the video using OpenCV."""
+    if not os.path.exists(video_file):
+        print(f"File not found: {video_file}")
+        return None
+
+    # Open the video file
+    cap = cv2.VideoCapture(video_file)
+
+    if not cap.isOpened():
+        print(f"Error: Could not open video file {video_file}")
+        return None
+
+    # Get the FPS property
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    # Release the video capture object
+    cap.release()
+
+    if fps > 0:
+        return fps
+    else:
+        print(f"Error: Could not retrieve FPS for {video_file}")
+        return None
+
+
+def reencode_to_30fps(video_file, output_file):
+    """Reencode the video at 30 FPS using ffmpeg."""
+    try:
+        ffmpeg.input(video_file).output(output_file, r=30).run(overwrite_output=True)
+        print(f"Reencoded {video_file} to {output_file} at 30 FPS.")
+    except ffmpeg.Error as e:
+        print(f"Error reencoding {video_file}: {e}")
+
+
+def check_and_fix_fps(video_file):
+    print("FIXING", video_file)
+    """Check if the FPS is even, and if not, reencode the video at 30 FPS."""
+    fps = get_video_fps(video_file)
+    if fps is None:
+        return
+
+    if int(fps) % 2 != 0:
+        print(f"FPS {fps} of {video_file} is not even. Reencoding to 30 FPS.")
+        output_file = os.path.splitext(video_file)[0] + "_30fps.mp4"
+        reencode_to_30fps(video_file, output_file)
+
+        # Rename to .mp4 if reencoded to 30 FPS
+        os.rename(output_file, os.path.splitext(video_file)[0] + ".mp4")
 
 
 # Start the listener

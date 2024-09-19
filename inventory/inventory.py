@@ -14,7 +14,7 @@ import ffmpeg
 
 
 from utilities import conversion_audio_sample_rate as sr
-from utilities.utilities import extract_audio
+from utilities.utilities import extract_audio, check_and_fix_fps
 
 from inventory.channels import (
     get_recommended_channels,
@@ -26,6 +26,7 @@ from inventory.channels import (
 import yt_dlp
 
 from inventory.youtubesearch import YoutubeSearch
+from inventory.playlists import get_existing_video_ids
 
 from pyyoutube import Client, PyYouTubeException
 
@@ -54,9 +55,7 @@ def process_reaction(song, artist, search, item, reactions, test):
                 channel.get("channelId") for channel in get_recommended_channels()
             )
             if channel_id not in recommended_channels:
-                print(
-                    f"{reactor_name} doesn't have a videoid AND is not a recommended channel"
-                )
+                print(f"{reactor_name} doesn't have a videoid AND is not a recommended channel")
             return False
         video_id = item["id"]["videoId"]
 
@@ -165,9 +164,7 @@ def search_reactions(
             print(f"Error fetching video data: {e}")
 
 
-def search_recommended_channels(
-    artist, song, search, reactions, test, manifest, force=False
-):
+def search_recommended_channels(artist, song, search, reactions, test, manifest, force=False):
     channels = get_recommended_channels()  # include_all=True)
 
     song_string = f'"{artist} {song} {search[0]}"'
@@ -314,19 +311,22 @@ def create_manifest(song_def, artist, song_title, song_search, search, test=None
             manifest["reactions"],
             test,
             manifest,
-            force=True,
+            force=False,
         )
 
     save_reactions_manifest(manifest, artist, song_title)
 
-    if song_def.get("include_videos", False) and not song_def.get(
-        "skip_searching_recommended"
-    ):
+    if (
+        song_def.get("include_videos", False) or song_def.get("playlist_id", False)
+    ) and not song_def.get("skip_searching_recommended"):
 
         def passes_muster(x):
             return True
 
-        to_include = song_def.get("include_videos")
+        to_include = song_def.get("include_videos", [])
+        if song_def.get("playlist_id", False):
+            to_include += get_existing_video_ids(song_def.get("playlist_id"))
+
         print("TRYING TO GET INCLUDED VIDEOS", to_include)
         for videoid in to_include:
             if videoid not in manifest["reactions"]:
@@ -344,17 +344,17 @@ def create_manifest(song_def, artist, song_title, song_search, search, test=None
                     )
                     assert videoid in manifest["reactions"]
                 else:
-                    raise (Exception(f"COULD NOT FIND {videoid}"))
+                    print("COULD NOT FIND {videoid}")
             else:
                 print(f"\t{videoid} Already in manifest")
 
-            manifest["reactions"][videoid]["download"] = True
+            # manifest["reactions"][videoid]["download"] = True
 
     save_reactions_manifest(manifest, artist, song_title)
 
     refresh_reactors_inventory()
 
-    filter_and_augment_manifest(artist, song_title)
+    filter_and_augment_manifest(artist, song_title, force=True)
 
 
 def get_manifest_path(artist, song):
@@ -394,17 +394,24 @@ def download_and_parse_reactions(
 def download_song(song_directory, artist, song):
     song_file = os.path.join(song_directory, f"{artist} - {song}")
 
-    if not os.path.exists(song_file + ".mp4") and not os.path.exists(
-        song_file + ".webm"
-    ):
+    if not os.path.exists(song_file + ".mp4") and not os.path.exists(song_file + ".webm"):
         song_data = get_reactions_manifest(artist, song)
         v_id = song_data["main_song"]["id"]
 
         cmd = f"yt-dlp -o \"{song_file + '.webm'}\" https://www.youtube.com/watch\?v\={v_id}\;"
         # print(cmd)
         subprocess.run(cmd, shell=True, check=True)
+
     else:
         print(f"{song_file} exists")
+
+    weird_output = os.path.join(song_file + ".webm.mp4")
+    if os.path.exists(weird_output):
+        os.rename(weird_output, song_file + ".mp4")
+
+    matching_files = glob.glob(f"{song_file}.*")
+    if any(f.endswith((".mp4", ".webm")) for f in matching_files):
+        check_and_fix_fps(matching_files[0])
 
 
 def download_included_reactions(song_directory, artist, song):
@@ -438,6 +445,8 @@ def download_included_reactions(song_directory, artist, song):
             if os.path.exists(weird_output):
                 os.rename(weird_output, extracted_output)
 
+        check_and_fix_fps(extracted_output)
+
         # Get all reaction video files
         mkv_videos = glob.glob(os.path.join(full_reactions_path, "*.mkv"))
 
@@ -452,9 +461,7 @@ def download_included_reactions(song_directory, artist, song):
             if any(ext in file_name_without_ext for ext in [".webm", ".mp4", ".mkv"]):
                 file_name_without_ext = os.path.splitext(file_name_without_ext)[0]
 
-            output_file = os.path.join(
-                full_reactions_path, file_name_without_ext + ".mp4"
-            )
+            output_file = os.path.join(full_reactions_path, file_name_without_ext + ".mp4")
 
             print(f"OUTPUT FILE {output_file}")
             ffmpeg.input(mkv_video).output(output_file).run()
@@ -465,15 +472,6 @@ def download_included_reactions(song_directory, artist, song):
         else:
             reaction_file = output
 
-        # from backchannel_isolator.track_separation import separate_vocals
-
-        # vocal_path_filename = 'vocals-post-high-passed.wav'
-        # separation_path = os.path.splitext(reaction_file)[0]
-        # vocals_path = os.path.join(separation_path, vocal_path_filename)
-        # if not os.path.exists( vocals_path ):
-        #     reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_file)
-        #     separate_vocals(separation_path, reaction_audio_path, vocal_path_filename, duration=len(reaction_audio_data)/float(sr))
-
 
 def get_selected_reactions(artist, song, filter_by_downloaded=True):
     song_data = get_reactions_manifest(artist, song)
@@ -482,9 +480,7 @@ def get_selected_reactions(artist, song, filter_by_downloaded=True):
     for _, reaction in song_data["reactions"].items():
         key = reaction["reactor"]
 
-        if reaction.get("download") or (
-            not filter_by_downloaded and key not in reaction_inventory
-        ):
+        if reaction.get("download") or (not filter_by_downloaded and key not in reaction_inventory):
             if key in reaction_inventory:
                 key = (
                     reaction["reactor"] + "_" + reaction["id"]
@@ -610,17 +606,25 @@ def filter_and_augment_manifest(artist, song, force=False):
 
             duration = reaction["duration"] = result["duration"]
             try:
-                reaction["views"] = int(
-                    result["views"].replace(",", "").replace(" views", "")
-                )
+                reaction["views"] = int(result["views"].replace(",", "").replace(" views", ""))
             except:
                 reaction["views"] = -1
 
             if isinstance(duration, str):
-                minutes, seconds = duration.split(":")
+                minutes = hours = seconds = 0
+                ts = duration.split(":")
+                if len(ts) == 3:
+                    hours, minutes, seconds = ts
+                elif len(ts) == 2:
+                    minutes, seconds = ts
+                else:
+                    seconds = ts[0]
+                hours = int(hours) * 60 * 60
                 minutes = int(minutes) * 60
                 seconds = int(seconds)
+
             else:
+                hours = 0
                 minutes = 0
                 seconds = duration
 
@@ -651,9 +655,7 @@ def migrate_reactions():
     list_subfolders_with_paths = [
         os.path.join(f.path, "manifest.json") for f in os.scandir("Media") if f.is_dir()
     ]
-    list_subfolders_with_paths = [
-        f for f in list_subfolders_with_paths if os.path.exists(f)
-    ]
+    list_subfolders_with_paths = [f for f in list_subfolders_with_paths if os.path.exists(f)]
 
     for song_manifest in list_subfolders_with_paths:
         song_data = json.load(open(song_manifest))

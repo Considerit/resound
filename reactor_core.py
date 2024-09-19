@@ -47,9 +47,7 @@ def remove_unneeded_files(song_def):
     wav_files = glob.glob(
         f"{song_directory}/reactions/**/vocals-post-high-passed.wav", recursive=True
     )
-    wav_files += glob.glob(
-        f"{song_directory}/reactions/**/accompaniment.wav", recursive=True
-    )
+    wav_files += glob.glob(f"{song_directory}/reactions/**/accompaniment.wav", recursive=True)
     wav_files += glob.glob(f"{song_directory}/reactions/**/vocals.wav", recursive=True)
 
     # Delete each .wav file
@@ -89,15 +87,9 @@ def clean_up(song_def, on_ice=False):
     if on_ice:
         return
 
-    mp4_files = glob.glob(
-        f"{song_directory}/bounded/*CROSS-EXPANDER*.mp4", recursive=True
-    )
-    mp4_files = mp4_files + glob.glob(
-        f"{song_directory}/bounded/*-aside-*.mp4", recursive=True
-    )
-    mp4_files = mp4_files + glob.glob(
-        f"{song_directory}/reactions/*.mp4", recursive=True
-    )
+    mp4_files = glob.glob(f"{song_directory}/bounded/*CROSS-EXPANDER*.mp4", recursive=True)
+    mp4_files = mp4_files + glob.glob(f"{song_directory}/bounded/*-aside-*.mp4", recursive=True)
+    mp4_files = mp4_files + glob.glob(f"{song_directory}/reactions/*.mp4", recursive=True)
 
     for mp4 in mp4_files:
         # if 'cropped' in mp4:
@@ -142,15 +134,11 @@ def handle_reaction_video(reaction, extend_by=15):
     if not conf.get("isolate_commentary"):
         return []
 
-    _, _, aligned_reaction_audio_path = extract_audio(
-        output_file, preserve_silence=True
-    )
+    _, _, aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
 
     reaction["aligned_audio_path"] = aligned_reaction_audio_path
 
-    reaction["backchannel_audio"] = isolate_reactor_backchannel(
-        reaction, extended_by=extend_by
-    )
+    reaction["backchannel_audio"] = isolate_reactor_backchannel(reaction, extended_by=extend_by)
 
     if not conf.get("create_reactor_view"):
         return []
@@ -452,7 +440,7 @@ if __name__ == "__main__":
 
     manifest_options = {
         "only_manifest": True,
-        "refresh_manifest": True,
+        "refresh_manifest": False,
         "download_and_parse": True,
     }
 
