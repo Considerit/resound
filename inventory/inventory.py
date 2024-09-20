@@ -14,7 +14,7 @@ import ffmpeg
 
 
 from utilities import conversion_audio_sample_rate as sr
-from utilities.utilities import extract_audio, check_and_fix_fps
+from utilities.utilities import check_and_fix_fps
 
 from inventory.channels import (
     get_recommended_channels,
@@ -26,7 +26,6 @@ from inventory.channels import (
 import yt_dlp
 
 from inventory.youtubesearch import YoutubeSearch
-from inventory.playlists import get_existing_video_ids
 
 from pyyoutube import Client, PyYouTubeException
 
@@ -325,6 +324,8 @@ def create_manifest(song_def, artist, song_title, song_search, search, test=None
 
         to_include = song_def.get("include_videos", [])
         if song_def.get("playlist_id", False):
+            from inventory.playlists import get_existing_video_ids
+
             to_include += get_existing_video_ids(song_def.get("playlist_id"))
 
         print("TRYING TO GET INCLUDED VIDEOS", to_include)
@@ -445,7 +446,7 @@ def download_included_reactions(song_directory, artist, song):
             if os.path.exists(weird_output):
                 os.rename(weird_output, extracted_output)
 
-        check_and_fix_fps(extracted_output)
+        # check_and_fix_fps(extracted_output)
 
         # Get all reaction video files
         mkv_videos = glob.glob(os.path.join(full_reactions_path, "*.mkv"))
