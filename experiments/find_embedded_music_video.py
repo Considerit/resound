@@ -26,32 +26,31 @@ def do_something_per_reaction(callback):
     all_reactions.sort()
     all_reactions.reverse()
 
-    reactions_manifest = get_reactions_manifest(
-        conf.get("artist"), conf.get("song_name")
-    )["reactions"]
+    reactions_manifest = get_reactions_manifest(conf.get("artist"), conf.get("song_name"))[
+        "reactions"
+    ]
     all_manifests = {}
     for vidID, reaction_manifest in reactions_manifest.items():
-        reaction_file_prefix = reaction_manifest.get(
-            "file_prefix", reaction_manifest["reactor"]
-        )
+        reaction_file_prefix = reaction_manifest.get("file_prefix", reaction_manifest["reactor"])
         all_manifests[reaction_file_prefix] = reaction_manifest
 
     yet_to_encounter = True
-    jump_to = None  # "LIYA Official"  # Melvin Thinks
+    jump_to = "RMuldrake"  # "LIYA Official"  # Melvin Thinks
 
     for i, channel in enumerate(all_reactions):
         reaction = conf.get("reactions").get(channel)
         manifest = all_manifests[channel]
 
-        if not manifest.get("alignment_done"):
+        # if not manifest.get("alignment_done"):
+        #     continue
+
+        if channel not in ["React To The World", "RBOR", "RMuldrake"]:
             continue
 
         if channel == jump_to:
             yet_to_encounter = False
 
-        if (
-            jump_to and yet_to_encounter and channel not in [jump_to]
-        ):  # , "Bta Entertainment"]:
+        if jump_to and yet_to_encounter and channel not in [jump_to]:  # , "Bta Entertainment"]:
             continue
 
         try:
@@ -65,6 +64,10 @@ def do_something_per_reaction(callback):
         unload_reaction(channel)
 
 
+def something(reaction):
+    get_bounding_box_of_music_video_in_reaction(reaction, visualize=True)
+
+
 if __name__ == "__main__":
     songs = ["Ren - Kujo Beatdown"]
     songs = load_songs(songs)
@@ -76,4 +79,4 @@ if __name__ == "__main__":
         make_conf(song, options, output_dir)
         conf.get("load_reactions")()
 
-        do_something_per_reaction(get_bounding_box_of_music_video_in_reaction)
+        do_something_per_reaction(something)

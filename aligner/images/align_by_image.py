@@ -7,7 +7,10 @@ import cv2
 import imagehash
 from PIL import Image
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from tqdm import tqdm  # For the progress bar
+from collections import defaultdict, Counter
+
 
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import KDTree
@@ -23,10 +26,14 @@ from inventory.inventory import get_reactions_manifest
 from aligner.images.frame_operations import crop_with_noise
 from aligner.images.embedded_video_finder import (
     get_bounding_box_of_music_video_in_reaction,
+    adjust_coordinates_for_offscreen_embed,
 )
+from tabulate import tabulate
 
 
-def build_image_matches(reaction, fps=2, min_coverage=0.8, visualize=True):
+def build_image_matches(
+    reaction, fps=2, min_coverage=0.8, similarity_threshold=0.95, visualize=False
+):
     channel = reaction.get("channel")
 
     music_video_path = conf.get("base_video_path")
@@ -38,27 +45,47 @@ def build_image_matches(reaction, fps=2, min_coverage=0.8, visualize=True):
 
     crop_coordinates = get_bounding_box_of_music_video_in_reaction(reaction)
     if crop_coordinates is None:
-        print(
-            f"***** {channel}: crop coordinates failed so we can't use image alignment"
-        )
+        print(f"***** {channel}: crop coordinates failed so we can't use image alignment")
         return
 
     print("Found embedded music video at", crop_coordinates)
 
-    hash_cache_file_name = f"{channel}-{fps}fps-{tuple(crop_coordinates)}.json"
+    hash_cache_file_name = (
+        f"{channel}-{fps}fps-{tuple(crop_coordinates)}-{similarity_threshold}.json"
+    )
+
+    # This doesn't seem to actually improve matters:
+    # reaction_crop_coordinates, music_crop_coordinates = adjust_coordinates_for_offscreen_embed(
+    #     reaction_video_path,
+    #     music_video_path,
+    #     reaction_crop_coordinates=crop_coordinates,
+    #     threshold=0.03,
+    #     visualize=True,
+    # )
+    music_crop_coordinates = None
+    reaction_crop_coordinates = crop_coordinates
 
     hash_cache_path = os.path.join(hash_output_dir, hash_cache_file_name)
 
+    if os.path.exists(hash_cache_path):
+        return
+
     if not os.path.exists(hash_cache_path):
-        # Step 1: Extract frames from both videos
+        # Extract frames from both videos
 
-        print("Extracting frames from reaction")
+        if music_crop_coordinates is not None:
+            music_hashes_file_name = (
+                f"{conf.get('song_key')}-{fps}fps-{tuple(reaction_crop_coordinates)}.pckl"
+            )
+        else:
+            music_hashes_file_name = f"{conf.get('song_key')}-{fps}fps.pckl"
 
-        music_hashes_file_name = f"{conf.get('song_key')}-{fps}fps.pckl"
         music_hashes_path = os.path.join(hash_output_dir, music_hashes_file_name)
         if not os.path.exists(music_hashes_path):
             print("Extracting frames from the music video")
-            music_frames = extract_frames(music_video_path, fps=fps)
+            music_frames = extract_frames(
+                music_video_path, fps=fps, crop_coords=music_crop_coordinates
+            )
 
             save_object_to_file(
                 music_hashes_path,
@@ -68,12 +95,13 @@ def build_image_matches(reaction, fps=2, min_coverage=0.8, visualize=True):
                 },
             )
 
-        hashes_file_name = f"{channel}-hashes-{fps}fps-{tuple(crop_coordinates)}.pckl"
+        hashes_file_name = f"{channel}-hashes-{fps}fps-{tuple(reaction_crop_coordinates)}.pckl"
         hashes_file_path = os.path.join(hash_output_dir, hashes_file_name)
+
         if not os.path.exists(hashes_file_path):
-            print("Extracting frames from the music video")
+            print("Extracting frames from the reaction video")
             reaction_frames = extract_frames(
-                reaction_video_path, fps=fps, crop_coords=crop_coordinates
+                reaction_video_path, fps=fps, crop_coords=reaction_crop_coordinates
             )
 
             save_object_to_file(
@@ -89,10 +117,14 @@ def build_image_matches(reaction, fps=2, min_coverage=0.8, visualize=True):
 
         print("Matching frames")
         phash_matches = match_frames(
-            music_hashes["phashes"], reaction_hashes["phashes"]
+            music_hashes["phashes"],
+            reaction_hashes["phashes"],
+            similarity_threshold=similarity_threshold,
         )
         dhash_matches = match_frames(
-            music_hashes["dhashes"], reaction_hashes["dhashes"]
+            music_hashes["dhashes"],
+            reaction_hashes["dhashes"],
+            similarity_threshold=similarity_threshold,
         )
 
         save_object_to_file(
@@ -114,37 +146,40 @@ def build_image_matches(reaction, fps=2, min_coverage=0.8, visualize=True):
     matches = []
     for mt, reaction_times in matches_by_music.items():
         for rt in reaction_times:
-            matches.append([mt, rt, True])  # True means not rejected
+            yint = rt - mt
+            if 0 <= yint:
+                matches.append([mt, rt, yint, True])  # True means not rejected
 
-    # Step 4: Refine the matches
-
+    # Refine the matches
     while True:
         num_rejected = filter_matches_by_intercept(matches, fps=fps)
-        print("num_rejected", num_rejected)
+        # print("num_rejected by intercept", num_rejected)
 
         if num_rejected == 0:
             break
 
-    # Step 5: Create segments from the matches
-    segments = create_segments_from_matches(matches)
+    if len([m for m in matches if m[3]]) == 0:
+        print(f"**** {channel}: Failed to get reliable image alignment (matches=0)")
+        return None
+
+    stutters, stutter_assignments = label_stutters(matches, fps=fps)
+
+    # Create segments from the matches
+    segments = create_segments_from_matches(matches, stutter_assignments, spacing=1 / fps)
 
     # Get the end points (and filter out segments outside those bounds)
     segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
+
+    if visualize:
+        plot_matches(reaction, segments, matches)
 
     # Calculate coverage of the song by segments. If coverage is too little, then
     # we consider image alignment to have failed and be too unreliable with this
     # reaction.
 
-    # Step 6: Plot the matches
-    print("Plotting")
-    if visualize:
-        plot_matches(reaction, segments)
-
     coverage = segment_coverage_of_song(segments, fps=fps)
     if coverage < min_coverage:
-        print(
-            f"**** {channel}: Failed to get reliable image alignment (coverage={coverage})"
-        )
+        print(f"**** {channel}: Failed to get reliable image alignment (coverage={coverage})")
         return None
     else:
         print(f"**** {channel}: Segment coverage of image alignment is {coverage}")
@@ -157,6 +192,266 @@ def build_image_matches(reaction, fps=2, min_coverage=0.8, visualize=True):
     # metadata = read_object_from_file(alignment_metadata_file)
     # reaction.update(metadata)
     # best_path = reaction.get("best_path")
+
+
+def label_stutters(matches, fps, visualize=False):
+    x_min = np.min([m[0] for m in matches])
+    x_max = np.max([m[0] for m in matches])
+    y_min = np.min([m[1] for m in matches])
+    y_max = np.max([m[1] for m in matches])
+
+    spacing = 1 / fps
+
+    matrix = create_stutter_matrix(matches, x_min, x_max, y_min, y_max, spacing)
+
+    print("Detecting stutters")
+    stutters = detect_stutters(matrix)
+
+    stutter_assignments = assign_stutters(matches, stutters, spacing, x_min, y_min)
+    if visualize:
+        plot_points_and_stutters(matches, stutters, stutter_assignments, spacing, y_min, x_min)
+
+    return stutters, stutter_assignments
+
+
+def assign_stutters(matches, stutters, spacing, x_min, y_min):
+    # Mark which points belong to each stutter
+    assignments = {}
+
+    for stutter_idx, stutter in enumerate(stutters):
+        (start_x, start_y), width, height = stutter
+        for match in matches:
+            x, y, y_intercept, valid = match
+            if valid:
+                x_idx = int((x - x_min) / spacing)
+                y_idx = int((y - y_min) / spacing)
+                # Check if the point belongs to the current stutter
+                if start_x <= x_idx < start_x + width and start_y <= y_idx < start_y + height:
+                    assignments[str(match)] = stutter_idx
+    return assignments
+
+
+def check_expansion(
+    matrix, i, j, width, height, direction, threshold, visited, min_height, min_width
+):
+    """
+    Check if expansion in the given direction (left, right, up, down) is valid.
+    It ensures the following:
+    - No visited cells in the newly expanded row or column.
+    - Expanded columns must have at least min_height occupied cells.
+    - Expanded rows must have at least min_width occupied cells.
+    - Expanded columns/rows must satisfy the threshold compared to the adjacent column/row.
+
+    Returns the number of non-empty cells that would be added if expanded.
+    """
+
+    def get_slices(i, j, width, height, direction):
+        """
+        Returns slices for the new dimension and adjacent dimension based on the direction of expansion.
+        """
+        if direction == "right":
+            return (slice(i, i + height), slice(j + width, j + width + 1)), (
+                slice(i, i + height),
+                slice(j + width - 1, j + width),
+            )
+        elif direction == "down":
+            return (slice(i + height, i + height + 1), slice(j, j + width)), (
+                slice(i + height - 1, i + height),
+                slice(j, j + width),
+            )
+        elif direction == "left":
+            return (slice(i, i + height), slice(j - 1, j)), (slice(i, i + height), slice(j, j + 1))
+        elif direction == "up":
+            return (slice(i - 1, i), slice(j, j + width)), (slice(i, i + 1), slice(j, j + width))
+
+    def validate_expansion(matrix, visited, new_slice, adjacent_slice, min_cells, threshold):
+        """
+        Validates whether the new expansion meets the conditions.
+        """
+        new_dim = matrix[new_slice]
+        adjacent_dim = matrix[adjacent_slice]
+
+        # Check for visited cells
+        if np.count_nonzero(visited[new_slice]) > 0:
+            return 0
+
+        # Check if the new dimension meets the minimum number of occupied cells
+        new_occupied = np.count_nonzero(new_dim)
+        if new_occupied < min_cells:
+            return 0
+
+        # Check if the new dimension satisfies the threshold relative to the adjacent dimension
+        adjacent_occupied = np.count_nonzero(adjacent_dim)
+        if new_occupied < threshold * adjacent_occupied:
+            return 0
+
+        return new_occupied
+
+    # Get the slices based on the direction
+    new_slice, adjacent_slice = get_slices(i, j, width, height, direction)
+
+    # Determine min_cells based on the direction
+    if direction in ["right", "left"]:
+        min_cells = min_height  # We are expanding a column
+    else:
+        min_cells = min_width  # We are expanding a row
+
+    # Validate the expansion using the common logic
+    new_occupied = validate_expansion(
+        matrix, visited, new_slice, adjacent_slice, min_cells, threshold
+    )
+
+    return new_occupied
+
+
+def detect_stutters(matrix, min_width=1, min_height=7, threshold=0.6):
+    """
+    Detect stutters of points in the matrix that are at least min_size x min_size
+    and expand them to the maximal size while ensuring each row and column has
+    no more than the threshold of empty cells.
+    """
+    stutters = []
+    rows, cols = matrix.shape
+    visited = np.zeros((rows, cols), dtype=int)  # Track visited cells
+
+    # Iterate over the matrix to find potential stutter starting points
+    for i in range(rows - min_height + 1):
+        for j in range(cols - min_width + 1):
+            if visited[i, j]:
+                continue  # Skip already visited cells that are part of previous stutters
+
+            if matrix[i, j] == 0:
+                continue  # Skip cells that are empty
+
+            # Start with a 3x3 stutter
+            width = min_width
+            height = min_height
+
+            # Confirm that this seed stutter is full.
+            # Allow no empties in the initial 3x3 block.
+            submatrix = matrix[i : i + height, j : j + width]
+            total_cells = width * height
+            non_empty_cells = np.count_nonzero(submatrix)
+            if non_empty_cells < total_cells:
+                continue
+            if np.count_nonzero(visited[i : i + height, j : j + width]) > 0:
+                continue
+
+            # Expand the stutter in all directions while maintaining the threshold per row and per column
+            while True:
+                best_expansion_direction = None
+                max_non_empty_added = 0
+
+                # Check all four directions: left, right, up, down
+                for direction in ["right", "down", "left", "up"]:
+                    non_empty_added = check_expansion(
+                        matrix,
+                        i,
+                        j,
+                        width,
+                        height,
+                        direction,
+                        threshold,
+                        visited,
+                        min_height,
+                        min_width,
+                    )
+                    if non_empty_added > max_non_empty_added:
+                        max_non_empty_added = non_empty_added
+                        best_expansion_direction = direction
+
+                # Break if no more expansions can be made
+                if best_expansion_direction is None:
+                    break
+
+                # Apply the best expansion direction
+                if best_expansion_direction == "right":
+                    width += 1
+                elif best_expansion_direction == "down":
+                    height += 1
+                elif best_expansion_direction == "left":
+                    j -= 1
+                    width += 1
+                elif best_expansion_direction == "up":
+                    i -= 1
+                    height += 1
+
+            # Mark the current cells as part of a stutter (visited)
+            visited[i : i + height, j : j + width] = 1
+
+            # Once expansion is done, record the stutter (starting position, width, height)
+            stutters.append(((j, i), width, height))
+
+    return stutters
+
+
+def create_stutter_matrix(points, x_min, x_max, y_min, y_max, spacing):
+    """
+    Create a matrix based on points (x, y_intercept) and count the number of points in each cell.
+    """
+    # Determine the size of the matrix based on spacing and the range of x, y_intercept values
+    x_range = int((x_max - x_min) / spacing) + 1
+    y_range = int((y_max - y_min) / spacing) + 1
+
+    # Initialize matrix with zeros
+    matrix = np.zeros((y_range, x_range), dtype=int)
+
+    # Populate the matrix with point counts
+    for x, y, __, valid in points:
+        if valid:
+            i = int((x - x_min) / spacing)  # x-index
+            j = int((y - y_min) / spacing)  # y-intercept index
+            matrix[j, i] += 1
+
+    return matrix
+
+
+def plot_points_and_stutters(points, stutters, stutter_assignments, spacing, y_min, x_min):
+    """
+    Visualize points and color-code them based on which stutter they belong to.
+
+    Parameters:
+    - points: List of (x, y, y_intercept, valid) tuples
+    - stutters: List of stutters as ((x_start, y_start), width, height)
+    - spacing: Spacing of points in x and y dimensions
+    - y_int_min: Minimum y_intercept (used to index matrix rows)
+    - x_min: Minimum x value (used to index matrix columns)
+    """
+    # Set up color map to assign different colors to each stutter
+    stutter_colors = list(mcolors.TABLEAU_COLORS.values())
+    non_stutter_color = "gray"  # Color for points not in any stutter
+
+    plt.figure(figsize=(10, 8))
+
+    # Plot points, color-coding them by stutter
+    for point_idx, match in enumerate(points):
+        x, y, y_intercept, valid = match
+        if valid:
+            stutter_idx = stutter_assignments.get(str(match), -1)
+            color = (
+                stutter_colors[stutter_idx % len(stutter_colors)]
+                if stutter_idx != -1
+                else non_stutter_color
+            )
+            plt.scatter(
+                x,
+                y,
+                color=color,
+                label=f"stutter {stutters[stutter_idx]}" if stutter_idx != -1 else "No stutter",
+                alpha=0.4 if stutter_idx == -1 else 1,
+                s=2 if stutter_idx == -1 else 3,
+            )
+
+    plt.xlabel("x (time in first video)")
+    plt.ylabel("y_intercept (time in second video)")
+    plt.title("2D Points Color-Coded by stutters")
+
+    # Avoid duplicate legend entries
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys(), loc="upper right")
+
+    plt.show()
 
 
 def segment_coverage_of_song(segments, fps):
@@ -190,15 +485,11 @@ def find_reaction_endpoints(segments, max_dist_from_end=10):
         min_t = segment["min_music_time"]
         max_t = segment["max_music_time"]
 
-        if min_t - max_dist_from_end <= 0 and (
-            not reaction_start or start_intercept > y_int
-        ):
+        if min_t - max_dist_from_end <= 0 and (not reaction_start or start_intercept > y_int):
             start_intercept = y_int
             reaction_start = segment
 
-        if max_t + max_dist_from_end >= song_length and (
-            not reaction_end or end_intercept < y_int
-        ):
+        if max_t + max_dist_from_end >= song_length and (not reaction_end or end_intercept < y_int):
             end_intercept = y_int
             reaction_end = segment
 
@@ -218,16 +509,314 @@ def find_reaction_endpoints(segments, max_dist_from_end=10):
 
     # Filter out segments that aren't within the new bounds
     if reaction_start and reaction_end:
+        print("Got reaction start and end:", start_intercept, end_intercept)
         segments = [
             s
             for s in segments
             if s["y-intercept"] >= start_intercept and s["y-intercept"] <= end_intercept
         ]
 
-    return segments, reaction_start, reaction_end
+    return segments, start_intercept, end_intercept
 
 
-def get_frame_sample(video_path, fps, video=None):
+def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):
+    """
+    Match frames between the music video and the reaction video based on perceptual hashes.
+
+    :param music_hashes: List of (timestamp, hash) from the music video.
+    :param reaction_hashes: List of (timestamp, hash) from the reaction video.
+    :param similarity_threshold: Similarity threshold (0.0 to 1.0) to consider a match.
+    :return: A dictionary where the key is the music video timestamp, and the value is a list of reaction timestamps.
+    """
+    matches = {}
+    for music_time, music_hash in music_hashes:
+        similarities = []
+        for reaction_time, reaction_hash in reaction_hashes:
+            # Compute similarity as inverse of Hamming distance
+            distance = music_hash - reaction_hash
+            similarity = 1 - (distance / len(music_hash.hash) ** 2)
+
+            similarities.append((reaction_time, similarity))
+
+        max_similarity = max([sim for _, sim in similarities])
+
+        # Save reaction times that are within the threshold of the max similarity
+        for reaction_time, similarity in similarities:
+            if similarity >= similarity_threshold * max_similarity:
+                if music_time not in matches:
+                    matches[music_time] = []
+                matches[music_time].append(reaction_time)
+
+    return matches
+
+
+def filter_matches_by_intercept(matches, fps, time_window=8, intercept_tolerance=0.1, density=0.25):
+    """
+    Filters out (music_vid_time, reaction_vid_time) matches that do not form a line
+    with some other match within a certain distance and with a slope near 1.
+
+    :param matches: List of tuples (music_vid_time, reaction_vid_time).
+    :param time_window: The window of time (in seconds) to look for nearby points.
+    :param intercept_tolerance: The allowed deviation from a slope of 1.
+    :param density: The % of peers in region that must form a slope of 1.
+    :return: Filtered list of matches.
+    """
+
+    matches = [m for m in matches if m[3]]
+
+    if len(matches) == 0:
+        return 0
+
+    num_samples_in_window = time_window * fps
+    peers_sharing_intercept = int(num_samples_in_window * density)
+
+    music_times = np.array([m[0] for m in matches])
+    reaction_times = np.array([m[1] for m in matches])
+
+    # print(f"Filtering {len(matches)} matches by slope")
+
+    # Build a KDTree for efficient neighbor search
+    points = np.vstack([music_times, reaction_times]).T
+
+    tree = KDTree(points)
+
+    num_rejected = 0
+    # Loop through each point
+    for i, (m1, r1, intercept1, __) in enumerate(matches):
+        # Query neighbors within the time_window around the current point (m1, r1)
+        indices = tree.query_radius([[m1, r1]], r=time_window / 2)[0]
+
+        # Count valid neighbors based on intercept similarity
+        valid_neighbors = 0
+        for j in indices:
+            if i == j or not matches[j][3]:
+                continue  # Skip self-comparison or comparison to rejects
+
+            m2, r2, intercept2, __ = matches[j]
+
+            # Check if the intercept difference is within tolerance
+            if abs(intercept1 - intercept2) <= intercept_tolerance:
+                valid_neighbors += 1
+
+        # If we didn't find enough valid neighbors with the correct slope, reject this point
+        if valid_neighbors < peers_sharing_intercept:
+            matches[i][3] = False
+            num_rejected += 1
+
+    return num_rejected
+
+
+def create_segments_from_matches(
+    all_matches,
+    stutter_assignments,
+    spacing,
+    time_constraint=6,
+    intercept_min_spacing=3,
+    min_samples=4,
+    min_length=3,
+    max_stuttered=0.8,
+    min_coverage=0.2,
+):
+    """
+    Cluster matches into segments based on the y-intercept with a time constraint.
+
+    :param matches: List of tuples (music_time, reaction_time, rejected).
+    :param time_constraint: Maximum allowed time gap between matches in music_time.
+    :param intercept_min_spacing: Maximum allowed distance between intercepts for DBSCAN clustering.
+    :param min_samples: Minimum number of matches to form a valid cluster.
+    :return: List of valid clusters, each containing matches that satisfy the constraints.
+    """
+
+    matches = [m for m in all_matches if m[3]]
+
+    matches_by_intercept = {}
+    for m in matches:
+        yint = round(m[2])
+        if yint not in matches_by_intercept:
+            matches_by_intercept[yint] = []
+        already_in = False
+        for m2 in matches_by_intercept[yint]:
+            if m2[0] == m[0] and m2[1] == m[1]:
+                already_in = True
+                m[3] = False
+                break
+        if not already_in:
+            matches_by_intercept[yint].append(m)
+
+    initial_segments = []
+    for matches_for_yint in matches_by_intercept.values():
+        current_cluster = []
+
+        matches_for_yint.sort(key=lambda x: x[0])
+        last_music_time = matches_for_yint[0][0]
+
+        for match in matches_for_yint:
+            if abs(match[0] - last_music_time) > time_constraint:
+                initial_segments.append(current_cluster)
+                current_cluster = []
+            current_cluster.append(match)
+            last_music_time = match[0]
+        initial_segments.append(current_cluster)
+
+    segments = []
+    for s in initial_segments:
+        non_stuttered_matches = [m for m in s if str(m) not in stutter_assignments]
+        if len(non_stuttered_matches) >= min_samples:
+            segments.append(
+                {
+                    "y-intercept": np.median(np.array([m[2] for m in s])),
+                    "matches": s,
+                    "rejected_matches": [],
+                    "min_music_time": np.min(np.array([m[0] for m in s])),
+                    "max_music_time": np.max(np.array([m[0] for m in s])),
+                }
+            )
+
+    while True:
+        changes_made = 0
+        segments.sort(key=lambda x: len(x["matches"]), reverse=True)
+
+        while True:
+            num_absorbed = 0
+            for i, s in enumerate(segments):
+                for j, s2 in enumerate(segments):
+                    if i >= j:
+                        continue
+                    if (
+                        abs(s["y-intercept"] - s2["y-intercept"]) <= intercept_min_spacing
+                        and max(s["min_music_time"], s2["min_music_time"])
+                        <= min(s["max_music_time"], s2["max_music_time"]) + 1
+                    ) or (
+                        abs(s["y-intercept"] - s2["y-intercept"]) <= 0.5
+                        and max(s["min_music_time"], s2["min_music_time"])
+                        <= min(s["max_music_time"], s2["max_music_time"]) + time_constraint
+                    ):
+                        s["min_music_time"] = min(s["min_music_time"], s2["min_music_time"])
+                        s["max_music_time"] = max(s["max_music_time"], s2["max_music_time"])
+                        s["matches"] += s2["matches"]
+                        num_absorbed += 1
+                        segments.pop(j)
+                        break
+                if num_absorbed > 0:
+                    break
+            changes_made += num_absorbed
+            if num_absorbed == 0:
+                break
+
+        # See if any stray unreliable matches might fit with a segment
+        unreliable_matches = [m for m in all_matches if not m[3]]
+        matches_by_intercept = defaultdict(list)
+        segments_by_intercept = defaultdict(list)
+
+        for m in unreliable_matches:
+            yint = round(m[2])
+            matches_by_intercept[yint].append(m)
+
+        while True:
+            absorbtions = 0
+            for s in segments:
+                yint = s["y-intercept"]
+
+                for myint in range(
+                    math.floor(yint - intercept_min_spacing / 2),
+                    math.ceil(yint + intercept_min_spacing / 2),
+                ):
+                    for m in matches_by_intercept[myint]:
+                        if (
+                            not m[3]
+                            and abs(m[2] - yint) <= intercept_min_spacing / 2
+                            and max(s["min_music_time"], m[0])
+                            <= min(s["max_music_time"], m[0]) + time_constraint
+                        ):
+                            s["min_music_time"] = min(s["min_music_time"], m[0])
+                            s["max_music_time"] = max(s["max_music_time"], m[0])
+                            m[3] = True
+                            s["matches"].append(m)
+                            absorbtions += 1
+            # print(f"Absorbed {absorbtions} unreliable matches!")
+            changes_made += absorbtions
+            if absorbtions == 0:
+                break
+
+        if changes_made == 0:
+            break
+
+    # filter segments for quality
+    quality_segments = []
+    evaluations = []
+
+    for s in segments:
+        # ...by length
+        length = s["max_music_time"] - s["min_music_time"]
+
+        # ...by % in stutter...
+        in_stutters = [m for m in s["matches"] if stutter_assignments.get(str(m), False)]
+        stuttered = len(in_stutters) / len(s["matches"])
+
+        # ...by coverage
+        unique_music_times = {
+            m[0]: True for m in s["matches"] if not stutter_assignments.get(str(m), False)
+        }
+
+        full_coverage = length / spacing + 1
+
+        coverage = len(unique_music_times.keys()) / full_coverage
+
+        overall = coverage * math.log(length + 1, 2)
+
+        evaluations.append((s, overall, coverage, length, stuttered))
+
+    evaluations.sort(key=lambda x: x[1])
+
+    table_data = []
+    headers = [
+        "Status",
+        "Y-Intercept",
+        "Music Time",
+        "Quality Score",
+        "Length",
+        "% Stuttered",
+        "% Coverage",
+    ]
+
+    for s, quality_score, coverage, length, stuttered in evaluations:
+        row = [
+            "KEPT"
+            if quality_score >= 1.5
+            and coverage >= min_coverage
+            and length >= min_length
+            and stuttered <= max_stuttered
+            else "FILTERED",
+            s["y-intercept"],
+            f"{s['min_music_time']}-{s['max_music_time']}",
+            f"{quality_score:.2f}",
+            f"{length:.2f}",
+            f"{stuttered:.2%}",
+            f"{coverage:.2%}",
+        ]
+        table_data.append(row)
+    print(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+    for s, quality_score, coverage, length, stuttered in evaluations:
+        if (
+            quality_score >= 1.5
+            and coverage >= min_coverage
+            and length >= min_length
+            and stuttered <= max_stuttered
+        ):
+            quality_segments.append(s)
+        else:
+            for m in s["matches"]:
+                m[3] = False
+            changes_made += 1
+
+    quality_segments
+
+    return quality_segments
+
+
+def get_frame_sample(fps, video_path=None, video=None):
+    assert video_path is not None or video is not None
     if video is None:
         video = cv2.VideoCapture(video_path)
 
@@ -254,6 +843,8 @@ def extract_frames(video_path, fps=4, crop_coords=None):
     :param crop_coords: Optional tuple (top, left, width, height) for cropping frames.
     :return: List of tuples (timestamp, frame) where each frame is a resized PIL image.
     """
+
+    # print(f"Cropping {video_path} with {crop_coords}")
     video = cv2.VideoCapture(video_path)
 
     frames = []
@@ -305,233 +896,7 @@ def calculate_phash(frames, hash_method="dhash"):
     return phashes
 
 
-def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):
-    """
-    Match frames between the music video and the reaction video based on perceptual hashes.
-
-    :param music_hashes: List of (timestamp, hash) from the music video.
-    :param reaction_hashes: List of (timestamp, hash) from the reaction video.
-    :param similarity_threshold: Similarity threshold (0.0 to 1.0) to consider a match.
-    :return: A dictionary where the key is the music video timestamp, and the value is a list of reaction timestamps.
-    """
-    matches = {}
-    for music_time, music_hash in music_hashes:
-        similarities = []
-        for reaction_time, reaction_hash in reaction_hashes:
-            # Compute similarity as inverse of Hamming distance
-            distance = music_hash - reaction_hash
-            similarity = 1 - (distance / len(music_hash.hash) ** 2)
-
-            similarities.append((reaction_time, similarity))
-
-        max_similarity = max([sim for _, sim in similarities])
-
-        # Save reaction times that are within the threshold of the max similarity
-        for reaction_time, similarity in similarities:
-            if similarity >= similarity_threshold * max_similarity:
-                if music_time not in matches:
-                    matches[music_time] = []
-                matches[music_time].append(reaction_time)
-
-    return matches
-
-
-def filter_matches_by_intercept(
-    matches, fps, time_window=8, intercept_tolerance=0.1, density=0.25
-):
-    """
-    Filters out (music_vid_time, reaction_vid_time) matches that do not form a line
-    with some other match within a certain distance and with a slope near 1.
-
-    :param matches: List of tuples (music_vid_time, reaction_vid_time).
-    :param time_window: The window of time (in seconds) to look for nearby points.
-    :param intercept_tolerance: The allowed deviation from a slope of 1.
-    :param density: The % of peers in region that must form a slope of 1.
-    :return: Filtered list of matches.
-    """
-
-    matches = [m for m in matches if m[2]]
-
-    num_samples_in_window = time_window * fps
-    peers_sharing_intercept = int(num_samples_in_window * density)
-
-    music_times = np.array([m[0] for m in matches])
-    reaction_times = np.array([m[1] for m in matches])
-
-    print(f"Filtering {len(matches)} matches by slope")
-
-    # Calculate intercepts for all matches
-    intercepts = reaction_times - music_times
-
-    # Build a KDTree for efficient neighbor search
-    points = np.vstack([music_times, reaction_times]).T
-    tree = KDTree(points)
-
-    num_rejected = 0
-    # Loop through each point
-    for i, (m1, r1, __) in enumerate(matches):
-        intercept1 = intercepts[i]
-
-        # Query neighbors within the time_window around the current point (m1, r1)
-        indices = tree.query_radius([[m1, r1]], r=time_window / 2)[0]
-
-        # Count valid neighbors based on intercept similarity
-        valid_neighbors = 0
-        for j in indices:
-            if i == j or not matches[j][2]:
-                continue  # Skip self-comparison or comparison to rejects
-
-            m2, r2, __ = matches[j]
-            intercept2 = intercepts[j]
-
-            # Check if the intercept difference is within tolerance
-            if abs(intercept1 - intercept2) <= intercept_tolerance:
-                valid_neighbors += 1
-
-        # If we didn't find enough valid neighbors with the correct slope, reject this point
-        if valid_neighbors < peers_sharing_intercept:
-            matches[i][2] = False
-            num_rejected += 1
-
-    return num_rejected
-
-
-def calculate_median_of_averages_intercept(cluster):
-    matches_by_music_time = {}
-    for match in cluster["matches"]:
-        mt = match[0]
-        if mt not in matches_by_music_time:
-            matches_by_music_time[mt] = []
-        matches_by_music_time[mt].append(match)
-
-    mt_avg_intercepts = np.array(
-        [
-            np.mean(np.array([m[1] - m[0] for m in mts]))
-            for mts in matches_by_music_time.values()
-        ]
-    )
-    median_of_averages_intercept = np.median(mt_avg_intercepts)
-    return median_of_averages_intercept
-
-
-def create_segments_from_matches(
-    matches, time_constraint=10, intercept_eps=1, min_samples=4
-):
-    """
-    Cluster matches into segments based on the y-intercept with a time constraint.
-
-    :param matches: List of tuples (music_time, reaction_time, rejected).
-    :param time_constraint: Maximum allowed time gap between matches in music_time.
-    :param intercept_eps: Maximum allowed distance between intercepts for DBSCAN clustering.
-    :param min_samples: Minimum number of matches to form a valid cluster.
-    :return: List of valid clusters, each containing matches that satisfy the constraints.
-    """
-
-    matches = [m for m in matches if m[2]]
-
-    # Step 1: Calculate y-intercept for each match
-    intercepts = np.array(
-        [reaction_time - music_time for music_time, reaction_time, rejected in matches]
-    )
-
-    # Step 2: Apply DBSCAN clustering on y-intercepts
-    intercept_clusterer = DBSCAN(
-        eps=intercept_eps, min_samples=min_samples, metric="euclidean"
-    )
-    labels = intercept_clusterer.fit_predict(
-        intercepts.reshape(-1, 1)
-    )  # DBSCAN on 1D data (intercepts)
-
-    # Step 3: Group matches by cluster label
-    segments = {}
-    for label, match in zip(labels, matches):
-        if label == -1:
-            continue  # Ignore noise (label -1)
-        if label not in segments:
-            segments[label] = {
-                "y-intercept": None,
-                "matches": [],
-                "rejected_matches": [],
-                "min_music_time": None,
-                "max_music_time": None,
-            }
-        segments[label]["matches"].append(match)
-
-    # Step 4: Apply time constraint to segments
-    stacked_matches_rejected = 0
-
-    for segment in segments.values():
-        # cluster the matches by music time, subject to time_constraint
-        music_time_clusters = []
-        current_cluster = []
-        segment["matches"].sort(key=lambda x: x[0])
-        last_music_time = segment["matches"][0][0]
-        for match in segment["matches"]:
-            if abs(match[0] - last_music_time) > time_constraint:
-                music_time_clusters.append(current_cluster)
-                current_cluster = []
-            current_cluster.append(match)
-            last_music_time = match[0]
-        music_time_clusters.append(current_cluster)
-
-        # find the biggest segment
-        best_segment = []
-        for music_cluster in music_time_clusters:
-            if len(best_segment) < len(music_cluster):
-                best_segment = music_cluster
-        for music_cluster in music_time_clusters:
-            if music_cluster != best_segment:
-                segment["rejected_matches"] += music_cluster
-
-        segment["matches"] = best_segment
-
-        median_of_averages_intercept = calculate_median_of_averages_intercept(segment)
-
-        # clustered whole segment
-        filtered_cluster_matches = [segment["matches"][0]]
-        for match in segment["matches"][1:]:
-            if match[0] == filtered_cluster_matches[-1][0]:
-                intercept = match[1] - match[0]
-                last_intercept = (
-                    filtered_cluster_matches[-1][1] - filtered_cluster_matches[-1][0]
-                )
-                if abs(last_intercept - median_of_averages_intercept) < abs(
-                    intercept - median_of_averages_intercept
-                ):
-                    segment["rejected_matches"].append(match)
-                else:
-                    removed = filtered_cluster_matches.pop()
-                    segment["rejected_matches"].append(removed)
-                    filtered_cluster_matches.append(match)
-            else:
-                filtered_cluster_matches.append(match)
-
-        segment["matches"] = filtered_cluster_matches
-
-        # Re-calculate the dominant intercept
-        intercepts = np.array(
-            [
-                reaction_time - music_time
-                for music_time, reaction_time, __ in segment["matches"]
-            ]
-        )
-        median_intercept = segment["y-intercept"] = np.median(intercepts)
-
-        music_times = [
-            music_time for music_time, reaction_time, __ in segment["matches"]
-        ]
-        segment["min_music_time"] = min(music_times)
-        segment["max_music_time"] = max(music_times)
-
-        # Identify all music_times where there is a "stack" of matched reaction times.
-        # In that stack, reject all matches within a certain distance of the median intercept
-
-        assert segment["min_music_time"] < segment["max_music_time"]
-
-    return segments.values()
-
-
-def plot_matches(reaction, segments):
+def plot_matches(reaction, segments, matches):
     """
     Plot the matched music and reaction video frames on a 2D plot.
 
@@ -547,19 +912,24 @@ def plot_matches(reaction, segments):
     # for music_times, reaction_times in matches:
     #     plt.scatter(music_times, reaction_times, s=5)
 
-    all_rejects = []
     for segment in segments:
-        all_rejects += segment["rejected_matches"]
+        for m in segment["rejected_matches"]:
+            m[3] = False
 
-    plt.scatter([r[0] for r in all_rejects], [r[1] for r in all_rejects], s=3)
+    all_rejects = [m for m in matches if not m[3]]
+
+    plt.scatter(
+        [r[0] for r in all_rejects], [r[1] for r in all_rejects], s=1, alpha=0.5, color="white"
+    )
 
     for segment in segments:
         plt.scatter(
-            [r[0] for r in segment["matches"]],
-            [r[1] for r in segment["matches"]],
+            [r[0] for r in segment["matches"] if r[3]],
+            [r[1] for r in segment["matches"] if r[3]],
             s=5,
+            alpha=0.5,
         )
-
+    segments.sort(key=lambda x: x["y-intercept"])
     for segment in segments:
         if segment.get("y-intercept"):
             x_values = [segment["min_music_time"], segment["max_music_time"]]
@@ -573,7 +943,7 @@ def plot_matches(reaction, segments):
                 segment["min_music_time"],
                 segment["max_music_time"],
             )
-            plt.plot(x_values, y_values, linestyle="--")
+            plt.plot(x_values, y_values, linestyle="-", lw=1, color="red")
 
     plt.gca().spines["top"].set_visible(False)
     plt.gca().spines["right"].set_visible(False)
