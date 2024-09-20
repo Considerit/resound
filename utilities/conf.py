@@ -65,9 +65,7 @@ def make_conf(song_def, options, temp_directory):
         # Create a new directory because it does not exist
         os.makedirs(full_output_dir)
 
-    base_audio_path = os.path.join(
-        song_directory, f"{os.path.basename(song_directory)}.wav"
-    )
+    base_audio_path = os.path.join(song_directory, f"{os.path.basename(song_directory)}.wav")
 
     intro_path = os.path.join(song_directory, "intro.mp4")
     if not os.path.exists(intro_path):
@@ -94,9 +92,7 @@ def make_conf(song_def, options, temp_directory):
 
     include_base_video = song_def.get("include_base_video", True)
 
-    default_placement = (
-        "center / bottom" if song_def.get("include_base_video") else "centered"
-    )
+    default_placement = "center / bottom" if song_def.get("include_base_video") else "centered"
 
     min_segment_length_in_seconds = 3
     first_n_samples = int(min_segment_length_in_seconds * sr)
@@ -113,9 +109,7 @@ def make_conf(song_def, options, temp_directory):
             "transcription_directory": os.path.join(reaction_directory, "transcripts"),
             "compilation_path": compilation_path,
             "temp_directory": full_output_dir,
-            "has_asides": None
-            if options.get("skip_asides", False)
-            else song_def.get("asides"),
+            "has_asides": None if options.get("skip_asides", False) else song_def.get("asides"),
             "hop_length": 256,
             "n_mfcc": 20,
             # 'channel_branding': 'production/resound_channel_reencoded.mp4',
@@ -124,17 +118,13 @@ def make_conf(song_def, options, temp_directory):
             "search_tester": search_testers.get(song, reaction_title_tester(song)),
             "background": background_path,
             "convert_videos": song_def.get("convert_videos", []),
-            "base_video_transformations": song_def.get(
-                "base_video_transformations", {}
-            ),
+            "base_video_transformations": song_def.get("base_video_transformations", {}),
             "disable_backchannel_backgrounding": song_def.get(
                 "disable_backchannel_backgrounding", False
             ),
             "audio_mixing": song_def.get("audio_mixing", {}),
             "base_video_proportion": song_def.get("base_video_proportion", 0.45),
-            "base_video_placement": song_def.get(
-                "base_video_placement", default_placement
-            ),
+            "base_video_placement": song_def.get("base_video_placement", default_placement),
             "zoom_pans": song_def.get("zoom_pans", []),
             "background.reverse": song_def.get("background.reverse", False),
             "sound_landmarks": song_def.get("sound_landmarks", []),
@@ -183,9 +173,9 @@ def make_conf(song_def, options, temp_directory):
         mute = song_def.get("mute", None)
 
         reactors_inventory = get_reactors_inventory()
-        reactions_manifest = get_reactions_manifest(
-            song_def["artist"], song_def["song"]
-        )["reactions"]
+        reactions_manifest = get_reactions_manifest(song_def["artist"], song_def["song"])[
+            "reactions"
+        ]
         metrics = {}
 
         for i, reaction_video_path in enumerate(reaction_videos):
@@ -237,7 +227,8 @@ def make_conf(song_def, options, temp_directory):
                         vid = vidID
                         break
 
-            assert channelId is not None, channel
+                if channelId is None:
+                    continue
 
             channel_data = reactors_inventory.get(channelId, None)
             assert channel_data is not None, (channelId, reaction_manifest, channel)
@@ -266,38 +257,30 @@ def make_conf(song_def, options, temp_directory):
             }
 
             if multiple_reactors is not None:
-                reactions[channel]["num_reactors"] = multiple_reactors.get(
-                    channel, None
-                )
+                reactions[channel]["num_reactors"] = multiple_reactors.get(channel, None)
 
             if foregrounded_backchannel is not None and foregrounded_backchannel.get(
                 channel, False
             ):
-                reactions[channel][
-                    "foregrounded_backchannel"
-                ] = foregrounded_backchannel.get(channel)
+                reactions[channel]["foregrounded_backchannel"] = foregrounded_backchannel.get(
+                    channel
+                )
 
             if backgrounded_backchannel is not None and backgrounded_backchannel.get(
                 channel, False
             ):
-                reactions[channel][
-                    "backgrounded_backchannel"
-                ] = backgrounded_backchannel.get(channel)
-
-            if fake_reactor_position is not None and fake_reactor_position.get(
-                channel, False
-            ):
-                reactions[channel]["fake_reactor_position"] = fake_reactor_position.get(
+                reactions[channel]["backgrounded_backchannel"] = backgrounded_backchannel.get(
                     channel
                 )
+
+            if fake_reactor_position is not None and fake_reactor_position.get(channel, False):
+                reactions[channel]["fake_reactor_position"] = fake_reactor_position.get(channel)
 
             reactions[channel]["start_reaction_search_at"] = int(
                 start_reaction_search_at.get(channel, 3) * sr
             )
 
-            if end_reaction_search_at is not None and end_reaction_search_at.get(
-                channel, False
-            ):
+            if end_reaction_search_at is not None and end_reaction_search_at.get(channel, False):
                 reactions[channel]["end_reaction_search_at"] = (
                     end_reaction_search_at.get(channel) * sr
                 )
@@ -307,13 +290,12 @@ def make_conf(song_def, options, temp_directory):
 
             reactions[channel]["chunk_size"] = chunk_size.get(channel, 3)
 
-            if (
-                manual_normalization_point is not None
-                and manual_normalization_point.get(channel, False)
+            if manual_normalization_point is not None and manual_normalization_point.get(
+                channel, False
             ):
-                reactions[channel][
-                    "manual_normalization_point"
-                ] = manual_normalization_point.get(channel)
+                reactions[channel]["manual_normalization_point"] = manual_normalization_point.get(
+                    channel
+                )
 
             if insert_filler is not None and insert_filler.get(channel, False):
                 reactions[channel]["insert_filler"] = insert_filler.get(channel)
@@ -344,12 +326,8 @@ def make_conf(song_def, options, temp_directory):
             # print("Priority", channel, priority.get(channel, default_priority))
             reactions[channel]["priority"] = priority.get(channel, default_priority)
 
-            if swap_grid_positions is not None and swap_grid_positions.get(
-                channel, False
-            ):
-                reactions[channel]["swap_grid_positions"] = swap_grid_positions.get(
-                    channel
-                )
+            if swap_grid_positions is not None and swap_grid_positions.get(channel, False):
+                reactions[channel]["swap_grid_positions"] = swap_grid_positions.get(channel)
 
             reactions[channel]["channel_label"] = channel_labels.get(channel, channel)
             if "Black Pegasus" in reactions[channel]["channel_label"]:
@@ -392,16 +370,12 @@ def make_conf(song_def, options, temp_directory):
 
         if not "reaction_audio_path" in reaction_conf:
             reaction_video_path = reaction_conf["video_path"]
-            reaction_audio_data, __, reaction_audio_path = extract_audio(
-                reaction_video_path
-            )
+            reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_video_path)
 
             normalization_factor = get_normalization_factor(reaction_conf)
 
             if normalization_factor != 1:
-                normalized_reaction_audio_data = (
-                    reaction_audio_data * normalization_factor
-                )
+                normalized_reaction_audio_data = reaction_audio_data * normalization_factor
                 reaction_conf["reaction_audio_data"] = normalized_reaction_audio_data
             else:
                 reaction_conf["reaction_audio_data"] = reaction_audio_data
@@ -480,7 +454,7 @@ def get_normalization_factor(reaction):
         return normalization_factor
 
     reaction_video_path = reaction["video_path"]
-    reaction_audio_data, __, reaction_audio_path = extract_audio(reaction_video_path)
+    reaction_audio_data, __, __ = extract_audio(reaction_video_path)
 
     if reaction.get("manual_normalization_point", False):
         (
@@ -513,19 +487,6 @@ def get_normalization_factor(reaction):
             song_mfcc,
             reaction_mfcc,
         )
-
-        # if normalization_factor != 1:
-        #   normalized_reaction_audio_data = reaction_audio_data * normalization_factor
-
-        #   # Writing the normalized_reaction_audio_data to a file
-        #   root, ext = os.path.splitext(reaction_audio_path)
-        #   normalized_audio_path = f"{root}_normalized{ext}"
-        #   if not os.path.exists(normalized_audio_path):
-        #     sf.write(normalized_audio_path, normalized_reaction_audio_data, sr)
-
-        #   reaction["reaction_audio_data"] = normalized_reaction_audio_data
-        # else:
-        #   reaction["reaction_audio_data"] = reaction_audio_data
 
     reaction["normalization_factor"] = normalization_factor
     save_object_to_file(normalization_file, normalization_factor)
@@ -565,10 +526,6 @@ def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio
 
     vocal_path_filename = "vocals-post-high-passed.wav"
 
-    separation_path = os.path.join(
-        output_dir, os.path.splitext(audio_path)[0].split("/")[-1]
-    )
-
     # vocals_path = os.path.join(separation_path, vocal_path_filename)
 
     # if not os.path.exists( vocals_path ):
@@ -581,8 +538,11 @@ def load_audio_transformations(local_conf, prefix, output_dir, audio_path, audio
             path = audio_path
             source = "_"
         else:
+            separation_path = os.path.join(
+                output_dir, os.path.splitext(audio_path)[0].split("/")[-1]
+            )
             path = os.path.join(separation_path, f"{source}.wav")
-            data, _, _ = extract_audio(path)
+            data, _, _ = extract_audio(path, keep_file=source != "")
             source = f"_{source}_"
 
         local_conf[f"{prefix}_audio{source}path"] = path
@@ -636,12 +596,8 @@ def load_base():
 
     song_directory = conf.get("song_directory")
 
-    base_video_path_webm = os.path.join(
-        song_directory, f"{os.path.basename(song_directory)}.webm"
-    )
-    base_video_path_mp4 = os.path.join(
-        song_directory, f"{os.path.basename(song_directory)}.mp4"
-    )
+    base_video_path_webm = os.path.join(song_directory, f"{os.path.basename(song_directory)}.webm")
+    base_video_path_mp4 = os.path.join(song_directory, f"{os.path.basename(song_directory)}.mp4")
 
     #############
     # Make sure to remove silence at the beginning or end of the base video
@@ -681,7 +637,7 @@ def load_base():
                 base_video_path, codec="h264_videotoolbox", ffmpeg_params=["-q:v", "60"]
             )
 
-    song_audio_data, _, base_audio_path = extract_audio(base_video_path)
+    song_audio_data, _, base_audio_path = extract_audio(base_video_path, keep_file=True)
     song_audio_data = song_audio_data  # [0:150*sr]
 
     base_data = {
@@ -691,9 +647,7 @@ def load_base():
 
     output_dir = conf.get("reaction_directory")
 
-    load_audio_transformations(
-        base_data, "song", output_dir, base_audio_path, song_audio_data
-    )
+    load_audio_transformations(base_data, "song", output_dir, base_audio_path, song_audio_data)
 
     conf.update(base_data)
 

@@ -18,6 +18,7 @@ import os
 import subprocess
 import glob
 import ffmpeg
+import io
 
 
 def sec_to_time(sec):
@@ -78,43 +79,76 @@ def extract_audio(
     sample_rate=None,
     preserve_silence=True,
     convert_to_mono=True,
-    keep_file=True,
+    keep_file=False,
 ):
     if output_dir is None:
         output_dir = os.path.dirname(video_file)
     if sample_rate is None:
         sample_rate = conversion_audio_sample_rate
 
-    # Construct the output file path
+    # Construct the output file path (if needed)
     base_name = os.path.splitext(os.path.basename(video_file))[0]
     output_file = os.path.join(output_dir, f"{base_name}.wav")
 
-    if not os.path.exists(output_file):
-        # Construct the ffmpeg command
-        command = f'ffmpeg -i "{video_file}" -vn -acodec pcm_s16le -ar {sample_rate} -ac 2'
+    # ffmpeg command to extract the audio
+    command = [
+        "ffmpeg",
+        "-i",
+        video_file,
+        "-vn",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        str(sample_rate),
+        "-ac",
+        "2",
+    ]
 
-        # If preserving silence is desired, get the video duration and apply the atrim filter
-        if preserve_silence:
-            duration_command = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{video_file}"'
-            duration = float(
-                subprocess.check_output(duration_command, shell=True).decode("utf-8").strip()
-            )
-            pad_duration = int(duration * sample_rate)  # Calculate the number of samples to pad
-            command += f" -af apad=whole_len={pad_duration}"
+    # If preserving silence, add the apad filter
+    if preserve_silence:
+        duration_command = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            video_file,
+        ]
+        duration = float(subprocess.check_output(duration_command).decode("utf-8").strip())
+        pad_duration = int(duration * sample_rate)  # Calculate the number of samples to pad
+        command.extend(["-af", f"apad=whole_len={pad_duration}"])
 
-        command += f' "{output_file}"'
-        print(command)
-        # Execute the command
-        subprocess.run(command, shell=True, check=True, stdout=subprocess.DEVNULL)
-
-    audio_data, sample_rate = sf.read(output_file)
-    if audio_data.ndim > 1 and convert_to_mono:  # convert to mono
-        audio_data = np.mean(audio_data, axis=1)
-
+    audio_input = None
     if not keep_file:
-        os.remove(output_file)
+        # If keep_file is False, process the audio in memory
+        command.extend(["-f", "wav", "-"])  # Output audio as WAV to stdout
+
+        # Capture the audio in a pipe
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+        # Load the audio from memory into a BytesIO buffer
+        audio_input = io.BytesIO(result.stdout)
+        audio_input.seek(0)  # Rewind the BytesIO object to the beginning
         output_file = None
 
+    else:
+        audio_input = output_file
+        if not os.path.exists(output_file):
+            # If keep_file is True, write the audio to a file
+            command.append(output_file)
+            # Run the ffmpeg command, passing arguments as a list and not using shell=True
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    # Read the audio from the file and return
+    try:
+        audio_data, sample_rate = sf.read(audio_input)
+        if audio_data.ndim > 1 and convert_to_mono:
+            audio_data = np.mean(audio_data, axis=1)
+    except Exception as e:
+        print(f"FAILED TO LOAD AUDIO FROM {video_file}", e)
+        raise (e)
     return (audio_data, sample_rate, output_file)
 
 
