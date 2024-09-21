@@ -30,7 +30,7 @@ from silence import is_silent
 def create_reaction_alignment_bounds(
     reaction, first_n_samples, seconds_per_checkpoint=12, peak_tolerance=0.5
 ):
-    from aligner.align_by_audio.align_by_audio import get_candidate_starts, get_signals
+    from aligner.align_by_audio.align_by_audio import get_candidate_starts, get_audio_signals
 
     saved_bounds = os.path.splitext(reaction.get("aligned_path"))[0] + "-intercept_bounds.json"
     if os.path.exists(saved_bounds):
@@ -118,7 +118,7 @@ def create_reaction_alignment_bounds(
 
                 reaction_start = base_start + start_reaction_search_at
 
-                signals, evaluate_with = get_signals(
+                signals, evaluate_with = get_audio_signals(
                     reaction, base_start, reaction_start, clip_length
                 )
 

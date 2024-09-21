@@ -36,11 +36,11 @@ seg_start_cache = {}
 full_search_cache = {}
 
 
-def initialize_segment_start_cache(reaction):
+def initialize_segment_start_cache():
     global seg_start_cache
 
     seg_start_cache.clear()
-    seg_start_cache.update(cache)
+    # seg_start_cache.update(cache)
     full_search_cache.clear()
 
 
@@ -73,9 +73,7 @@ def find_segment_starts(
 
     key = f"{conf.get('song_key')} {signal} {open_start} {closed_start} {len(open_chunk)} {len(closed_chunk)} {upper_bound} {peak_tolerance} {hop_length}"
 
-    multi_dimensional = (
-        not isinstance(open_chunk, (list, tuple)) and np.ndim(open_chunk) > 1
-    )
+    multi_dimensional = not isinstance(open_chunk, (list, tuple)) and np.ndim(open_chunk) > 1
 
     if upper_bound is not None:
         # print(f"BOUNDING {closed_start / sr}! {upper_bound / sr} => {(upper_bound + closed_start + current_chunk_size)/sr}")
@@ -85,9 +83,7 @@ def find_segment_starts(
         # else:
         #     open_chunk = open_chunk[:, :int((upper_bound + closed_start - open_start + current_chunk_size ) / hop_length)]
         if not multi_dimensional:
-            open_chunk = open_chunk[
-                : int((upper_bound + closed_start - open_start) / hop_length)
-            ]
+            open_chunk = open_chunk[: int((upper_bound + closed_start - open_start) / hop_length)]
         else:
             open_chunk = open_chunk[
                 :, : int((upper_bound + closed_start - open_start) / hop_length)
@@ -119,8 +115,7 @@ def find_segment_starts(
             return None
 
         correlations = [
-            correlate(open_chunk[i, :], closed_chunk[i, :])
-            for i in range(open_chunk.shape[0])
+            correlate(open_chunk[i, :], closed_chunk[i, :]) for i in range(open_chunk.shape[0])
         ]
         correlation = np.mean(correlations, axis=0)
         correlation = correlation - np.mean(correlation[100 : len(correlation) - 100])
@@ -142,8 +137,7 @@ def find_segment_starts(
 
     if hop_length == 1:
         peak_indices = [
-            [pi, correct_peak_index(pi, current_chunk_size)]
-            for pi in peak_indices.tolist()
+            [pi, correct_peak_index(pi, current_chunk_size)] for pi in peak_indices.tolist()
         ]
     else:
         peak_indices = [
@@ -197,9 +191,7 @@ def score_start_candidates(
         max_correlation_score = 0
 
         for unadjusted_candidate_index, candidate_index in candidate_indicies:
-            open_chunk_here = open_chunk[
-                candidate_index : candidate_index + current_chunk_size
-            ]
+            open_chunk_here = open_chunk[candidate_index : candidate_index + current_chunk_size]
 
             if len(open_chunk_here) != current_chunk_size:
                 # print(f"Skipping because we couldn't make a chunk of size {current_chunk_size} [{current_chunk_size / sr}] starting at {candidate_index} [{candidate_index / sr}] from chunk of length {len(open_chunk_here) / sr} (open chunk len={len(open_chunk)})")
@@ -212,12 +204,8 @@ def score_start_candidates(
                         (candidate_index + current_chunk_size) / hop_length
                     ),
                 ]
-                mfcc_mse_score = mse_mfcc_similarity(
-                    open_chunk_here_mfcc, closed_chunk_mfcc
-                )
-                mfcc_cosine_score = mfcc_cosine_similarity(
-                    open_chunk_here_mfcc, closed_chunk_mfcc
-                )
+                mfcc_mse_score = mse_mfcc_similarity(open_chunk_here_mfcc, closed_chunk_mfcc)
+                mfcc_cosine_score = mfcc_cosine_similarity(open_chunk_here_mfcc, closed_chunk_mfcc)
                 raw_cosine_score = raw_cosine_similarity(
                     open_chunk[candidate_index : candidate_index + current_chunk_size],
                     closed_chunk,
@@ -408,9 +396,7 @@ def plot_candidate_starting_locations(
     all_candidate_indicies = scores_at_index.keys()
 
     # Iterate through signals and plot them
-    for idx, (signal, (candidate_indicies, correlation, __)) in enumerate(
-        peak_indices.items()
-    ):
+    for idx, (signal, (candidate_indicies, correlation, __)) in enumerate(peak_indices.items()):
         if GENERATE_FOR_MAKING_OF and idx > 0:
             continue
 

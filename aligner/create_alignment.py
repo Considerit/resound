@@ -22,6 +22,7 @@ from aligner.align_by_audio.find_segment_start import initialize_segment_start_c
 from aligner.align_by_audio.find_segment_end import initialize_segment_end_cache
 from aligner.align_by_audio.bounds import create_reaction_alignment_bounds, print_alignment_bounds
 from aligner.align_by_audio.align_by_audio import paint_paths
+from aligner.path_finder import initialize_paint_caches
 
 
 def create_aligned_reaction_video(reaction, extend_by=0, force=False):
@@ -42,6 +43,13 @@ def create_aligned_reaction_video(reaction, extend_by=0, force=False):
             getcontext().prec = len(precision_str.split(".")[-1])
 
             start = time.perf_counter()
+
+            initialize_segment_end_cache()
+            initialize_path_score()
+            initialize_segment_tracking()
+            initialize_paint_caches()
+            initialize_path_pruning()
+            initialize_segment_start_cache()
 
             best_path = paint_paths(reaction)
 
