@@ -3,13 +3,11 @@ import time
 
 from decimal import Decimal, getcontext
 
-from aligner.create_trimmed_video import trim_and_concat_video
 
 from utilities import compute_precision_recall, universal_frame_rate, is_close
 from utilities import conf, save_object_to_file, read_object_from_file
 from utilities import conversion_audio_sample_rate as sr
 
-from aligner.pruning_search import initialize_path_pruning, initialize_checkpoints
 from aligner.scoring_and_similarity import (
     path_score,
     find_best_path,
@@ -17,19 +15,21 @@ from aligner.scoring_and_similarity import (
     initialize_segment_tracking,
     print_path,
 )
-from aligner.find_segment_start import initialize_segment_start_cache
-from aligner.find_segment_end import initialize_segment_end_cache
+from aligner.create_trimmed_video import trim_and_concat_video
 
-from aligner.bounds import create_reaction_alignment_bounds, print_alignment_bounds
-from aligner.path_painter import paint_paths
+from aligner.align_by_audio.pruning_search import initialize_path_pruning, initialize_checkpoints
+from aligner.align_by_audio.find_segment_start import initialize_segment_start_cache
+from aligner.align_by_audio.find_segment_end import initialize_segment_end_cache
+from aligner.align_by_audio.bounds import create_reaction_alignment_bounds, print_alignment_bounds
+from aligner.align_by_audio.align_by_audio import paint_paths
 
 
-def create_aligned_reaction_video(reaction, extend_by=0):
+def create_aligned_reaction_video(reaction, extend_by=0, force=False):
     global conf
 
     output_file = reaction.get("aligned_path")
 
-    if conf.get("create_alignment") or conf.get("alignment_test"):
+    if conf.get("create_alignment") or conf.get("alignment_test") or force:
         alignment_metadata_file = reaction.get("alignment_metadata")
 
         if not os.path.exists(alignment_metadata_file):
@@ -76,7 +76,7 @@ def create_aligned_reaction_video(reaction, extend_by=0):
 
         reaction.update(metadata)
 
-        if not os.path.exists(output_file) and conf["output_alignment_video"]:
+        if not os.path.exists(output_file) and conf.get("output_alignment_video", False):
             conf["load_reaction"](reaction["channel"])
 
             react_video = reaction.get("video_path")

@@ -24,12 +24,12 @@ from face_finder.extract_faces import (
     get_faces_from_reaction_video,
     detect_faces_in_frame,
 )
-from aligner.images.frame_operations import (
+from aligner.align_by_image.frame_operations import (
     crop_with_noise,
     crop_to_center_percent,
 )
 
-from aligner.images.edge_finder import find_edges_in_region_of_video
+from aligner.align_by_image.edge_finder import find_edges_in_region_of_video
 
 
 def get_bounding_box_of_music_video_in_reaction(reaction, visualize=False):

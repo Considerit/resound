@@ -25,3 +25,4 @@ bin/dl
 *.txt
 *.vtt
 Voice memos/*
+pyproject.toml

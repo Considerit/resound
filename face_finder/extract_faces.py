@@ -10,7 +10,7 @@ from utilities import (
     conf,
     conversion_audio_sample_rate as sr,
 )
-from aligner.images.frame_operations import extract_frame
+from aligner.align_by_image.frame_operations import extract_frame
 
 
 def detect_faces_in_frame(frame, face_detection_threshold=0.9):
@@ -21,9 +21,7 @@ def detect_faces_in_frame(frame, face_detection_threshold=0.9):
     return faces
 
 
-def get_faces_from_music_video(
-    face_detection_threshold=0.9, resolution=1, times=None, frames={}
-):
+def get_faces_from_music_video(face_detection_threshold=0.9, resolution=1, times=None, frames={}):
     music_video_path = conf.get("base_video_path")
 
     return get_faces_from_video(
@@ -40,10 +38,27 @@ def get_faces_from_reaction_video(
     reaction, face_detection_threshold=0.9, resolution=1, times=None, frames={}
 ):
     video_path = reaction.get("video_path")
+    output_dir = conf.get("reaction_directory")
 
     return get_faces_from_video(
         video_path=video_path,
-        cache_dir=conf.get("temp_directory"),
+        cache_dir=output_dir,
+        face_detection_threshold=face_detection_threshold,
+        resolution=resolution,
+        times=times,
+        frames=frames,
+    )
+
+
+def get_faces_from_aligned_reaction_video(
+    reaction, face_detection_threshold=0.9, resolution=1, times=None, frames={}
+):
+    video_path = reaction.get("aligned_path")
+    output_dir = conf.get("temp_directory")
+
+    return get_faces_from_video(
+        video_path=video_path,
+        cache_dir=output_dir,
         face_detection_threshold=face_detection_threshold,
         resolution=resolution,
         times=times,
@@ -86,9 +101,7 @@ def get_faces_from_video(
 
     if times is None:
         if fps <= 0:
-            raise ValueError(
-                f"Could not retrieve FPS from the video {music_video_path}"
-            )
+            raise ValueError(f"Could not retrieve FPS from the video {music_video_path}")
 
         # Calculate every_n_frames based on FPS and resolution (time in seconds between extractions)
         every_n_frames = int(fps * resolution)

@@ -11,7 +11,7 @@ from silence import is_silent
 # certain parts of the base audio file aligns with the reaction audio file. This will help pruning a tree exploring
 # potential alignment pathways.
 
-# I'd like you to help me write a function create_reaction_alignment_bounds. It takes in the reaction audio and the base
+# create_reaction_alignment_bounds takes in the reaction audio and the base
 # audio. Here's what it should do:
 #   - Select n equally spaced timestamps from the base audio, not including zero or the end of the base audio.
 #   - For each timestamp, select two adjacent 2 sec clips on either side of the timestamp. We use two clips to
@@ -30,11 +30,9 @@ from silence import is_silent
 def create_reaction_alignment_bounds(
     reaction, first_n_samples, seconds_per_checkpoint=12, peak_tolerance=0.5
 ):
-    from aligner.path_painter import get_candidate_starts, get_signals
+    from aligner.align_by_audio.align_by_audio import get_candidate_starts, get_signals
 
-    saved_bounds = (
-        os.path.splitext(reaction.get("aligned_path"))[0] + "-intercept_bounds.json"
-    )
+    saved_bounds = os.path.splitext(reaction.get("aligned_path"))[0] + "-intercept_bounds.json"
     if os.path.exists(saved_bounds):
         reaction["alignment_bounds"] = read_object_from_file(saved_bounds)
         print_alignment_bounds(reaction)
@@ -54,15 +52,16 @@ def create_reaction_alignment_bounds(
         song_audio_mfcc = conf.get("song_audio_mfcc")
 
         reaction_span = reaction.get("end_reaction_search_at", len(reaction_audio))
+
+        print("END!!!!!", reaction.get("end_reaction_search_at", None))
+
         start_reaction_search_at = reaction.get("start_reaction_search_at", 0)
 
         base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
 
         n_timestamps = round(base_length_sec / seconds_per_checkpoint)
 
-        timestamps = [
-            i * base_length_sec / (n_timestamps + 1) for i in range(1, n_timestamps + 1)
-        ]
+        timestamps = [i * base_length_sec / (n_timestamps + 1) for i in range(1, n_timestamps + 1)]
 
         if base_length_sec - timestamps[-1] > 15:
             timestamps.append(base_length_sec - 10)
@@ -104,9 +103,9 @@ def create_reaction_alignment_bounds(
 
             print(f"ts: {ts / sr}")
 
-            predominantly_silent = is_silent(
-                segments[0][2], threshold_db=-20
-            ) or is_silent(segments[2][2], threshold_db=-20)
+            predominantly_silent = is_silent(segments[0][2], threshold_db=-20) or is_silent(
+                segments[2][2], threshold_db=-20
+            )
 
             if predominantly_silent:
                 print("\tNOT ADDING BOUND. Too silent.")
@@ -194,9 +193,7 @@ def create_reaction_alignment_bounds(
             f"Inserted upper bound at end ({len(base_audio)/sr}): {reaction.get('end_reaction_search_at') / sr} [{reaction.get('end_reaction_search_at') - len(base_audio) - grace}]!"
         )
     else:
-        bounds.append(
-            [len(base_audio), [len(reaction_audio) - len(base_audio) - grace]]
-        )
+        bounds.append([len(base_audio), [len(reaction_audio) - len(base_audio) - grace]])
 
     bounds.sort(key=lambda x: x[0], reverse=True)
 
@@ -215,9 +212,7 @@ def create_reaction_alignment_bounds(
         # enforce integrity condition
         # find the latest match that happens before the next bound
         candidates = [
-            intercept
-            for intercept in all_candidates
-            if intercept <= last_intercept + grace
+            intercept for intercept in all_candidates if intercept <= last_intercept + grace
         ]
 
         if len(candidates) == 0:
@@ -280,9 +275,7 @@ def print_alignment_bounds(reaction):
                     f"\tOh oh! {reaction_start / sr:.1f} is not in bounds of {current_start/sr:.1f}"
                 )
             else:
-                print(
-                    f"\tIn bounds: {reaction_start/sr:.1f} for {current_start/sr:.1f}"
-                )
+                print(f"\tIn bounds: {reaction_start/sr:.1f} for {current_start/sr:.1f}")
             current_start += reaction_end - reaction_start
 
     if False:

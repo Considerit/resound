@@ -4,7 +4,7 @@ import cv2
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
-from aligner.images.frame_operations import crop_with_noise
+from aligner.align_by_image.frame_operations import crop_with_noise
 
 
 def find_edges_in_region_of_video(frames, region, is_vertical, visualize=True):
@@ -47,9 +47,7 @@ def find_edges_in_region_of_video(frames, region, is_vertical, visualize=True):
         if False and visualize:
             # Visualize the heatmap incrementally on top of the current frame's contours
             # and lines
-            synthesized_lines = synthesize_line_segments(
-                line_heatmap, is_vertical=is_vertical
-            )
+            synthesized_lines = synthesize_line_segments(line_heatmap, is_vertical=is_vertical)
 
             visualize_line_heatmap(
                 line_heatmap,
@@ -203,8 +201,7 @@ def filter_line_segments(segments, tolerance=20):
                     if (
                         segment_b["start"][0] <= segment_a["start"][0]
                         and segment_b["end"][0] >= segment_a["end"][0]
-                        and abs(segment_b["start"][1] - segment_a["start"][1])
-                        <= tolerance
+                        and abs(segment_b["start"][1] - segment_a["start"][1]) <= tolerance
                         and segment_b["total_heat"] > segment_a["total_heat"]
                     ):
                         filter_out = True
@@ -218,8 +215,7 @@ def filter_line_segments(segments, tolerance=20):
                     if (
                         segment_b["start"][1] <= segment_a["start"][1]
                         and segment_b["end"][1] >= segment_a["end"][1]
-                        and abs(segment_b["start"][0] - segment_a["start"][0])
-                        <= tolerance
+                        and abs(segment_b["start"][0] - segment_a["start"][0]) <= tolerance
                         and segment_b["total_heat"] > segment_a["total_heat"]
                     ):
                         filter_out = True
@@ -263,9 +259,7 @@ def merge_line_segments(segments, is_vertical, tolerance=1000):
 
         predator["pixels"] += prey["pixels"]
 
-        predator["avg_quality"] = (
-            np.mean([p[2] for p in predator["pixels"]]) / predator["length"]
-        )
+        predator["avg_quality"] = np.mean([p[2] for p in predator["pixels"]]) / predator["length"]
 
         # burp
         return predator
@@ -340,9 +334,7 @@ def synthesize_line_segments(heatmap, is_vertical, min_length=20, line_threshold
         def create_segment(line_pixels):
             start_x = np.min([p[0] for p in line_pixels])
             end_x = np.max([p[0] for p in line_pixels])
-            total_heat = np.sum(
-                [p[2] for p in line_pixels]
-            )  # Sum of the heat of the segment
+            total_heat = np.sum([p[2] for p in line_pixels])  # Sum of the heat of the segment
             median_y = np.median([p[1] for p in line_pixels])
             length = end_x - start_x + 1  # Calculate length of the line segment
             avg_quality = np.mean([p[2] for p in line_pixels]) / length
@@ -463,9 +455,7 @@ def visualize_line_heatmap(
     for i in range(256):
         color_map[i, 0] = [128 - i, i, 0]  # Green to Red transition
 
-    heatmap_colored = cv2.LUT(
-        cv2.cvtColor(normalized_heatmap, cv2.COLOR_GRAY2BGR), color_map
-    )
+    heatmap_colored = cv2.LUT(cv2.cvtColor(normalized_heatmap, cv2.COLOR_GRAY2BGR), color_map)
 
     # Mask areas of the heatmap where no lines were detected (i.e., where the heatmap is 0)
     mask = heatmap > 0

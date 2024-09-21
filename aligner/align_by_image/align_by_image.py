@@ -23,8 +23,8 @@ from utilities import (
 )
 
 from inventory.inventory import get_reactions_manifest
-from aligner.images.frame_operations import crop_with_noise
-from aligner.images.embedded_video_finder import (
+from aligner.align_by_image.frame_operations import crop_with_noise
+from aligner.align_by_image.embedded_video_finder import (
     get_bounding_box_of_music_video_in_reaction,
     adjust_coordinates_for_offscreen_embed,
 )
@@ -67,8 +67,8 @@ def build_image_matches(
 
     hash_cache_path = os.path.join(hash_output_dir, hash_cache_file_name)
 
-    if os.path.exists(hash_cache_path):
-        return
+    # if os.path.exists(hash_cache_path):
+    #     return
 
     if not os.path.exists(hash_cache_path):
         # Extract frames from both videos
@@ -509,14 +509,14 @@ def find_reaction_endpoints(segments, max_dist_from_end=10):
 
     # Filter out segments that aren't within the new bounds
     if reaction_start and reaction_end:
-        print("Got reaction start and end:", start_intercept, end_intercept)
+        print("Got reaction start and end:", start_intercept, end_intercept + song_length)
         segments = [
             s
             for s in segments
             if s["y-intercept"] >= start_intercept and s["y-intercept"] <= end_intercept
         ]
 
-    return segments, start_intercept, end_intercept
+    return segments, start_intercept, end_intercept + song_length
 
 
 def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):

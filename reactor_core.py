@@ -12,7 +12,6 @@ from inventory import (
     get_manifest_path,
     filter_and_augment_manifest,
 )
-from aligner import create_aligned_reaction_video
 from face_finder.face_finder import create_reactor_view, get_face_files
 from backchannel_isolator import (
     isolate_reactor_backchannel,
@@ -21,9 +20,8 @@ from backchannel_isolator import (
 from compositor import create_reaction_concert
 from compositor.asides import create_asides
 
+from aligner import create_aligned_reaction_video
 from aligner.scoring_and_similarity import print_path, ground_truth_overlap
-
-from aligner.path_painter import paint_paths
 
 import cProfile
 import pstats
@@ -168,14 +166,6 @@ def create_reaction_compilation(
         if is_locked("compilation"):
             return []
 
-        step_size = conf.get("step_size")
-        min_segment_length_in_seconds = conf.get("min_segment_length_in_seconds")
-
-        # Convert seconds to samples
-        n_samples = int(step_size * sr)
-        first_n_samples = int(min_segment_length_in_seconds * sr)
-
-        temp_directory = conf.get("temp_directory")
         song_directory = conf.get("song_directory")
 
         compilation_path = conf.get("compilation_path")
