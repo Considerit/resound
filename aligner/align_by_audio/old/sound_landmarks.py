@@ -29,9 +29,7 @@ import soundfile as sf
 
 ##############################
 # For checking an alignment segment for whether it contains a landmark
-def contains_landmark(
-    sound_landmarks, current_start, current_end, reaction_start, reaction_end
-):
+def contains_landmark(sound_landmarks, current_start, current_end, reaction_start, reaction_end):
     landmarks_spanned = 0  # how many landmarks this segment *should* cover
     landmarks_matched = 0  # how many landmarks this segment *did* cover
 
@@ -101,9 +99,7 @@ def find_sound_landmarks_in_reaction(
             loudness_threshold,
         ) = get_silence_binary_mask(reaction)
 
-        print(
-            f"Looking for {len(landmarks)} sound landmarks for {reaction.get('channel')}"
-        )
+        print(f"Looking for {len(landmarks)} sound landmarks for {reaction.get('channel')}")
 
         get_landmark_matches = (
             get_landmark_matches_with_cross_correlation
@@ -128,9 +124,7 @@ def find_sound_landmarks_in_reaction(
                 ),
             }
 
-            print(
-                f"\t({sec_to_time(landmark_start / sr)}-{sec_to_time(landmark_end / sr)}):"
-            )
+            print(f"\t({sec_to_time(landmark_start / sr)}-{sec_to_time(landmark_end / sr)}):")
             for peak in landmark_matches[landmark_start]["matches"]:
                 print(f"\t\t{peak / sr}: {sec_to_time(peak / sr)}")
 
@@ -170,9 +164,7 @@ def get_landmark_matches_with_fingerprinting(
     djv = Dejavu(config)
 
     # Landmark audio snippet (from the main song audio)
-    landmark = conf.get("song_audio_data")[
-        int(sr * landmark_start) : int(sr * landmark_end)
-    ]
+    landmark = conf.get("song_audio_data")[int(sr * landmark_start) : int(sr * landmark_end)]
 
     # Save the landmark audio snippet to a temporary file for fingerprinting
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_landmark_file:
@@ -193,9 +185,7 @@ def get_landmark_matches_with_fingerprinting(
         )
         reaction_path = None
         print("writing temp reaction audio")
-        with tempfile.NamedTemporaryFile(
-            suffix=".wav", delete=False
-        ) as tmp_silent_reaction_file:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_silent_reaction_file:
             reaction_path = tmp_silent_reaction_file.name
             sf.write(reaction_path, reaction_audio, sr)
             print("...done writing")
@@ -221,9 +211,7 @@ def get_landmark_matches_with_fingerprinting(
             # Compute the cross-correlation and visualization for reference (optional)
             correlation = fftconvolve(reaction_audio, landmark[::-1], mode="full")
             lags = np.arange(-len(landmark) + 1, len(reaction_audio))
-            lags_in_seconds = (
-                lags / sr
-            )  # Convert samples to seconds using the sample rate
+            lags_in_seconds = lags / sr  # Convert samples to seconds using the sample rate
 
             # Apply the binary mask to the correlation (for visualization)
             weighted_correlation = apply_binary_mask(
@@ -260,9 +248,7 @@ def get_landmark_matches_with_cross_correlation(
     loudness_threshold,
     show_visual=False,
 ):
-    landmark = conf.get("song_audio_data")[
-        int(sr * landmark_start) : int(sr * landmark_end)
-    ]
+    landmark = conf.get("song_audio_data")[int(sr * landmark_start) : int(sr * landmark_end)]
     reaction_audio = reaction.get("reaction_audio_data")
 
     # Compute the cross-correlation between the signal and reaction
@@ -290,10 +276,7 @@ def get_landmark_matches_with_cross_correlation(
     # Use find_peaks to get peaks above the threshold
     peaks, _ = find_peaks(weighted_correlation, height=0.5, distance=1.5 * sr)
 
-    peaks = [
-        round(correct_peak_index(p, sr * (landmark_end - landmark_start)))
-        for p in peaks
-    ]
+    peaks = [round(correct_peak_index(p, sr * (landmark_end - landmark_start))) for p in peaks]
 
     if show_visual:
         visualize_landmark_correlation(
@@ -342,9 +325,7 @@ def get_silence_binary_mask(
     use_accompaniment_only=True,
 ):
     if use_accompaniment_only:
-        accompaniment, vocals, high_passed_vocals, __ = separate_vocals_for_reaction(
-            reaction
-        )
+        accompaniment, vocals, __ = separate_vocals_for_reaction(reaction)
         reaction_audio, __ = sf.read(accompaniment)
 
     else:
@@ -384,9 +365,7 @@ def find_silence_binary_mask(
     silence_mask = (loudness < silence_threshold).astype(int)
 
     # Convert min_silent_duration from seconds to samples (based on window size)
-    min_silent_samples = int(
-        min_silent_duration / window_size_seconds
-    )  # Adjust for window size
+    min_silent_samples = int(min_silent_duration / window_size_seconds)  # Adjust for window size
 
     silence_binary_mask = np.zeros_like(silence_mask)
 
@@ -431,9 +410,7 @@ def expand_binary_mask(binary_mask, correlation_length, sr, window_size_seconds)
 def apply_binary_mask(correlation, binary_mask, sr, window_size_seconds):
     """Apply the expanded binary mask to the correlation."""
     # Expand the binary mask to match the length of the correlation array
-    expanded_mask = expand_binary_mask(
-        binary_mask, len(correlation), sr, window_size_seconds
-    )
+    expanded_mask = expand_binary_mask(binary_mask, len(correlation), sr, window_size_seconds)
 
     # Apply the expanded mask to the correlation
     masked_correlation = correlation * expanded_mask
@@ -490,9 +467,7 @@ def visualize_landmark_correlation(
     axs[3].plot(lags_in_seconds, weighted_correlation, label="Weighted Correlation")
 
     # Mark the peaks on the weighted correlation plot
-    axs[3].plot(
-        lags_in_seconds[peaks], weighted_correlation[peaks], "rx", label="Peaks"
-    )
+    axs[3].plot(lags_in_seconds[peaks], weighted_correlation[peaks], "rx", label="Peaks")
 
     axs[3].set_title("Weighted Correlation with Peaks (Emphasis on Silent Regions)")
     axs[3].set_xlabel("Time (seconds)")
@@ -550,9 +525,7 @@ def visualize_landmark_correlation(
         new_ax.axis("off")  # Hide the axes for the frame
 
     # Adjust layout to make space for frames at the bottom
-    plt.tight_layout(
-        rect=[0, 0.15, 1, 1]
-    )  # Leave space for frames (bottom 15% for frames)
+    plt.tight_layout(rect=[0, 0.15, 1, 1])  # Leave space for frames (bottom 15% for frames)
     plt.show()
 
 

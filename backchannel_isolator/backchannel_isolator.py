@@ -18,7 +18,7 @@ from backchannel_isolator.track_separation import (
 
 from utilities.audio_processing import audio_percentile_loudness, convert_to_mono
 from utilities import conversion_audio_sample_rate as sr
-from utilities import conf, save_object_to_file, read_object_from_file
+from utilities import conf, save_object_to_file, read_object_from_file, extract_audio
 
 # I have two audio tracks. One track is a song. The other track is a reaction — a recording of
 # one or two people reacting to the song. The reaction track contains a possibly distorted, though
@@ -200,9 +200,7 @@ def create_mask_by_relative_perceptual_loudness_difference(
         avg_diff = np.average(diff)
 
         print(f"Average diff={avg_diff}")
-        if (
-            avg_diff > 0
-        ):  # adjust to reduce sensitivity when the reaction is really out of whack
+        if avg_diff > 0:  # adjust to reduce sensitivity when the reaction is really out of whack
             diff = diff - avg_diff
             print("\tadjusted based on diff")
 
@@ -286,9 +284,7 @@ def process_mask(mask, min_segment_length):
 
     # If there's a current segment at the end of the mask, add it to the list of segments
     if current_segment_start:
-        segments.append(
-            [current_segment_start, current_segment_start + current_segment_length]
-        )
+        segments.append([current_segment_start, current_segment_start + current_segment_length])
 
     return segments
 
@@ -377,9 +373,7 @@ def apply_linear_fade(segment_audio, fade_duration_samples):
     return segment_audio
 
 
-def get_audible_segments(
-    audio, segments, audibility_threshold=0.01, suppresion_period=2
-):
+def get_audible_segments(audio, segments, audibility_threshold=0.01, suppresion_period=2):
     # Initialize a new audio array with zeros
     suppresion_period *= sr
 
@@ -414,9 +408,7 @@ def get_audible_segments(
             # Handle the segment after the last inaudible stretch
             audible_segments.append([start + chunk_start, end])
 
-            print(
-                f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}"
-            )
+            print(f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}")
 
         else:
             # If there are no inaudible stretches of more than 1 second, just copy the entire segment
@@ -484,15 +476,22 @@ def create_isolated_audio(audio, segments, fade_duration=0.005):
     return suppressed_audio
 
 
-def mute_by_deviation(reaction, song_path, reaction_path, output_path):
+def mute_by_deviation(
+    reaction,
+    aligned_reaction_audio,
+    song_vocals_path,
+    aligned_reaction_vocals_path,
+    output_path,
+    visualize=True,
+):
     if profile_isolator:
         global profiler
         profiler.enable()
 
-    audio_data, __ = sf.read(song_path)
+    audio_data, __ = sf.read(song_vocals_path)
     song = convert_to_mono(audio_data)
 
-    audio_data, __ = sf.read(reaction_path)
+    audio_data, __ = sf.read(aligned_reaction_vocals_path)
     reaction_audio = convert_to_mono(audio_data)
 
     delay = 0
@@ -502,9 +501,9 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
     else:
         reaction_audio = reaction_audio[: len(song)]
 
-    conf.get("load_aligned_reaction_data")(reaction.get("channel"))
+    assert len(reaction_audio) == len(song)
 
-    original_reaction = reaction.get("aligned_reaction_data")
+    original_reaction = aligned_reaction_audio
 
     extra_reaction = original_reaction[
         len(song) :
@@ -535,7 +534,7 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
         # long_confirmed_mask = long_confirmed_diff > percent_volume_diff_thresh
         # long_confirmed_dilated_mask = long_confirmed_diff > percent_volume_diff_thresh
 
-        if False:
+        if visualize:
             plot_masks(
                 song_percentile_loudness,
                 reaction_percentile_loudness,
@@ -549,19 +548,17 @@ def mute_by_deviation(reaction, song_path, reaction_path, output_path):
 
         loud_enough_segments = mute_quiet_segments(reaction, reaction_audio, segments)
 
-        confirmed_segments = confirm_via_correlation(reaction, loud_enough_segments)
+        confirmed_segments = confirm_via_correlation(
+            reaction, original_reaction, loud_enough_segments
+        )
 
         padded_segments = pad_segments(
             confirmed_segments, len(reaction_audio), pad_beginning=0.75, pad_ending=0.25
         )
-        merged_segments = merge_segments(
-            padded_segments, min_segment_length, max_gap_frames
-        )
+        merged_segments = merge_segments(padded_segments, min_segment_length, max_gap_frames)
 
         audible_segments = get_audible_segments(reaction_audio, merged_segments)
-        audible_segments = apply_mute_segments(
-            audible_segments, reaction.get("mute", [])
-        )
+        audible_segments = apply_mute_segments(audible_segments, reaction.get("mute", []))
 
         def convert_segments_for_json(segments):
             converted_segments = []
@@ -634,11 +631,10 @@ def mute_quiet_segments(reaction, audio, segments, audibility_threshold=0.2):
 from scipy.signal import correlate
 
 
-def confirm_via_correlation(reaction, segments, threshold=0.9):
+def confirm_via_correlation(reaction, aligned_reaction_audio, segments, threshold=0.9):
     from aligner.scoring_and_similarity import get_segment_mfcc_cosine_similarity_score
-    from aligner.find_segment_start import correct_peak_index
+    from aligner.align_by_audio.find_segment_start import correct_peak_index
 
-    aligned_reaction_audio = reaction.get("aligned_reaction_data")
     aligned_reaction_mfcc = librosa.feature.mfcc(
         y=aligned_reaction_audio,
         sr=sr,
@@ -700,21 +696,30 @@ def isolate_reactor_backchannel(reaction, extended_by=0):
         backchannel_filename = f"{reaction.get('channel')}-isolated_backchannel.json"
         backchannel_path = os.path.join(output_dir, backchannel_filename)
 
-        song_length = len(conf.get("song_audio_data")) / sr + 1
+        aligned_reaction_audio, __, aligned_reaction_path = extract_audio(
+            reaction.get("aligned_path"), preserve_silence=True, keep_file=True
+        )
+
+        print(reaction.get("aligned_path"), aligned_reaction_audio.shape)
 
         (
             __,
-            __,
             reaction_vocals_path,
             react_separation_path,
-        ) = separate_vocals_for_aligned_reaction(reaction)
-        __, __, song_vocals_path, __ = separate_vocals_for_song()
+        ) = separate_vocals_for_aligned_reaction(reaction, aligned_reaction_path)
+        __, song_vocals_path, __ = separate_vocals_for_song()
 
         print(f"\tWriting backchannel to {backchannel_audio_path}")
 
         mute_by_deviation(
-            reaction, song_vocals_path, reaction_vocals_path, backchannel_path
+            reaction,
+            aligned_reaction_audio,
+            song_vocals_path,
+            reaction_vocals_path,
+            backchannel_path,
         )
+
+        os.remove(aligned_reaction_path)
 
         # clean up source separated intermediate audio files
         # shutil.rmtree(react_separation_path)

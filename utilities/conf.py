@@ -396,22 +396,6 @@ def make_conf(song_def, options, temp_directory):
                 reaction_audio_data,
             )
 
-    def load_aligned_reaction_data(channel):
-        print_profiling()
-        reaction_conf = conf.get("reactions")[channel]
-
-        if not conf.get("base_video_path"):
-            load_base()
-
-        if not "reaction_audio_path" in reaction_conf:
-            load_reaction(channel)
-
-        if not "aligned_reaction_data" in reaction_conf:
-            path = reaction_conf.get("aligned_audio_path")
-
-            aligned_reaction_data, __, __ = extract_audio(path)
-            reaction_conf["aligned_reaction_data"] = aligned_reaction_data
-
     def remove_reaction(channel):
         if channel in conf.get("reactions").get(channel, False):
             unload_reaction(channel)
@@ -434,7 +418,6 @@ def make_conf(song_def, options, temp_directory):
             "unload_base": unload_base,
             "load_reactions": load_reactions,
             "load_reaction": load_reaction,
-            "load_aligned_reaction_data": load_aligned_reaction_data,
             "remove_reaction": remove_reaction,
             "free_conf": free_conf,
         }

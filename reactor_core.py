@@ -119,8 +119,6 @@ def reaction_fully_processed(reaction):
 
 
 def handle_reaction_video(reaction, extend_by=15):
-    output_file = reaction.get("aligned_path")
-
     # if '40' not in reaction['channel']:
     #     return
 
@@ -131,10 +129,6 @@ def handle_reaction_video(reaction, extend_by=15):
 
     if not conf.get("isolate_commentary"):
         return []
-
-    _, _, aligned_reaction_audio_path = extract_audio(output_file, preserve_silence=True)
-
-    reaction["aligned_audio_path"] = aligned_reaction_audio_path
 
     reaction["backchannel_audio"] = isolate_reactor_backchannel(reaction, extended_by=extend_by)
 
@@ -448,10 +442,10 @@ if __name__ == "__main__":
         "create_alignment": True,
         "save_alignment_metadata": True,
         "output_alignment_video": True,
-        "isolate_commentary": False,
+        "isolate_commentary": True,
         "create_reactor_view": False,
         "create_compilation": False,
-        "download_and_parse": True,
+        "download_and_parse": False,
         "alignment_test": False,
         "draft": True,
         "break_on_exception": False,

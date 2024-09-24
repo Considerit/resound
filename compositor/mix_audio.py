@@ -56,9 +56,7 @@ def mix_audio(base_video, output_size):
     base_excess_limitation = knobs.get("base_excess_limitation", 0.75)
     stereo_pan_max = knobs.get("stereo_pan_max", 0.75)
 
-    base_audio_as_array, base_audio_rms = get_peak_normalized_base_audio_and_rms(
-        base_video
-    )
+    base_audio_as_array, base_audio_rms = get_peak_normalized_base_audio_and_rms(base_video)
 
     for channel, reaction in conf.get("reactions").items():
         print(f"\t\tLoading and volume matching audio for {channel}")
@@ -250,15 +248,13 @@ def foreground_background_backchannel_segments(
     spacing = 1 * sr
 
     def construct_temporal_storage_for_backchannel_segments(foregrounded):
-        duration = len(conf.get("song_audio_data"))
+        duration = conf.get("song_length")
         bins = []
         for i in range(0, duration, spacing):
             center = i
             my_bin = []
             for chan in foregrounded:
-                if segments_overlap(
-                    chan[0], (center - spacing / 2, center + spacing / 2)
-                ):
+                if segments_overlap(chan[0], (center - spacing / 2, center + spacing / 2)):
                     my_bin.append(chan)
             bins.append(my_bin)
         return bins
@@ -282,9 +278,7 @@ def foreground_background_backchannel_segments(
                 continue
 
             len_before = len(my_bin)
-            bins[i] = [
-                chan for chan in my_bin if str((chan[0], chan[1])) not in to_remove_keys
-            ]
+            bins[i] = [chan for chan in my_bin if str((chan[0], chan[1])) not in to_remove_keys]
 
     def segments_overlap(seg1, seg2):
         # Check if two segments overlap
@@ -360,9 +354,7 @@ def foreground_background_backchannel_segments(
         for featured in foregrounded_backchannel_segments:
             seg, channel, score = featured
 
-            active_channel_segments = [
-                s for s in channel_segments if segments_overlap(s[0], seg)
-            ]
+            active_channel_segments = [s for s in channel_segments if segments_overlap(s[0], seg)]
 
             print(
                 f"\t\tFeatured backchannel for {channel} at {(seg[1]-seg[0]) / 2 / sr}. Backgrounding {len(active_channel_segments) - 1} other backchannels"
@@ -390,9 +382,7 @@ def foreground_background_backchannel_segments(
                 ) and chan not in backgrounded_backchannel_segments:
                     highest_scoring_segment = chan
 
-            to_remove = move_to_background(
-                active_channel_segments, highest_scoring_segment
-            )
+            to_remove = move_to_background(active_channel_segments, highest_scoring_segment)
             remove_from_foreground(bins, to_remove)
 
             i += 1
@@ -402,9 +392,7 @@ def foreground_background_backchannel_segments(
         audio_mask = scaling_factors[channel]
         diff = len(audio_mask) - len(base_audio_as_array)
         if diff > 0:
-            audio_mask[-diff:] = np.full(
-                diff, 1 / len(conf.get("reactions"))
-            )  # np.ones(diff)
+            audio_mask[-diff:] = np.full(diff, 1 / len(conf.get("reactions")))  # np.ones(diff)
 
     plot_scaling_factors(scaling_factors)
 
@@ -463,9 +451,7 @@ def plot_scaling_factors(scaling_factors, hop_length=5096, show=False):
     heatmap_data = np.array(resampled_data)
 
     # Create a custom colormap that goes from white to black
-    white_black_cmap = LinearSegmentedColormap.from_list(
-        "white_black", ["white", "black"]
-    )
+    white_black_cmap = LinearSegmentedColormap.from_list("white_black", ["white", "black"])
 
     font_size = 8
     space_per_label = 1.5 * font_size
@@ -476,9 +462,7 @@ def plot_scaling_factors(scaling_factors, hop_length=5096, show=False):
     fig, ax = plt.subplots(figsize=(10, total_height_inches))
     plt.subplots_adjust(left=0.2, right=0.8, top=0.99, bottom=0.05)
 
-    cax = ax.imshow(
-        heatmap_data, aspect="auto", cmap=white_black_cmap, interpolation="nearest"
-    )
+    cax = ax.imshow(heatmap_data, aspect="auto", cmap=white_black_cmap, interpolation="nearest")
 
     # Set the channel names on the y-axis
     ax.set_yticks(np.arange(n_channels))
@@ -538,9 +522,7 @@ def adjust_gain_for_loudness_match(audio_array, channel):
     loudness = meter.integrated_loudness(audio_array)
 
     # loudness normalize audio to LUFS_normalization dB LUFS
-    loudness_normalized_audio = pyln.normalize.loudness(
-        audio_array, loudness, LUFS_normalization
-    )
+    loudness_normalized_audio = pyln.normalize.loudness(audio_array, loudness, LUFS_normalization)
 
     print(f"Loudness of {channel}={loudness}, adjusting to {LUFS_normalization}db LUFS")
     return loudness_normalized_audio
@@ -598,9 +580,7 @@ def dynamic_limit_without_combining(
         # Fetching reactor audios chunk-by-chunk and summing them up
         for reactor_audio in all_reaction_audio:
             reactor_chunk = (
-                reactor_audio[i:chunk_end]
-                if i < len(reactor_audio)
-                else np.zeros_like(base_chunk)
+                reactor_audio[i:chunk_end] if i < len(reactor_audio) else np.zeros_like(base_chunk)
             )
             reactor_chunk = pad_audio_chunk(reactor_chunk, chunk_size)
             combined_chunk += reactor_chunk
