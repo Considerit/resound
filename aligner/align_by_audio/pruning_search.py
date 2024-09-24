@@ -40,7 +40,7 @@ def should_prune_path(reaction, current_path, current_start, reaction_start):
     global prune_types
 
     reaction_audio = reaction.get("reaction_audio_data")
-    base_audio_length = len(conf.get("song_audio_data"))
+    base_audio_length = conf.get("song_length")
 
     if current_start < 0.95 * base_audio_length and is_path_quality_poor(reaction, current_path):
         prune_types["poor_path_branching"] += 1
@@ -161,7 +161,7 @@ def is_path_quality_poor(reaction, path):
             return True
 
     if filler_duration * sr > (
-        10 * len(conf.get("song_audio_data")) / 3
+        10 * conf.get("song_length") / 3
     ):  # no more than 10 seconds of filler per three minutes of base audio
         prune_types["poor_path_fill"]
         return True
@@ -194,21 +194,6 @@ def print_prune_data():
 
     for k, v in prune_types.items():
         print(f"\t{k}: {v}")
-
-
-def initialize_checkpoints():
-    base_audio = conf.get("song_audio_data")
-
-    samples_per_checkpoint = 2 * sr
-
-    timestamps = []
-    start = s = 6
-    while s < len(base_audio):
-        if s / sr >= start:
-            timestamps.append(s)
-        s += samples_per_checkpoint
-
-    return timestamps
 
 
 on_press_key("ø", print_prune_data)

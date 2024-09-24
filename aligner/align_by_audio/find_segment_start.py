@@ -532,7 +532,7 @@ def plot_candidate_starting_locations(
             3,
         )
 
-        x_values = [(x) / sr for x in range(len(conf.get("song_audio_data")))]
+        x_values = [(x) / sr for x in range(conf.get("song_length"))]
 
         plt.yticks([])
         plt.plot(

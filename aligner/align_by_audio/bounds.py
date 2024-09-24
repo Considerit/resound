@@ -53,8 +53,6 @@ def create_reaction_alignment_bounds(
 
         reaction_span = reaction.get("end_reaction_search_at", len(reaction_audio))
 
-        print("END!!!!!", reaction.get("end_reaction_search_at", None))
-
         start_reaction_search_at = reaction.get("start_reaction_search_at", 0)
 
         base_length_sec = len(base_audio) / sr  # Length of the base audio in seconds
@@ -315,7 +313,7 @@ def in_bounds(bound, base_start, reaction_start):
 
 def get_bound(alignment_bounds, base_start, reaction_end, base_end=None):
     if base_end is None:
-        base_end = len(conf.get("song_audio_data"))
+        base_end = conf.get("song_length")
 
     matching_intercepts = [
         intercept for base_ts, intercept in alignment_bounds if base_start < base_ts

@@ -3,26 +3,17 @@ import time
 
 from decimal import Decimal, getcontext
 
-
-from utilities import compute_precision_recall, universal_frame_rate, is_close
+from utilities import universal_frame_rate
 from utilities import conf, save_object_to_file, read_object_from_file
 from utilities import conversion_audio_sample_rate as sr
 
 from aligner.scoring_and_similarity import (
     path_score,
-    find_best_path,
-    initialize_path_score,
-    initialize_segment_tracking,
     print_path,
 )
 from aligner.create_trimmed_video import trim_and_concat_video
-
-from aligner.align_by_audio.pruning_search import initialize_path_pruning, initialize_checkpoints
-from aligner.align_by_audio.find_segment_start import initialize_segment_start_cache
-from aligner.align_by_audio.find_segment_end import initialize_segment_end_cache
-from aligner.align_by_audio.bounds import create_reaction_alignment_bounds, print_alignment_bounds
-from aligner.align_by_audio.align_by_audio import paint_paths
-from aligner.path_finder import initialize_paint_caches
+from aligner.align_by_audio import paint_paths
+from aligner.align_by_image import build_image_matches
 
 
 def create_aligned_reaction_video(reaction, extend_by=0, force=False):
@@ -44,14 +35,28 @@ def create_aligned_reaction_video(reaction, extend_by=0, force=False):
 
             start = time.perf_counter()
 
-            initialize_segment_end_cache()
-            initialize_path_score()
-            initialize_segment_tracking()
-            initialize_paint_caches()
-            initialize_path_pruning()
-            initialize_segment_start_cache()
+            image_based_segments = None
+            if conf.get("use_image_based_alignment"):
+                (
+                    image_based_segments,
+                    image_based_reaction_start,
+                    image_based_reaction_end,
+                ) = build_image_matches(reaction)
 
-            best_path = paint_paths(reaction)
+                if image_based_segments:
+                    reaction["start_reaction_search_at"] = reaction.get(
+                        "start_reaction_search_at", image_based_reaction_start - sr
+                    )
+                    reaction["end_reaction_search_at"] = reaction.get(
+                        "end_reaction_search_at", image_based_reaction_end + sr
+                    )
+
+            if image_based_segments is None:
+                reaction["start_reaction_search_at"] = reaction.get(
+                    "start_reaction_search_at", 3 * sr
+                )
+
+            best_path = paint_paths(reaction, seed_segments=(image_based_segments or []))
 
             alignment_duration = (time.perf_counter() - start) / 60  # in minutes
             best_path_score = path_score(best_path, reaction)

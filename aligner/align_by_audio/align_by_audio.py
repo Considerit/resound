@@ -13,22 +13,26 @@ from aligner.align_by_audio.find_segment_start import (
     score_start_candidates,
     correct_peak_index,
     seconds_to_timestamp,
+    initialize_segment_start_cache,
 )
 from aligner.align_by_audio.find_segment_end import find_segment_end, initialize_segment_end_cache
 from aligner.scoring_and_similarity import (
     find_best_path,
     print_path,
+    initialize_path_score,
+    initialize_segment_tracking,
 )
 
-from aligner.path_finder import construct_all_paths
+from aligner.path_finder import construct_all_paths, initialize_paint_caches
 from aligner.path_refiner import sharpen_path_boundaries
-from aligner.segment_pruner import prune_unreachable_segments
+from aligner.segment_pruner import prune_unreachable_segments, prune_poor_segments
 from aligner.segment_consolidizer import consolidate_segments, bridge_gaps
 from aligner.segment_refiner import (
     sharpen_segment_intercept,
     sharpen_segment_endpoints,
     find_best_intercept,
 )
+from aligner.align_by_audio.pruning_search import initialize_path_pruning
 
 from aligner.visualize_alignment import (
     splay_paint,
@@ -43,7 +47,18 @@ attempts_progression = {
 }
 
 
-def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
+def initialize_caches():
+    initialize_segment_end_cache()
+    initialize_path_score()
+    initialize_segment_tracking()
+    initialize_paint_caches()
+    initialize_path_pruning()
+    initialize_segment_start_cache()
+
+
+def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
+    initialize_caches()
+
     chunk_size = get_chunk_size(reaction, attempts=attempts)
     if allowed_spacing is None:
         allowed_spacing = attempts_progression["allowed_spacing"][attempts]
@@ -68,6 +83,9 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
         peak_tolerance,
         save_to_file=GENERATE_FULL_ALIGNMENT_VIDEO,
     )
+
+    if seed_segments is not None:
+        segments += seed_segments
 
     splay_paint(
         reaction,
@@ -135,9 +153,27 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
         id="consolidate-segments-2",
     )
 
+    print("PRUNING POOR SEGMENTS")
+
+    pruned_segments = prune_poor_segments(reaction, pruned_segments)
+
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="prune-poor-segments",
+    )
+
     print("SHARPEN ENDPOINTS")
 
-    sharpen_endpoints(reaction, chunk_size, step, pruned_segments)
+    sharpen_endpoints(
+        reaction,
+        chunk_size,
+        step,
+        pruned_segments,
+    )
 
     splay_paint(
         reaction,
@@ -216,7 +252,11 @@ def paint_paths(reaction, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
                 id="end-failed",
             )
 
-        return paint_paths(reaction, peak_tolerance, attempts=attempts + 1)
+        if seed_segments is not None:
+            for s in seed_segments:
+                s["pruned"] = False
+
+        return paint_paths(reaction, seed_segments, peak_tolerance, attempts=attempts + 1)
 
     print(f"Found {len(paths)} paths")
 
@@ -949,16 +989,16 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
             best_match = None
             best_match_overlap = None
 
-            for y1 in candidates:
-                if y1 in already_matched:
+            for reaction_start in candidates:
+                if reaction_start in already_matched:
                     continue
 
-                y2 = y1 + chunk_size
+                reaction_end = reaction_start + chunk_size
 
-                x1 = start
-                x2 = start + chunk_size
+                music_start = start
+                music_end = start + chunk_size
 
-                new_stroke = (y1, y2, x1, x2)
+                new_stroke = (reaction_start, reaction_end, music_start, music_end)
 
                 overlap = are_continuous_or_overlap(new_stroke, segment["end_points"])
                 if overlap is not None:
@@ -982,22 +1022,24 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
 
                 already_matched[new_stroke[0]] = True
 
-        for y1 in candidates:
+        for reaction_start in candidates:
             all_candidates.append(
                 {
                     "pruned": False,
-                    "end_points": (
-                        y1,
-                        y1 + chunk_size,
+                    "end_points": [
+                        reaction_start,
+                        reaction_start + chunk_size,
                         start,
                         start + chunk_size,
-                    ),
-                    "strokes": (
-                        y1,
-                        y1 + chunk_size,
-                        start,
-                        start + chunk_size,
-                    ),
+                    ],
+                    "strokes": [
+                        [
+                            reaction_start,
+                            reaction_start + chunk_size,
+                            start,
+                            start + chunk_size,
+                        ]
+                    ],
                 }
             )
 
@@ -1013,22 +1055,24 @@ def find_segments(reaction, chunk_size, step, peak_tolerance, save_to_file=False
                 copy_to_main=False,
             )
 
-        for y1 in candidates:
-            if y1 in already_matched:
+        for reaction_start in candidates:
+            if reaction_start in already_matched:
                 continue
 
-            y2 = y1 + chunk_size
+            reaction_end = reaction_start + chunk_size
 
-            x1 = start
-            x2 = start + chunk_size
+            music_start = start
+            music_end = start + chunk_size
 
-            new_stroke = (y1, y2, x1, x2)
+            new_stroke = (reaction_start, reaction_end, music_start, music_end)
 
             # create a new segment
             segment = {
-                "end_points": [y1, y2, x1, x2],
+                "end_points": [reaction_start, reaction_end, music_start, music_end],
                 "strokes": [new_stroke],
                 "pruned": False,
+                "source": "audio-alignment",
+                "chunk_size": chunk_size,
             }
             strokes.append(segment)
             still_active_strokes.append(segment)

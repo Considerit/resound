@@ -54,9 +54,10 @@ def consolidate_segments(all_segments):
 
                 if bs2 <= bs and be2 >= be:
                     subsumed_by_other = bs2 != bs or be2 != be
+
                     break
 
-            if not subsumed_by_other:
+            if not subsumed_by_other or s.get("source", None) == "image-alignment":
                 not_subsumed.append(s)
 
         if len(not_subsumed) == 0:

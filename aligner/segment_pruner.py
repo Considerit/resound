@@ -37,7 +37,8 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links=
 
             segment["pruned"] = True
             del joinable_segments[segment_id]
-            prune_cache["unreachable"] += 1
+            if prune_cache:
+                prune_cache["unreachable"] += 1
 
     # segments = [s for s in segments if not s.get("pruned", False)]
 
@@ -58,7 +59,8 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links=
                     segment["pruned"] = True
                     del joinable_segments[segment_id]
                     pruned_another = True
-                    prune_cache["unreachable"] += 1
+                    if prune_cache:
+                        prune_cache["unreachable"] += 1
 
                     # if prune_links:
                     #     print("PRUNING BECAUSE CANT REACH END", segment_id)
@@ -86,7 +88,8 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links=
                 if segment_id in joinable_segments:
                     del joinable_segments[segment_id]
                 pruned_another = True
-                prune_cache["unreachable"] += 1
+                if prune_cache:
+                    prune_cache["unreachable"] += 1
 
                 # if prune_links:
                 #     print("PRUNING BECAUSE CANT REACH FROM STARET", segment_id)
@@ -135,6 +138,61 @@ def get_joinable_segments(reaction, segment, all_segments, allowed_spacing, prun
     return candidates
 
 
+def prune_poor_segments(
+    reaction, segments, min_segments_at_checkpoint=4, quality_threshold=0.7, length_threshold=0.5
+):
+    segments = [s for s in segments if not s.get("pruned")]
+    unpruned_to_start = len(segments)
+
+    checkpoints = [i for i in range(0, conf.get("song_length"), sr)]
+
+    segments_at_checkpoint = {}
+
+    for checkpoint in checkpoints:
+        segments_at_checkpoint[checkpoint] = []
+        for segment in segments:
+            if segment["end_points"][2] <= checkpoint <= segment["end_points"][3]:
+                segments_at_checkpoint[checkpoint].append(segment)
+
+    for checkpoint, ck_segments in segments_at_checkpoint.items():
+        # print("Checkpoint", checkpoint / sr)
+        ck_segments = [s for s in ck_segments if not s.get("pruned")]
+        if len(ck_segments) < min_segments_at_checkpoint:
+            continue
+
+        max_quality = -1
+        max_length = -1
+        for s in ck_segments:
+            if "mfcc_cosine_score" not in s:
+                s["mfcc_cosine_score"] = get_segment_mfcc_cosine_similarity_score(
+                    reaction, s["end_points"]
+                )
+                s["length"] = s["end_points"][3] - s["end_points"][2]
+
+            if max_quality < s["mfcc_cosine_score"]:
+                max_quality = s["mfcc_cosine_score"]
+            if max_length < s["length"]:
+                max_length = s["length"]
+
+        for s in ck_segments:
+            if (
+                s["length"] < length_threshold * max_length
+                and s["mfcc_cosine_score"] < quality_threshold * max_quality
+            ):
+                s["pruned"] = True
+
+            # print(
+            #     f"\t{'*' if s['pruned'] else ' '} length={int(s['length'] / max_length * 100)}  quality={int(s['mfcc_cosine_score'] / max_quality * 100)}"
+            # )
+
+    unpruned_segments = [s for s in segments if not s.get("pruned")]
+    print(
+        f"\tpruning poor segments resulted in {len(unpruned_segments)} segments, down from {unpruned_to_start}"
+    )
+
+    return unpruned_segments
+
+
 def get_link_score(reaction, link, reaction_start, base_start):
     link_segment = copy.copy(link["end_points"])
 
@@ -155,6 +213,7 @@ def get_link_score(reaction, link, reaction_start, base_start):
 def prune_poor_links(reaction, segment, links):
     # Don't follow some branches when a prior branch looks substantially better
     # and extends further into the future
+
     link_prune_threshold = 0.9
 
     good_links = []

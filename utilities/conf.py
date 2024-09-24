@@ -133,6 +133,7 @@ def make_conf(song_def, options, temp_directory):
             "min_segment_length_in_seconds": min_segment_length_in_seconds,
             "peak_tolerance": 0.5,
             "first_n_samples": first_n_samples,
+            "use_image_based_alignment": song_def.get("use_image_based_alignment", True),
         }
     )
 
@@ -276,9 +277,12 @@ def make_conf(song_def, options, temp_directory):
             if fake_reactor_position is not None and fake_reactor_position.get(channel, False):
                 reactions[channel]["fake_reactor_position"] = fake_reactor_position.get(channel)
 
-            reactions[channel]["start_reaction_search_at"] = int(
-                start_reaction_search_at.get(channel, 3) * sr
-            )
+            if start_reaction_search_at is not None and start_reaction_search_at.get(
+                channel, False
+            ):
+                reactions[channel]["start_reaction_search_at"] = int(
+                    start_reaction_search_at.get(channel) * sr
+                )
 
             if end_reaction_search_at is not None and end_reaction_search_at.get(channel, False):
                 reactions[channel]["end_reaction_search_at"] = (
@@ -629,7 +633,6 @@ def load_base():
         original_video_path = base_video_path
         base_video_path = f"{base_name}-flipped{extension}".replace(".webm", ".mp4")
 
-        print("HI!", not os.path.exists(base_video_path))
         if not os.path.exists(base_video_path):
             base_video = VideoFileClip(original_video_path)
             base_video = base_video.fx(vfx.mirror_x)
@@ -643,6 +646,7 @@ def load_base():
     base_data = {
         "base_video_path": base_video_path,
         "song_audio_data": song_audio_data,
+        "song_length": len(song_audio_data),
     }
 
     output_dir = conf.get("reaction_directory")

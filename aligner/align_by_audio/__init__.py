@@ -1,0 +1,1 @@
+from aligner.align_by_audio.align_by_audio import paint_paths

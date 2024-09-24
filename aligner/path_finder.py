@@ -14,6 +14,8 @@ from aligner.scoring_and_similarity import (
 
 from aligner.align_by_audio.pruning_search import is_path_quality_poor
 
+from utilities import print_profiling
+
 location_cache = {}
 best_score_cache = {}
 prune_cache = {}
@@ -39,7 +41,7 @@ def initialize_paint_caches():
 
 def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacing, chunk_size):
     paths = []
-    song_length = len(conf.get("song_audio_data"))
+    song_length = conf.get("song_length")
     partial_paths = []
 
     start_time = time.perf_counter()
@@ -392,7 +394,7 @@ def near_song_beginning(segment, allowed_spacing):
 
 
 def near_song_end(segment, allowed_spacing):
-    song_length = len(conf.get("song_audio_data"))
+    song_length = conf.get("song_length")
     return (
         song_length - segment["end_points"][3] < 3 * allowed_spacing
     )  # because of weird ends of songs, let it be farther away

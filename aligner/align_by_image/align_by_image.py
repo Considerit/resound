@@ -28,6 +28,10 @@ from aligner.align_by_image.embedded_video_finder import (
     get_bounding_box_of_music_video_in_reaction,
     adjust_coordinates_for_offscreen_embed,
 )
+
+from aligner.segment_pruner import prune_unreachable_segments
+from aligner.segment_refiner import sharpen_segment_intercept
+
 from tabulate import tabulate
 
 
@@ -46,7 +50,7 @@ def build_image_matches(
     crop_coordinates = get_bounding_box_of_music_video_in_reaction(reaction)
     if crop_coordinates is None:
         print(f"***** {channel}: crop coordinates failed so we can't use image alignment")
-        return
+        return None, None, None
 
     print("Found embedded music video at", crop_coordinates)
 
@@ -160,7 +164,7 @@ def build_image_matches(
 
     if len([m for m in matches if m[3]]) == 0:
         print(f"**** {channel}: Failed to get reliable image alignment (matches=0)")
-        return None
+        return None, None, None
 
     stutters, stutter_assignments = label_stutters(matches, fps=fps)
 
@@ -170,9 +174,6 @@ def build_image_matches(
     # Get the end points (and filter out segments outside those bounds)
     segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
 
-    if visualize:
-        plot_matches(reaction, segments, matches)
-
     # Calculate coverage of the song by segments. If coverage is too little, then
     # we consider image alignment to have failed and be too unreliable with this
     # reaction.
@@ -180,18 +181,65 @@ def build_image_matches(
     coverage = segment_coverage_of_song(segments, fps=fps)
     if coverage < min_coverage:
         print(f"**** {channel}: Failed to get reliable image alignment (coverage={coverage})")
-        return None
+        return None, None, None
     else:
         print(f"**** {channel}: Segment coverage of image alignment is {coverage}")
 
-    return segments
+    normalized_segments = normalize_segment_format_with_audio_segments(segments, fps)
 
-    # alignment_video = reaction.get("aligned_path")
-    # alignment_metadata_file = reaction.get("alignment_metadata")
+    if coverage >= 1:
+        prune_unreachable_segments(reaction, normalized_segments, allowed_spacing=5 * sr)
 
-    # metadata = read_object_from_file(alignment_metadata_file)
-    # reaction.update(metadata)
-    # best_path = reaction.get("best_path")
+    for segment in normalized_segments:
+        sharpen_segment_intercept(reaction, segment, padding=sr)
+
+    plot_matches(reaction, segments, matches, normalized_segments, visualize=visualize)
+
+    return (
+        [s for s in normalized_segments if not s.get("pruned")],
+        int((reaction_start or 0) * sr),
+        int((reaction_end or conf.get("song_length")) * sr),
+    )
+
+
+def normalize_segment_format_with_audio_segments(segments, fps):
+    normalized_segments = []
+    chunk_size = 1 / fps
+
+    for segment in segments:
+        music_start = segment.get("min_music_time")
+        music_end = segment.get("max_music_time")
+        reaction_start = segment.get("y-intercept") + music_start
+        reaction_end = reaction_start + (music_end - music_start)
+
+        normie = {
+            "end_points": [
+                int(sr * reaction_start),
+                int(sr * reaction_end),
+                int(sr * music_start),
+                int(sr * music_end),
+            ],
+            "strokes": [
+                [
+                    int(sr * (yint + mt)),
+                    int(sr * (yint + mt + chunk_size)),
+                    int(sr * mt),
+                    int(sr * (mt + chunk_size)),
+                ]
+                for (mt, rt, yint, valid) in segment["matches"]
+                if valid
+            ],
+            "pruned": False,
+            "source": "image-alignment",
+            "chunk_size": chunk_size,
+        }
+        if "backfilled_by" in segment:
+            normie["backfilled_by"] = segment.get("backfilled_by")
+
+        normie["key"] = str(normie["end_points"])
+        normalized_segments.append(normie)
+
+    return normalized_segments
 
 
 def label_stutters(matches, fps, visualize=False):
@@ -455,7 +503,7 @@ def plot_points_and_stutters(points, stutters, stutter_assignments, spacing, y_m
 
 
 def segment_coverage_of_song(segments, fps):
-    song_length = len(conf.get("song_audio_data")) / sr
+    song_length = conf.get("song_length") / sr
 
     checks = 0
     covered = 0
@@ -472,7 +520,7 @@ def segment_coverage_of_song(segments, fps):
 
 
 def find_reaction_endpoints(segments, max_dist_from_end=10):
-    song_length = len(conf.get("song_audio_data")) / sr
+    song_length = conf.get("song_length") / sr
 
     # Identify reaction_start and reaction_end.
     reaction_start = None
@@ -516,7 +564,7 @@ def find_reaction_endpoints(segments, max_dist_from_end=10):
             if s["y-intercept"] >= start_intercept and s["y-intercept"] <= end_intercept
         ]
 
-    return segments, start_intercept, end_intercept + song_length
+    return segments, start_intercept, None if not end_intercept else end_intercept + song_length
 
 
 def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):
@@ -666,7 +714,6 @@ def create_segments_from_matches(
                 {
                     "y-intercept": np.median(np.array([m[2] for m in s])),
                     "matches": s,
-                    "rejected_matches": [],
                     "min_music_time": np.min(np.array([m[0] for m in s])),
                     "max_music_time": np.max(np.array([m[0] for m in s])),
                 }
@@ -896,7 +943,7 @@ def calculate_phash(frames, hash_method="dhash"):
     return phashes
 
 
-def plot_matches(reaction, segments, matches):
+def plot_matches(reaction, segments, matches, normalized_segments, visualize=False):
     """
     Plot the matched music and reaction video frames on a 2D plot.
 
@@ -912,14 +959,10 @@ def plot_matches(reaction, segments, matches):
     # for music_times, reaction_times in matches:
     #     plt.scatter(music_times, reaction_times, s=5)
 
-    for segment in segments:
-        for m in segment["rejected_matches"]:
-            m[3] = False
-
     all_rejects = [m for m in matches if not m[3]]
 
     plt.scatter(
-        [r[0] for r in all_rejects], [r[1] for r in all_rejects], s=1, alpha=0.5, color="white"
+        [r[0] for r in all_rejects], [r[1] for r in all_rejects], s=1, alpha=0.1, color="white"
     )
 
     for segment in segments:
@@ -927,7 +970,7 @@ def plot_matches(reaction, segments, matches):
             [r[0] for r in segment["matches"] if r[3]],
             [r[1] for r in segment["matches"] if r[3]],
             s=5,
-            alpha=0.5,
+            alpha=0.1,
         )
     segments.sort(key=lambda x: x["y-intercept"])
     for segment in segments:
@@ -945,6 +988,18 @@ def plot_matches(reaction, segments, matches):
             )
             plt.plot(x_values, y_values, linestyle="-", lw=1, color="red")
 
+    for segment in normalized_segments:
+        if not segment.get("pruned", False):
+            x_values = [segment["end_points"][2] / sr, segment["end_points"][3] / sr]
+            y_values = [segment["end_points"][0] / sr, segment["end_points"][1] / sr]
+            print(
+                "NORMALIZED Segment:",
+                (segment["end_points"][0] - segment["end_points"][2]) / sr,
+                segment["end_points"][1] / sr,
+                segment["end_points"][2] / sr,
+            )
+            plt.plot(x_values, y_values, linestyle="-", lw=1, color="green")
+
     plt.gca().spines["top"].set_visible(False)
     plt.gca().spines["right"].set_visible(False)
 
@@ -956,4 +1011,11 @@ def plot_matches(reaction, segments, matches):
     plt.xlim(left=0)
 
     plt.grid(True, color=(0.35, 0.35, 0.35))
-    plt.show()
+
+    if visualize:
+        plt.show()
+
+    plot_fname = os.path.join(
+        conf.get("temp_directory"), f"{reaction.get('channel')}-image-alignment-painting.png"
+    )
+    plt.savefig(plot_fname, dpi=300)

@@ -76,15 +76,16 @@ def find_best_intercept(
             intercepts.append(corr_intercept)
 
     for b in intercepts:
-        if (
-            not include_cross_correlation
-            or reaction_start - 0.05 * sr <= b + base_start <= reaction_end + 0.05 * sr
-        ):
-            unique_intercepts[b] = True
-        # else:
-        #     print('intr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, (b + base_start) / sr, b/sr, reaction_start <= b + base_start <= reaction_end)
+        # if (
+        #     not include_cross_correlation
+        #     or reaction_start - 0.05 * sr <= b + base_start <= reaction_end + 0.05 * sr
+        # ):
 
-        #     print("FILTERED!")
+        unique_intercepts[b] = True
+    #     # else:
+    #     #     print('intr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, (b + base_start) / sr, b/sr, reaction_start <= b + base_start <= reaction_end)
+
+    #     #     print("FILTERED!")
 
     best_line_def = None
     best_line_def_score = -1
@@ -172,7 +173,7 @@ def plot_scores_of_intercepts(intercepts, scores, corr_intercept, base_start, ba
     plt.show()
 
 
-def sharpen_segment_intercept(reaction, segment, padding, perform_open_local_correlation=False):
+def sharpen_segment_intercept(reaction, segment, padding=None):
     ###################################
     # if we have an imprecise segment composed of strokes that weren't exactly aligned,
     # we'll want to find the best line through them
@@ -186,11 +187,11 @@ def sharpen_segment_intercept(reaction, segment, padding, perform_open_local_cor
     int_reaction_start = max(segment["end_points"][0] - padding, 0)
     int_reaction_end = min(segment["end_points"][1] + padding, reaction_len)
 
-    stroke_intercepts = [s[0] - s[2] for s in segment["strokes"]]
+    stroke_intercepts = {s[0] - s[2]: True for s in segment["strokes"]}
 
     intercept = find_best_intercept(
         reaction,
-        stroke_intercepts,
+        list(stroke_intercepts.keys()),
         segment["end_points"][2],
         segment["end_points"][3],
         include_cross_correlation=True,
@@ -212,56 +213,61 @@ def sharpen_segment_intercept(reaction, segment, padding, perform_open_local_cor
 
 
 def sharpen_segment_endpoints(reaction, segment, step, padding):
+    reaction_start, reaction_end, base_start, base_end = segment["end_points"]
+
     #########################################
     # Now we're going to try to sharpen up the endpoint
 
-    reaction_start, reaction_end, base_start, base_end = segment["end_points"]
+    if conf.get("song_length") - base_end > 4 * sr:  # don't sharpen endpoints when at the end
+        heat = [0 for i in range(0, int((base_end - base_start) / step))]
 
-    heat = [0 for i in range(0, int((base_end - base_start) / step))]
+        for stroke in segment["strokes"]:
+            (__, __, stroke_start, stroke_end) = stroke
+            position = stroke_start
+            while position + step < stroke_end:
+                idx = int((position - base_start) / step)
+                heat[idx] += 1
+                position += step
 
-    for stroke in segment["strokes"]:
-        (__, __, stroke_start, stroke_end) = stroke
-        position = stroke_start
-        while position + step < stroke_end:
-            idx = int((position - base_start) / step)
-            heat[idx] += 1
-            position += step
+        highest_idx = -1
+        highest_val = -1
+        for idx, val in enumerate(heat):
+            if val >= highest_val:
+                highest_idx = idx
+                highest_val = val
 
-    highest_idx = -1
-    highest_val = -1
-    for idx, val in enumerate(heat):
-        if val >= highest_val:
-            highest_idx = idx
-            highest_val = val
+        # now we're going to use find_segment_end starting from the last local maximum
+        sharpen_start = max(0, highest_idx * step - padding)
 
-    # now we're going to use find_segment_end starting from the last local maximum
-    sharpen_start = max(0, highest_idx * step - padding)
+        current_start = base_start + sharpen_start
+        degraded_reaction_start = reaction_start + sharpen_start
 
-    current_start = base_start + sharpen_start
-    degraded_reaction_start = reaction_start + sharpen_start
+        end_segment, _, _ = find_segment_end(
+            reaction, current_start, degraded_reaction_start, 0, padding
+        )
 
-    end_segment, _, _ = find_segment_end(
-        reaction, current_start, degraded_reaction_start, 0, padding
-    )
+        if end_segment is not None:
+            new_reaction_end = end_segment[1]
+            new_base_end = end_segment[3]
 
-    if end_segment is not None:
-        new_reaction_end = end_segment[1]
-        new_base_end = end_segment[3]
+            if new_base_end < base_start + highest_idx * step:
+                new_reaction_end = reaction_start + highest_idx * step
+                new_base_end = base_start + highest_idx * step
 
-        if new_base_end < base_start + highest_idx * step:
-            new_reaction_end = reaction_start + highest_idx * step
-            new_base_end = base_start + highest_idx * step
+            # cap reduction to chunk_size
+            new_base_end = max(int(base_end - segment.get("chunk_size")), new_base_end)
+            new_reaction_end = max(int(reaction_end - segment.get("chunk_size")), new_reaction_end)
 
-        if new_base_end < base_end:
-            segment["end_points"] = [
-                reaction_start,
-                new_reaction_end,
-                base_start,
-                new_base_end,
-            ]
-            segment["key"] = str(segment["end_points"])
-    else:
-        print("AGG! Could not find segment end")
+            if new_base_end < base_end:
+                segment["end_points"] = [
+                    reaction_start,
+                    new_reaction_end,
+                    base_start,
+                    new_base_end,
+                ]
+                segment["key"] = str(segment["end_points"])
+        else:
+            print("AGG! Could not find segment end")
 
     ####################################################
     # Now we're going to try to sharpen up the beginning

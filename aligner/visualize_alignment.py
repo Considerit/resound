@@ -131,7 +131,7 @@ def draw_strokes(
         base_ts, intercepts = zip(*alignment_bounds)
         base_ts = [bs / sr for bs in base_ts]
     else:
-        base_ts = [0, len(conf.get("song_audio_data"))]
+        base_ts = [0, conf.get("song_length")]
 
     if reaction.get("ground_truth"):
         for rs, re, cs, ce, f in reaction.get("ground_truth_path"):
@@ -147,6 +147,7 @@ def draw_strokes(
     #     for stroke in segment['strokes']:
     #         make_stroke(stroke, linewidth=2, alpha = stroke_alpha, intercept_based_figure=intercept_based_figure)
 
+    strokes.sort(key=lambda x: x.get("source", "audio-alignment"))
     for segment in strokes:
         # if not segment.get('pruned', False) and 'old_end_points' in segment:
         if segment.get("pruned", False):
@@ -157,6 +158,10 @@ def draw_strokes(
             alpha = stroke_alpha
             color = stroke_color
             linewidth = stroke_linewidth
+
+            if segment.get("source", None) == "image-alignment":
+                color = "green"
+                linewidth = 1
 
             make_stroke(
                 segment.get("old_end_points", segment["end_points"]),

@@ -345,7 +345,6 @@ def reencode_to_30fps(video_file, output_file):
 
 
 def check_and_fix_fps(video_file):
-    print("FIXING", video_file)
     """Check if the FPS is even, and if not, reencode the video at 30 FPS."""
     fps = get_video_fps(video_file)
     if fps is None:
