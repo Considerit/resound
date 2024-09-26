@@ -34,9 +34,8 @@ def run_demucs(audio_path, output_dir):
     )
 
 
-accompaniment_filename = "accompaniment.wav"
+accompaniment_filename = "not_vocals.wav"
 vocals_filename = "vocals.wav"
-high_passed_vocals_filename = "vocals-post-high-passed.wav"
 
 
 def separate_vocals_for_song():
@@ -79,7 +78,6 @@ def separate_vocals_for_reaction(reaction):
 def separate_vocals_for_path(separation_path, audio_path, audio_length):
     accompaniment_path = os.path.join(separation_path, accompaniment_filename)
     vocals_path = os.path.join(separation_path, vocals_filename)
-    # high_passed_vocals_path = os.path.join(separation_path, high_passed_vocals_filename)
 
     if not os.path.exists(vocals_path):
         separate_vocals(
@@ -93,11 +91,6 @@ def separate_vocals_for_path(separation_path, audio_path, audio_length):
 
 def separate_vocals(output_dir, audio_path, duration=None):
     # Create a separator with 2 stems (vocals and accompaniment)
-
-    # vocals_high_passed_path = os.path.join(output_dir, output_filename)
-    # # Post process
-    # if not os.path.exists(vocals_high_passed_path):
-    #     print("vocals highpassed path", vocals_high_passed_path)
 
     # Load the separated tracks
     vocals_path = os.path.join(output_dir, "vocals.wav")
@@ -117,17 +110,6 @@ def separate_vocals(output_dir, audio_path, duration=None):
         shutil.rmtree(demucs_outputdir)
 
         print("\tDone with source separation")
-
-        # vocals, sr_song = librosa.load( vocals_path, sr=sr, mono=True )
-        # vocals = post_process_audio(vocals)
-        # sf.write(song_vocals_high_passed_path, vocals.T, sr)
-
-        # print("\tPost processing vocals", vocals_path)
-        # audio_data, __ = sf.read(vocals_path)
-        # vocals = convert_to_mono(audio_data)
-        # vocals = post_process_audio(vocals)
-        # sf.write(vocals_high_passed_path, vocals, sr)
-        # print("\tDone post processing vocals")
 
 
 def post_process_audio(commentary):

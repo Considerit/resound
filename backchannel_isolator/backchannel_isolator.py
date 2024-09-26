@@ -398,9 +398,9 @@ def get_audible_segments(audio, segments, audibility_threshold=0.01, suppresion_
             for i in np.where(inaudible_stretches)[0]:
                 chunk_end = audible_indices[i]
                 audible_segments.append([start + chunk_start, start + chunk_end])
-                print(
-                    f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}"
-                )
+                # print(
+                #     f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}"
+                # )
 
                 # Skip 1 second after the inaudible stretch
                 chunk_start = audible_indices[i + 1]
@@ -408,12 +408,12 @@ def get_audible_segments(audio, segments, audibility_threshold=0.01, suppresion_
             # Handle the segment after the last inaudible stretch
             audible_segments.append([start + chunk_start, end])
 
-            print(f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}")
+            # print(f"Selected segment: {(start + chunk_start) / sr} to {(start + chunk_end) / sr}")
 
         else:
             # If there are no inaudible stretches of more than 1 second, just copy the entire segment
             audible_segments.append([start, end])
-            print(f"Selected entire segment from {start / sr} to {end / sr}")
+            # print(f"Selected entire segment from {start / sr} to {end / sr}")
 
     return audible_segments
 
@@ -471,7 +471,7 @@ def create_isolated_audio(audio, segments, fade_duration=0.005):
         # If there are no inaudible stretches of more than 1 second, just copy the entire segment
         suppressed_audio[start:end] = segment_audio
         audible_segments.append([start, end])
-        print(f"Selected entire segment from {start / sr} to {end / sr}")
+        # print(f"Selected entire segment from {start / sr} to {end / sr}")
 
     return suppressed_audio
 
@@ -482,7 +482,7 @@ def mute_by_deviation(
     song_vocals_path,
     aligned_reaction_vocals_path,
     output_path,
-    visualize=True,
+    visualize=False,
 ):
     if profile_isolator:
         global profiler
@@ -665,16 +665,16 @@ def confirm_via_correlation(reaction, aligned_reaction_audio, segments, threshol
             reaction, full_segment, reaction_audio_mfcc=aligned_reaction_mfcc
         )
 
-        if similarity > threshold:
-            print(
-                f"REMOVE! Candidate backchannel {reaction_start/sr:.1f}, {reaction_end/sr:.1f}<==>{song_start/sr:.1f}, {song_end/sr:.1f} failed confirmation. Cosine similarity={similarity}"
-            )
-        else:
-            print(
-                f"KEEP! Candidate backchannel {reaction_start/sr:.1f}, {reaction_end/sr:.1f}<==>{song_start/sr:.1f}, {song_end/sr:.1f} passed confirmation. Cosine similarity={similarity}"
-            )
-
+        if similarity <= threshold:
             confirmed_segments.append(segment)
+            # print(
+            #     f"KEEP! Candidate backchannel {reaction_start/sr:.1f}, {reaction_end/sr:.1f}<==>{song_start/sr:.1f}, {song_end/sr:.1f} passed confirmation. Cosine similarity={similarity}"
+            # )
+
+        # else:
+        #     print(
+        #         f"REMOVE! Candidate backchannel {reaction_start/sr:.1f}, {reaction_end/sr:.1f}<==>{song_start/sr:.1f}, {song_end/sr:.1f} failed confirmation. Cosine similarity={similarity}"
+        #     )
 
     return confirmed_segments
 
