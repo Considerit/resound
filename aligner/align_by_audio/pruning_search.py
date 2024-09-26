@@ -100,10 +100,7 @@ def is_path_quality_poor(reaction, path):
     duration = 0
 
     for i, segment in enumerate(path):
-        if len(segment) == 5:
-            (reaction_start, reaction_end, current_start, current_end, filler) = segment
-        else:
-            (reaction_start, reaction_end, current_start, current_end, filler, strokes) = segment
+        (reaction_start, reaction_end, current_start, current_end, filler) = segment[:5]
 
         duration += current_end - current_start
         if filler:

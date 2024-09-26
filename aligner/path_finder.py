@@ -8,7 +8,6 @@ from aligner.visualize_alignment import GENERATE_FULL_ALIGNMENT_VIDEO
 from aligner.scoring_and_similarity import (
     print_path,
     path_score_by_mfcc_cosine_similarity,
-    truncate_path,
     get_segment_mfcc_cosine_similarity_score,
 )
 
@@ -104,14 +103,14 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
             if base_start > 0:
                 start_path.insert(
                     0,
-                    (
+                    [
                         reaction_start - base_start,
                         reaction_start,
                         0,
                         base_start,
                         True,
                         None,
-                    ),
+                    ],
                 )
 
             score = path_score_by_mfcc_cosine_similarity(
@@ -277,22 +276,6 @@ def should_prune_path(reaction, path, song_length, score=None, threshold_base=0.
 
     return False, score
 
-    # if reaction_end / sr > 20 and best_score_cache['best_overall_path'] is not None:
-
-    #     __, truncated_path = truncate_path(best_score_cache['best_overall_path'], end=reaction_end)
-    #     # print(best_score_cache['best_overall_path'], truncated_path, reaction_end)
-    #     best_score_here = path_score_by_mfcc_cosine_similarity(truncated_path, reaction)  # path_score(best_score_cache['best_overall_path'], reaction, end=reaction_end)
-
-    #     prune_threshold = threshold_base + path[-1][3] / song_length * (1 - threshold_base)
-
-    #     prune = best_score_here * prune_threshold > score
-
-    #     if prune:
-    #         prune_cache['best_score'] += 1
-    #         return True, score
-
-    # return False, score
-
 
 def should_prune_for_location(reaction, path, song_length, score, threshold_base=0.7):
     global location_cache
@@ -303,7 +286,10 @@ def should_prune_for_location(reaction, path, song_length, score, threshold_base
 
     has_bad_segment = False
     for segment in path:
-        if not segment[-1]:
+        if not segment[4]:
+            # NOTE: I changed this from segment[-1] because I think that was
+            #       the original intention (score if not filler), but the
+            #       format of segment has since changed.
             segment_score = get_segment_mfcc_cosine_similarity_score(reaction, segment)
             if segment_score < segment_quality_threshold:
                 has_bad_segment = True
@@ -333,14 +319,8 @@ def branch_from(reaction, partial_path, joinable_segments, allowed_spacing):
 
     current_path, last_segment = partial_path
 
-    (
-        reaction_start,
-        reaction_end,
-        base_start,
-        base_end,
-        is_filler,
-        strokes,
-    ) = current_path[-1]
+    reaction_end = current_path[-1][1]
+    base_end = current_path[-1][3]
 
     b_current = reaction_end - base_end  # as in, y = ax + b
 

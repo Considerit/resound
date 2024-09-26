@@ -317,17 +317,7 @@ def make_stroke(stroke, color=None, linewidth=1, alpha=1, intercept_based_figure
 def visualize_candidate_path(path, color=None, linewidth=4, alpha=1, intercept_based_figure=False):
     segment_color = color
     for i, segment in enumerate(path):
-        if len(segment) == 5:
-            reaction_start, reaction_end, current_start, current_end, filler = segment
-        else:
-            (
-                reaction_start,
-                reaction_end,
-                current_start,
-                current_end,
-                filler,
-                strokes,
-            ) = segment
+        reaction_start, reaction_end, current_start, current_end, filler = segment[:5]
 
         if color is None:
             segment_color = "blue"
@@ -336,23 +326,13 @@ def visualize_candidate_path(path, color=None, linewidth=4, alpha=1, intercept_b
 
         # draw vertical dashed line connecting segments
         if i > 0:
-            if len(previous_segment) == 5:
-                (
-                    last_reaction_start,
-                    last_reaction_end,
-                    last_current_start,
-                    last_current_end,
-                    last_filler,
-                ) = previous_segment
-            else:
-                (
-                    last_reaction_start,
-                    last_reaction_end,
-                    last_current_start,
-                    last_current_end,
-                    last_filler,
-                    strokes,
-                ) = previous_segment
+            (
+                last_reaction_start,
+                last_reaction_end,
+                last_current_start,
+                last_current_end,
+                last_filler,
+            ) = previous_segment[:5]
 
             if intercept_based_figure:
                 plt.plot(
