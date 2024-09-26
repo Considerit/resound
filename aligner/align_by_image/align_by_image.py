@@ -24,10 +24,7 @@ from utilities import (
 
 from inventory.inventory import get_reactions_manifest
 from aligner.align_by_image.frame_operations import crop_with_noise
-from aligner.align_by_image.embedded_video_finder import (
-    get_bounding_box_of_music_video_in_reaction,
-    adjust_coordinates_for_offscreen_embed,
-)
+from aligner.align_by_image.embedded_video_finder import get_bounding_box_of_music_video_in_reaction
 
 from aligner.segment_pruner import prune_unreachable_segments
 from aligner.segment_refiner import sharpen_segment_intercept
@@ -36,7 +33,7 @@ from tabulate import tabulate
 
 
 def build_image_matches(
-    reaction, fps=2, min_coverage=0.8, similarity_threshold=0.95, visualize=False
+    reaction, fps=2, min_coverage=0.5, similarity_threshold=0.95, visualize=False
 ):
     channel = reaction.get("channel")
 
@@ -171,14 +168,17 @@ def build_image_matches(
     # Create segments from the matches
     segments = create_segments_from_matches(matches, stutter_assignments, spacing=1 / fps)
 
-    # Get the end points (and filter out segments outside those bounds)
-    segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
-
     # Calculate coverage of the song by segments. If coverage is too little, then
     # we consider image alignment to have failed and be too unreliable with this
     # reaction.
+    coverage = segment_coverage_of_song(segments, fps=fps)
+
+    # Get the end points (and filter out segments outside those bounds)
+    if coverage >= 1.0:
+        segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
 
     coverage = segment_coverage_of_song(segments, fps=fps)
+
     if coverage < min_coverage:
         print(f"**** {channel}: Failed to get reliable image alignment (coverage={coverage})")
         return None, None, None
@@ -193,13 +193,20 @@ def build_image_matches(
     for segment in normalized_segments:
         sharpen_segment_intercept(reaction, segment, padding=sr)
 
+    coverage = segment_coverage_of_song(segments, fps=fps)
+
     plot_matches(reaction, segments, matches, normalized_segments, visualize=visualize)
 
-    return (
-        [s for s in normalized_segments if not s.get("pruned")],
-        int((reaction_start or 0) * sr),
-        int((reaction_end or conf.get("song_length")) * sr),
-    )
+    segments_to_pass_along = [s for s in normalized_segments if not s.get("pruned")]
+
+    if coverage >= 1:
+        return (
+            segments_to_pass_along,
+            int((reaction_start or 0) * sr),
+            int((reaction_end or conf.get("song_length")) * sr),
+        )
+    else:
+        return segments_to_pass_along, None, None
 
 
 def normalize_segment_format_with_audio_segments(segments, fps):
@@ -567,7 +574,9 @@ def find_reaction_endpoints(segments, max_dist_from_end=10):
     return segments, start_intercept, None if not end_intercept else end_intercept + song_length
 
 
-def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):
+def match_frames(
+    music_hashes, reaction_hashes, similarity_threshold=0.95, at_most_x_per_reaction_time=5
+):
     """
     Match frames between the music video and the reaction video based on perceptual hashes.
 
@@ -576,7 +585,10 @@ def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):
     :param similarity_threshold: Similarity threshold (0.0 to 1.0) to consider a match.
     :return: A dictionary where the key is the music video timestamp, and the value is a list of reaction timestamps.
     """
-    matches = {}
+    matches = defaultdict(list)
+    all_similarities = {}
+    similarity_by_reaction_time = defaultdict(list)
+
     for music_time, music_hash in music_hashes:
         similarities = []
         for reaction_time, reaction_hash in reaction_hashes:
@@ -586,10 +598,67 @@ def match_frames(music_hashes, reaction_hashes, similarity_threshold=0.95):
 
             similarities.append((reaction_time, similarity))
 
-        max_similarity = max([sim for _, sim in similarities])
+            similarity_by_reaction_time[reaction_time].append((music_time, similarity))
+
+        all_similarities[music_time] = similarities
+
+    # build a histogram of reaction times, and exclude the most popular because it
+    # is likely a big cause of false positives, which lead to false negatives on the
+    # correct frames.
+    black_list = {}
+    # Only allow the top 2 * at_most_x_per_reaction_time matches for each reaction_time
+    for reaction_time, matches_for_reaction_time in similarity_by_reaction_time.items():
+        if len(matches_for_reaction_time) > 4 * at_most_x_per_reaction_time:
+            matches_for_reaction_time.sort(key=lambda x: x[1], reverse=True)
+            for music_time, similarity in matches_for_reaction_time[
+                4 * at_most_x_per_reaction_time :
+            ]:
+                black_list[f"{reaction_time}-{music_time}"] = True
+
+    # print(f"BLACKLISTED {len(black_list.keys())}")
+
+    reaction_time_histogram = defaultdict(list)
+    for music_time, similarities in all_similarities.items():
+        filtered_similarities = [
+            (reaction_time, similarity)
+            for reaction_time, similarity in similarities
+            if f"{reaction_time}-{music_time}" not in black_list
+        ]
+        # print(len(filtered_similarities))
+
+        if len(filtered_similarities) == 0:
+            continue
+
+        max_similarity = max([sim for _, sim in filtered_similarities])
 
         # Save reaction times that are within the threshold of the max similarity
-        for reaction_time, similarity in similarities:
+        for reaction_time, similarity in filtered_similarities:
+            if similarity >= similarity_threshold * max_similarity:
+                reaction_time_histogram[reaction_time].append((music_time, similarity))
+
+    # Blacklisting repeat high-similarity matching reaction times
+    for reaction_time, matches_for_reaction_time in reaction_time_histogram.items():
+        if len(matches_for_reaction_time) > at_most_x_per_reaction_time:
+            matches_for_reaction_time.sort(key=lambda x: x[1], reverse=True)
+            for music_time, similarity in matches_for_reaction_time[at_most_x_per_reaction_time:]:
+                black_list[f"{reaction_time}-{music_time}"] = True
+
+    # print(f"BLACKLISTED {len(black_list.keys())}")
+    for music_time, similarities in all_similarities.items():
+        filtered_similarities = [
+            (reaction_time, similarity)
+            for reaction_time, similarity in similarities
+            if f"{reaction_time}-{music_time}" not in black_list
+        ]
+        # print(len(filtered_similarities))
+
+        if len(filtered_similarities) == 0:
+            continue
+
+        max_similarity = max([sim for _, sim in filtered_similarities])
+
+        # Save reaction times that are within the threshold of the max similarity
+        for reaction_time, similarity in filtered_similarities:
             if similarity >= similarity_threshold * max_similarity:
                 if music_time not in matches:
                     matches[music_time] = []
@@ -962,15 +1031,15 @@ def plot_matches(reaction, segments, matches, normalized_segments, visualize=Fal
     all_rejects = [m for m in matches if not m[3]]
 
     plt.scatter(
-        [r[0] for r in all_rejects], [r[1] for r in all_rejects], s=1, alpha=0.1, color="white"
+        [r[0] for r in all_rejects], [r[1] for r in all_rejects], s=1, alpha=0.7, color="white"
     )
 
     for segment in segments:
         plt.scatter(
             [r[0] for r in segment["matches"] if r[3]],
             [r[1] for r in segment["matches"] if r[3]],
-            s=5,
-            alpha=0.1,
+            s=2,
+            alpha=0.5,
         )
     segments.sort(key=lambda x: x["y-intercept"])
     for segment in segments:
