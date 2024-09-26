@@ -5,8 +5,12 @@ import os
 import tempfile
 import cv2
 import imagehash
+import traceback
+
 from PIL import Image
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+
 from tqdm import tqdm  # For the progress bar
 
 from utilities.audio_processing import find_matches_for_loudest_parts_of_song
@@ -53,6 +57,7 @@ def get_bounding_box_of_music_video_in_reaction(reaction, visualize=False):
             coordinates[channel] = find_music_video_in_reaction(reaction, visualize=visualize)
             save_object_to_file(coordinates_path, coordinates, check_collisions=True)
         except Exception as e:
+            traceback.print_exc()
             print(f"Failed to get bounding box for {channel}", e)
             return None
 
@@ -120,6 +125,36 @@ def find_music_video_in_reaction(reaction, visualize=False):
             visualize_frames_with_faces(
                 music_frame, reaction_frame, music_faces, reaction_faces, matches
             )
+
+    music_frame_phashes = {}
+    music_frame_dhashes = {}
+
+    for bbox in all_boxes:
+        scores = []
+        for music_frame, reaction_frame, music_time, reaction_time in frames:
+            if music_time not in music_frame_phashes:
+                music_frame_phashes[music_time] = compute_perceptual_hash(music_frame, hash_size=8)
+
+            cropped_reaction_frame = crop_with_noise(reaction_frame, bbox[0])
+
+            mhash = music_frame_phashes[music_time]
+            rhash = compute_perceptual_hash(cropped_reaction_frame, hash_size=8)
+
+            perceptual_hash_diff = mhash - rhash
+            pscore = 1 / (1 + perceptual_hash_diff)
+
+            scores.append(pscore)
+
+        overall_score = np.median(np.array(scores))
+        # print(overall_score, bbox)
+
+        bbox[1] = overall_score
+
+    if visualize:
+        plot_edges_on_reaction_frame(
+            reaction_frame,
+            boxes=[b[0] for b in all_boxes],
+        )
 
     all_edges = {"top": {}, "bottom": {}, "left": {}, "right": {}}
     tops = all_edges["top"]
@@ -226,6 +261,15 @@ def find_music_video_in_reaction(reaction, visualize=False):
             rights[new_x2][1] = min(y, rights[new_x2][1])
             rights[new_x2][3] = max(y2, rights[new_x2][3])
 
+    if visualize:
+        plot_edges_on_reaction_frame(
+            reaction_frames[0],
+            tops=tops,
+            bottoms=bottoms,
+            lefts=lefts,
+            rights=rights,
+        )
+
     best_bbox = None
     best_score = -1
 
@@ -261,6 +305,8 @@ def find_music_video_in_reaction(reaction, visualize=False):
 
         sparsity += 1
 
+    print(f"{len(tops)} tops {len(lefts)} lefts {len(bottoms)} bottoms {len(rights)} rights")
+
     for y in tops.keys():
         for y2 in bottoms.keys():
             if y2 <= y:
@@ -277,18 +323,7 @@ def find_music_video_in_reaction(reaction, visualize=False):
                     bounding_box = (x, y, x2, y2)
                     candidate_bboxes.append(bounding_box)
 
-    # if visualize:
-    #     plot_edges_on_reaction_frame(
-    #         reaction_frames[0],
-    #         tops=tops,
-    #         bottoms=bottoms,
-    #         lefts=lefts,
-    #         rights=rights,
-    #     )
-
     bboxes_with_scores = []
-    music_frame_phashes = {}
-    music_frame_dhashes = {}
 
     best_score = -1
     for bbox in tqdm(candidate_bboxes, desc="Scoring bboxes", ncols=100):
@@ -703,16 +738,14 @@ def infer_bounding_box(matches, music_faces, reaction_faces, reaction_frame_size
         ]
 
         if not (
-            inference[0] < -R_w * 0.2
-            and inference[1] < -R_h * 0.2
-            and inference[0] + inference[2] > R_w * 1.2
-            and inference[1] + inference[3] > R_h * 1.2
+            (inference[0] < -R_w * 0.2 and inference[0] + inference[2] > R_w * 1.2)
+            or (inference[1] < -R_h * 0.2 and inference[1] + inference[3] > R_h * 1.2)
         ):
             inferences.append(
-                (
+                [
                     inference,
                     score,
-                )
+                ]
             )
         # else:
         #     print("Inference seems wacky", inference)
@@ -917,14 +950,17 @@ def adjust_face_box(facial_area, shift_x=0, shift_y=0, change_width=0, change_he
     return [int(new_x1), int(new_y1), int(new_x2), int(new_y2)]
 
 
-def draw_face_boxes(frame, faces, color=(0, 255, 0), label="Face"):
+def draw_face_box(frame, face, color=(0, 255, 0), label="Face"):
     """Draws rectangles around detected faces."""
-    for key, face in faces.items():
-        print("SFSF", face)
-        bbox = face["facial_area"]
-        x1, y1, x2, y2 = map(int, bbox)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+    bbox = face["facial_area"]
+    x1, y1, x2, y2 = map(int, bbox)
+    if len(color) == 4:
+        color = (int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
+
+    print(label, color)
+
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
 
 def visualize_frames_with_faces(music_frame, reaction_frame, music_faces, reaction_faces, matches):
@@ -934,14 +970,53 @@ def visualize_frames_with_faces(music_frame, reaction_frame, music_faces, reacti
     music_frame_copy = music_frame.copy()
     reaction_frame_copy = reaction_frame.copy()
 
-    # Draw face boxes for music frame
-    draw_face_boxes(music_frame_copy, music_faces, color=(0, 255, 0), label="Music Face")
-
-    # Draw face boxes for reaction frame
-    draw_face_boxes(reaction_frame_copy, reaction_faces, color=(255, 0, 0), label="Reaction Face")
-
     # Plot the music and reaction frames side by side
     fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+
+    for key, face in music_faces.items():
+        draw_face_box(
+            music_frame_copy,
+            face,
+            color=(255, 255, 255),
+            label=f"{key}",
+        )
+
+    for key, face in reaction_faces.items():
+        draw_face_box(
+            reaction_frame_copy,
+            face,
+            color=(255, 255, 255),
+            label=f"{key}",
+        )
+
+    cmap = mcolors.LinearSegmentedColormap.from_list("", ["red", "green"])
+
+    # Optionally, you can draw lines to visualize the matches
+    # Example of how to draw lines for matching faces
+    for idx, ((music_key, reaction_key), match_score) in enumerate(matches):
+        music_bbox = music_faces[music_key]["facial_area"]
+        reaction_bbox = reaction_faces[reaction_key]["facial_area"]
+
+        # You can draw a line between corresponding faces in music and reaction frames, or just highlight the match
+        x1_m, y1_m, x2_m, y2_m = map(int, music_bbox)
+        x1_r, y1_r, x2_r, y2_r = map(int, reaction_bbox)
+
+        color = cmap(idx / len(matches))
+        # Draw face boxes for music frame
+        draw_face_box(
+            music_frame_copy,
+            music_faces[music_key],
+            color=color,
+            label=f"{music_key, reaction_key}",
+        )
+
+        # Draw face boxes for reaction frame
+        draw_face_box(
+            reaction_frame_copy,
+            reaction_faces[reaction_key],
+            color=color,
+            label=f"{music_key, reaction_key}",
+        )
 
     # Convert frames from BGR to RGB (since OpenCV loads images in BGR format)
     music_frame_rgb = cv2.cvtColor(music_frame_copy, cv2.COLOR_BGR2RGB)
@@ -955,18 +1030,6 @@ def visualize_frames_with_faces(music_frame, reaction_frame, music_faces, reacti
     ax[1].set_title("Reaction Frame")
     ax[1].axis("off")
 
-    # Optionally, you can draw lines to visualize the matches
-    # Example of how to draw lines for matching faces
-    for (music_key, reaction_key), match_score in matches:
-        music_bbox = music_faces[music_key]["facial_area"]
-        reaction_bbox = reaction_faces[reaction_key]["facial_area"]
-
-        # You can draw a line between corresponding faces in music and reaction frames, or just highlight the match
-        x1_m, y1_m, x2_m, y2_m = map(int, music_bbox)
-        x1_r, y1_r, x2_r, y2_r = map(int, reaction_bbox)
-
-        # You can modify the visualization logic here if you want to draw arrows, annotations, etc.
-
     plt.show()
 
 
@@ -974,7 +1037,7 @@ import matplotlib.patches as patches
 
 
 def plot_edges_on_reaction_frame(
-    reaction_frame, tops=None, bottoms=None, lefts=None, rights=None, best_box=None
+    reaction_frame, boxes=None, tops=None, bottoms=None, lefts=None, rights=None, best_box=None
 ):
     """
     Plot a sample reaction frame with all the edges (tops, bottoms, lefts, and rights) overlaid.
@@ -1020,6 +1083,15 @@ def plot_edges_on_reaction_frame(
             ax.add_patch(
                 patches.Rectangle((x2, y), 0, y2 - y, edgecolor="orange", facecolor="none", lw=2)
             )
+    if boxes:
+        for box in boxes:
+            # Draw inferred boxes!
+            x, y, x2, y2 = box
+            ax.add_patch(
+                patches.Rectangle(
+                    (x, y), x2 - x, y2 - y, edgecolor="magenta", facecolor="none", lw=1
+                )
+            )
 
     if best_box:
         # Draw the best box!
@@ -1042,133 +1114,3 @@ def plot_edges_on_reaction_frame(
     plt.axis("off")
     plt.tight_layout()
     plt.show()
-
-
-def adjust_coordinates_for_offscreen_embed(
-    reaction_video_path,
-    music_video_path,
-    reaction_crop_coordinates,
-    threshold=0.02,
-    visualize=False,
-):
-    # Load video properties for reaction video and music video
-    reaction_video = cv2.VideoCapture(reaction_video_path)
-    music_video = cv2.VideoCapture(music_video_path)
-
-    # Get dimensions of both videos
-    reaction_width = int(reaction_video.get(cv2.CAP_PROP_FRAME_WIDTH))
-    reaction_height = int(reaction_video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    music_width = int(music_video.get(cv2.CAP_PROP_FRAME_WIDTH))
-    music_height = int(music_video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    # Unpack the reaction crop coordinates
-    x1, y1, x2, y2 = reaction_crop_coordinates
-
-    # Calculate the width and height of the reaction crop box
-    crop_width = x2 - x1
-    crop_height = y2 - y1
-
-    # Calculate the percentage out of bounds for each edge
-    out_of_bounds_percentages = {
-        "left": -x1 / crop_width if x1 < 0 else 0,
-        "right": (x2 - reaction_width) / crop_width if x2 > reaction_width else 0,
-        "top": -y1 / crop_height if y1 < 0 else 0,
-        "bottom": (y2 - reaction_height) / crop_height if y2 > reaction_height else 0,
-    }
-
-    # Find the maximum out-of-bounds percentage
-    shrink_factor = max(out_of_bounds_percentages.values())
-
-    # If the maximum out-of-bounds percentage is less than the threshold, no adjustment needed
-    if shrink_factor <= threshold:
-        return reaction_crop_coordinates, None
-
-    # Adjust the reaction crop coordinates proportionally
-    new_x1 = int(x1 + crop_width * shrink_factor)
-    new_y1 = int(y1 + crop_height * shrink_factor)
-    new_x2 = int(x2 - crop_width * shrink_factor)
-    new_y2 = int(y2 - crop_height * shrink_factor)
-
-    reaction_adjusted_coordinates = [new_x1, new_y1, new_x2, new_y2]
-
-    # Apply the same shrinkage factor to the music video dimensions
-    music_new_x1 = int(music_width * shrink_factor / 2)
-    music_new_y1 = int(music_height * shrink_factor / 2)
-    music_new_x2 = music_width - music_new_x1
-    music_new_y2 = music_height - music_new_y1
-
-    music_adjusted_coordinates = [music_new_x1, music_new_y1, music_new_x2, music_new_y2]
-
-    if visualize:
-        # Get the reaction frame 25% into the video
-        reaction_frame_index = int(reaction_video.get(cv2.CAP_PROP_FRAME_COUNT) * 0.25)
-        reaction_video.set(cv2.CAP_PROP_POS_FRAMES, reaction_frame_index)
-        ret, reaction_frame = reaction_video.read()
-
-        # Get a frame from the music video
-        music_frame_index = int(music_video.get(cv2.CAP_PROP_FRAME_COUNT) * 0.25)
-        music_video.set(cv2.CAP_PROP_POS_FRAMES, music_frame_index)
-        ret, music_frame = music_video.read()
-
-        # Plot side by side
-        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-        # Reaction frame with original and adjusted crop
-        axes[0].imshow(cv2.cvtColor(reaction_frame, cv2.COLOR_BGR2RGB))
-        axes[0].add_patch(
-            plt.Rectangle(
-                (x1, y1),
-                crop_width,
-                crop_height,
-                edgecolor="red",
-                facecolor="none",
-                lw=2,
-                label="Original",
-            )
-        )
-        axes[0].add_patch(
-            plt.Rectangle(
-                (new_x1, new_y1),
-                new_x2 - new_x1,
-                new_y2 - new_y1,
-                edgecolor="green",
-                facecolor="none",
-                lw=2,
-                label="Adjusted",
-            )
-        )
-        axes[0].set_title("Reaction Frame")
-        axes[0].legend()
-
-        # Music frame with adjusted and original crop
-        axes[1].imshow(cv2.cvtColor(music_frame, cv2.COLOR_BGR2RGB))
-        axes[1].add_patch(
-            plt.Rectangle(
-                (0, 0),
-                music_width,
-                music_height,
-                edgecolor="red",
-                facecolor="none",
-                lw=2,
-                label="Original",
-            )
-        )
-        axes[1].add_patch(
-            plt.Rectangle(
-                (music_new_x1, music_new_y1),
-                music_new_x2 - music_new_x1,
-                music_new_y2 - music_new_y1,
-                edgecolor="green",
-                facecolor="none",
-                lw=2,
-                label="Adjusted",
-            )
-        )
-        axes[1].set_title("Music Video Frame")
-        axes[1].legend()
-
-        plt.tight_layout()
-        plt.show()
-
-    return reaction_adjusted_coordinates, music_adjusted_coordinates
