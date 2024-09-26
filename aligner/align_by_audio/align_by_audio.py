@@ -98,6 +98,15 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
 
     print("ABSORB")
     consolidated_segments = consolidate_segments(segments)
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="consolidate-segments-1",
+    )
+
     consolidated_segments = bridge_gaps(consolidated_segments)
 
     splay_paint(
@@ -106,7 +115,7 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
         stroke_alpha=1,
         show_live=False,
         chunk_size=chunk_size,
-        id="consolidate-segments-1",
+        id="bridge-gaps-1",
     )
 
     print("PRUNE UNREACHABLE")
@@ -138,6 +147,15 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
 
     print("ABSORB2")
     pruned_segments = consolidate_segments(pruned_segments)
+    splay_paint(
+        reaction,
+        consolidated_segments,
+        stroke_alpha=1,
+        show_live=False,
+        chunk_size=chunk_size,
+        id="consolidate-segments-2",
+    )
+
     pruned_segments = bridge_gaps(pruned_segments)
 
     # for seg in pruned_segments:
@@ -150,7 +168,7 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
         stroke_alpha=1,
         show_live=False,
         chunk_size=chunk_size,
-        id="consolidate-segments-2",
+        id="bridge-gaps-2",
     )
 
     print("PRUNING POOR SEGMENTS")
@@ -166,23 +184,23 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
         id="prune-poor-segments",
     )
 
-    print("SHARPEN ENDPOINTS")
+    # print("SHARPEN ENDPOINTS")
 
-    sharpen_endpoints(
-        reaction,
-        chunk_size,
-        step,
-        pruned_segments,
-    )
+    # sharpen_endpoints(
+    #     reaction,
+    #     chunk_size,
+    #     step,
+    #     pruned_segments,
+    # )
 
-    splay_paint(
-        reaction,
-        consolidated_segments,
-        stroke_alpha=1,
-        show_live=False,
-        chunk_size=chunk_size,
-        id="sharpen-endpoints",
-    )
+    # splay_paint(
+    #     reaction,
+    #     consolidated_segments,
+    #     stroke_alpha=1,
+    #     show_live=False,
+    #     chunk_size=chunk_size,
+    #     id="sharpen-endpoints",
+    # )
 
     print("SHARPEN INTERCEPT2")
 
@@ -262,9 +280,22 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
 
     best_path = find_best_path(reaction, paths)
 
-    micro_aligned = micro_align_path(reaction, best_path, segments_by_key)
+    # micro_aligned = micro_align_path(reaction, best_path, segments_by_key)
 
-    best_path = find_best_path(reaction, [best_path, micro_aligned])
+    # best_path = find_best_path(reaction, [best_path, micro_aligned])
+
+    # last_segment = None
+    # error_found = False
+    # for segment in best_path:
+    #     reaction_start, reaction_end, music_start, music_end = segment[:4]
+
+    #     if last_segment:
+    #         if music_start < last_segment[3]:
+    #             print("\tERROR! BEND detected", last_segment, segment)
+    #             error_found = True
+    #     last_segment = segment
+    # if error_found:
+    #     print(best_path)
 
     # if the last segment of the best path is fill, replace it by extending the last good segment
     if best_path[-1][4]:
