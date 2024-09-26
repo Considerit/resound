@@ -13,17 +13,17 @@ from utilities import (
 )
 
 
-from aligner.images.align_by_image import build_image_matches
+from aligner.align_by_image.align_by_image import build_image_matches
 from reactor_core import load_songs
 from inventory.inventory import get_reactions_manifest
 
-from aligner.images.embedded_video_finder import get_bounding_box_of_music_video_in_reaction
+from aligner.align_by_image.embedded_video_finder import get_bounding_box_of_music_video_in_reaction
 
 
 def do_something_per_reaction(callback):
     all_reactions = list(conf.get("reactions").keys())
     all_reactions.sort()
-    # all_reactions.reverse()
+    all_reactions.reverse()
 
     reactions_manifest = get_reactions_manifest(conf.get("artist"), conf.get("song_name"))[
         "reactions"
@@ -43,8 +43,8 @@ def do_something_per_reaction(callback):
         # if not manifest.get("alignment_done"):
         #     continue
 
-        # if channel not in []:
-        #     continue
+        if channel not in ["Duane Reacts"]:
+            continue
 
         # if channel not in [
         #     "mister energy",
@@ -67,17 +67,17 @@ def do_something_per_reaction(callback):
         if jump_to and yet_to_encounter and channel not in [jump_to]:  # , "Bta Entertainment"]:
             continue
 
-        hash_output_dir = os.path.join(conf.get("temp_directory"), "image_hashes")
-        crop_coordinates = get_bounding_box_of_music_video_in_reaction(reaction)
+        # hash_output_dir = os.path.join(conf.get("temp_directory"), "image_hashes")
+        # crop_coordinates = get_bounding_box_of_music_video_in_reaction(reaction)
 
-        if crop_coordinates is not None:
-            print("Found embedded music video at", crop_coordinates)
+        # if crop_coordinates is not None:
+        #     print("Found embedded music video at", crop_coordinates)
 
-            hash_cache_file_name = f"{channel}-{2}fps-{tuple(crop_coordinates)}-{0.95}.json"
-            hash_cache_path = os.path.join(hash_output_dir, hash_cache_file_name)
+        #     hash_cache_file_name = f"{channel}-{2}fps-{tuple(crop_coordinates)}-{0.95}.json"
+        #     hash_cache_path = os.path.join(hash_output_dir, hash_cache_file_name)
 
-            if os.path.exists(hash_cache_path):
-                continue
+        #     if os.path.exists(hash_cache_path):
+        #         continue
 
         try:
             conf["load_reaction"](channel)
@@ -87,9 +87,15 @@ def do_something_per_reaction(callback):
 
             continue
 
+        # conf["load_base"]()
+
         callback(reaction)
 
         unload_reaction(channel)
+
+
+def something(reaction):
+    build_image_matches(reaction, visualize=False)
 
 
 if __name__ == "__main__":
@@ -103,4 +109,4 @@ if __name__ == "__main__":
         make_conf(song, options, output_dir)
         conf.get("load_reactions")()
 
-        do_something_per_reaction(build_image_matches)
+        do_something_per_reaction(something)

@@ -31,6 +31,8 @@ def crop_with_noise(frame, box):
     h = int(y2 - y)
     x = int(x)
     y = int(y)
+    y2 = int(y2)
+    x2 = int(x2)
 
     frame_height, frame_width = frame.shape[:2]
 

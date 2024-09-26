@@ -16,7 +16,7 @@ from utilities import (
 from reactor_core import load_songs
 from inventory.inventory import get_reactions_manifest
 
-from aligner.images.embedded_video_finder import (
+from aligner.align_by_image.embedded_video_finder import (
     get_bounding_box_of_music_video_in_reaction,
 )
 
@@ -35,7 +35,7 @@ def do_something_per_reaction(callback):
         all_manifests[reaction_file_prefix] = reaction_manifest
 
     yet_to_encounter = True
-    jump_to = "RMuldrake"  # "LIYA Official"  # Melvin Thinks
+    jump_to = None  # "RMuldrake"  # "LIYA Official"  # Melvin Thinks
 
     for i, channel in enumerate(all_reactions):
         reaction = conf.get("reactions").get(channel)
@@ -44,7 +44,7 @@ def do_something_per_reaction(callback):
         # if not manifest.get("alignment_done"):
         #     continue
 
-        if channel not in ["React To The World", "RBOR", "RMuldrake"]:
+        if channel not in ["1K Z A Y"]:
             continue
 
         if channel == jump_to:

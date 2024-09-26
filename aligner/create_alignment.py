@@ -36,6 +36,7 @@ def create_aligned_reaction_video(reaction, extend_by=0, force=False):
             start = time.perf_counter()
 
             image_based_segments = None
+            image_based_reaction_start = None
             if conf.get("use_image_based_alignment"):
                 (
                     image_based_segments,
@@ -43,15 +44,17 @@ def create_aligned_reaction_video(reaction, extend_by=0, force=False):
                     image_based_reaction_end,
                 ) = build_image_matches(reaction)
 
-                if image_based_segments:
+                if image_based_reaction_start is not None:
                     reaction["start_reaction_search_at"] = reaction.get(
                         "start_reaction_search_at", image_based_reaction_start - sr
                     )
+
+                if image_based_reaction_end is not None:
                     reaction["end_reaction_search_at"] = reaction.get(
                         "end_reaction_search_at", image_based_reaction_end + sr
                     )
 
-            if image_based_segments is None:
+            if image_based_reaction_start is None:
                 reaction["start_reaction_search_at"] = reaction.get(
                     "start_reaction_search_at", 3 * sr
                 )
