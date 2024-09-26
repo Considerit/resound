@@ -139,7 +139,7 @@ def get_joinable_segments(reaction, segment, all_segments, allowed_spacing, prun
 
 
 def prune_poor_segments(
-    reaction, segments, min_segments_at_checkpoint=4, quality_threshold=0.7, length_threshold=0.5
+    reaction, segments, min_segments_at_checkpoint=4, quality_threshold=0.8, length_threshold=0.5
 ):
     segments = [s for s in segments if not s.get("pruned")]
     unpruned_to_start = len(segments)
@@ -156,12 +156,14 @@ def prune_poor_segments(
 
     for checkpoint, ck_segments in segments_at_checkpoint.items():
         # print("Checkpoint", checkpoint / sr)
-        ck_segments = [s for s in ck_segments if not s.get("pruned")]
+        # ck_segments = [s for s in ck_segments if not s.get("pruned")]
         if len(ck_segments) < min_segments_at_checkpoint:
             continue
 
         max_quality = -1
         max_length = -1
+        # max_time = -1
+        # min_time = 999999999999999999999999999999999
         for s in ck_segments:
             if "mfcc_cosine_score" not in s:
                 s["mfcc_cosine_score"] = get_segment_mfcc_cosine_similarity_score(
@@ -173,13 +175,55 @@ def prune_poor_segments(
                 max_quality = s["mfcc_cosine_score"]
             if max_length < s["length"]:
                 max_length = s["length"]
+            # if max_time < s["end_points"][1]:
+            #     max_time = s["end_points"][1]
+            # if min_time > s["end_points"][0]:
+            #     min_time = s["end_points"][0]
 
         for s in ck_segments:
             if (
-                s["length"] < length_threshold * max_length
-                and s["mfcc_cosine_score"] < quality_threshold * max_quality
+                s["mfcc_cosine_score"]
+                < quality_threshold * max_quality
+                # and s["length"] < length_threshold * max_length
+                # and s["end_points"][0] > min_time
+                # and s["end_points"][1] < max_time
             ):
-                s["pruned"] = True
+                covering_segments = []
+
+                for s2 in ck_segments:
+                    if s == s2 or s2["pruned"]:
+                        continue
+                    if (
+                        s2["end_points"][0] <= s["end_points"][0]
+                        and s2["end_points"][1] >= s["end_points"][1]
+                    ):
+                        covering_segments.append(s2)
+
+                # print("\tprune candidate:", s["end_points"][1] / sr, len(covering_segments))
+
+                max_covering_score = -1
+                for cs in covering_segments:
+                    cs_reaction_start, cs_reaction_end, cs_music_start, cs_music_end = cs[
+                        "end_points"
+                    ]
+                    covering_segment = [
+                        cs_reaction_start + (cs_reaction_start - s["end_points"][0]),
+                        cs_reaction_end - (cs_reaction_end - s["end_points"][1]),
+                        s["end_points"][2],
+                        s["end_points"][3],
+                    ]
+                    covering_score = get_segment_mfcc_cosine_similarity_score(
+                        reaction, covering_segment
+                    )
+                    if covering_score > max_covering_score:
+                        max_covering_score = covering_score
+
+                    # print("\t\tCovering score: ", covering_score, s["mfcc_cosine_score"])
+
+                if len(covering_segments) > 0 and s["mfcc_cosine_score"] < max_covering_score * (
+                    quality_threshold + (1 - quality_threshold) / 2
+                ):
+                    s["pruned"] = True
 
             # print(
             #     f"\t{'*' if s['pruned'] else ' '} length={int(s['length'] / max_length * 100)}  quality={int(s['mfcc_cosine_score'] / max_quality * 100)}"
