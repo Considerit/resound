@@ -38,7 +38,9 @@ def initialize_paint_caches():
     )
 
 
-def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacing, chunk_size):
+def construct_all_paths(
+    reaction, segments, joinable_segment_map, allowed_spacing, chunk_size, segments_by_key
+):
     paths = []
     song_length = conf.get("song_length")
     partial_paths = []
@@ -64,7 +66,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
                 ]
             )
 
-        score = path_score_by_mfcc_cosine_similarity(path, reaction)  # path_score(path, reaction)
+        score = path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key)
         if (
             best_score_cache["best_overall_path"] is None
             or best_score_cache["best_overall_score"] < score
@@ -73,7 +75,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
             best_score_cache["best_overall_score"] = score
 
             print("\nNew best score!")
-            print_path(path, reaction)
+            print_path(path, reaction, segments_by_key)
             time_of_last_best_score = time.perf_counter()
 
         # if score > 0.9 * best_score_cache["best_overall_score"]:
@@ -113,9 +115,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
                     ],
                 )
 
-            score = path_score_by_mfcc_cosine_similarity(
-                start_path, reaction
-            )  # path_score(start_path, reaction, end=start_path[-1][1])
+            score = path_score_by_mfcc_cosine_similarity(start_path, reaction, segments_by_key)
             partial_paths.append([[start_path, c], score])
 
             if near_song_end(c, allowed_spacing):  # in the case of one long completion
@@ -168,6 +168,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
                                 reaction,
                                 partial_path,
                                 song_length,
+                                segments_by_key,
                                 threshold_base=threshold_base,
                             )
                             if should_prune:
@@ -192,7 +193,12 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
         # print(len(partial_paths), end='\r')
 
         should_prune, score = should_prune_path(
-            reaction, partial_path[0], song_length, score, threshold_base=threshold_base
+            reaction,
+            partial_path[0],
+            song_length,
+            segments_by_key,
+            score,
+            threshold_base=threshold_base,
         )
 
         if False and GENERATE_FULL_ALIGNMENT_VIDEO:
@@ -234,7 +240,7 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
                     complete_path(path)
 
                 should_prune, score = should_prune_path(
-                    reaction, path, song_length, threshold_base=threshold_base
+                    reaction, path, song_length, segments_by_key, threshold_base=threshold_base
                 )
                 if not should_prune and prune_eligible and is_path_quality_poor(reaction, path):
                     prune_cache["poor_path"] += 1
@@ -250,12 +256,10 @@ def construct_all_paths(reaction, segments, joinable_segment_map, allowed_spacin
     return paths
 
 
-def should_prune_path(reaction, path, song_length, score=None, threshold_base=0.7):
+def should_prune_path(reaction, path, song_length, segments_by_key, score=None, threshold_base=0.7):
     reaction_end = path[-1][1]
 
-    score = path_score_by_mfcc_cosine_similarity(
-        path, reaction
-    )  # path_score(path, reaction, end=reaction_end)
+    score = path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key)
 
     # prune based on path length
     path_length = len(path)

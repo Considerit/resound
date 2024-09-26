@@ -9,6 +9,8 @@ from utilities import conf, sec_to_time, conversion_audio_sample_rate as sr
 from backchannel_isolator.track_separation import separate_vocals_for_reaction
 import soundfile as sf
 
+from silence import get_silence_binary_mask_for_reaction
+
 ######################################################
 # Sound landmarks help find alignment pathways through
 # quiet parts of songs by identifying a short distinctive
@@ -97,7 +99,7 @@ def find_sound_landmarks_in_reaction(
             mean_loudness,
             loudness,
             loudness_threshold,
-        ) = get_silence_binary_mask(reaction)
+        ) = get_silence_binary_mask_for_reaction(reaction)
 
         print(f"Looking for {len(landmarks)} sound landmarks for {reaction.get('channel')}")
 
@@ -293,95 +295,6 @@ def get_landmark_matches_with_cross_correlation(
         )
 
     return peaks
-
-
-def compute_rms_loudness_chunked(audio, sr, window_size_seconds):
-    """
-    Compute the RMS loudness of the audio signal in chunks to reduce memory usage.
-    audio: The audio data (1D array).
-    sr: Sample rate of the audio.
-    window_size_seconds: The size of each chunk in seconds.
-    """
-    window_size = int(sr * window_size_seconds)  # Convert seconds to samples
-    loudness = []
-
-    # Process the audio in chunks
-    for start in range(0, len(audio), window_size):
-        end = start + window_size
-        chunk = audio[start:end]
-        if len(chunk) > 0:
-            rms_value = np.sqrt(np.mean(chunk**2))
-            loudness.append(rms_value)
-
-    return np.array(loudness)
-
-
-# Find silent regions (longer than 3 seconds and quieter than 33% of mean loudness)
-def get_silence_binary_mask(
-    reaction,
-    min_silent_duration=3,
-    loudness_threshold=1,
-    window_size_seconds=1,
-    use_accompaniment_only=True,
-):
-    if use_accompaniment_only:
-        accompaniment, vocals, __ = separate_vocals_for_reaction(reaction)
-        reaction_audio, __ = sf.read(accompaniment)
-
-    else:
-        reaction_audio = reaction.get("reaction_audio_data")
-
-    loudness = compute_rms_loudness_chunked(reaction_audio, sr, window_size_seconds)
-    mean_loudness = np.mean(loudness)
-
-    silence_binary_mask = find_silence_binary_mask(
-        loudness,
-        mean_loudness,
-        sr,
-        min_silent_duration=min_silent_duration,
-        window_size_seconds=window_size_seconds,
-        threshold=loudness_threshold,
-    )
-
-    return (
-        silence_binary_mask,
-        window_size_seconds,
-        mean_loudness,
-        loudness,
-        loudness_threshold,
-    )
-
-
-def find_silence_binary_mask(
-    loudness,
-    mean_loudness,
-    sr,
-    window_size_seconds,
-    min_silent_duration,
-    threshold,
-):
-    """Find silent regions where loudness is less than threshold * mean loudness."""
-    silence_threshold = threshold * mean_loudness
-    silence_mask = (loudness < silence_threshold).astype(int)
-
-    # Convert min_silent_duration from seconds to samples (based on window size)
-    min_silent_samples = int(min_silent_duration / window_size_seconds)  # Adjust for window size
-
-    silence_binary_mask = np.zeros_like(silence_mask)
-
-    start = 0
-    while start < len(silence_mask):
-        if silence_mask[start] == 1:
-            end = start
-            while end < len(silence_mask) and silence_mask[end] == 1:
-                end += 1
-            if (end - start) >= min_silent_samples:
-                silence_binary_mask[start:end] = 1
-            start = end
-        else:
-            start += 1
-
-    return silence_binary_mask
 
 
 def expand_binary_mask(binary_mask, correlation_length, sr, window_size_seconds):

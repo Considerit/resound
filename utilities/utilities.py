@@ -6,7 +6,6 @@ import numpy as np
 import subprocess
 import cv2
 import json
-from silence import get_edge_silence
 from moviepy.editor import (
     VideoFileClip,
     concatenate_videoclips,

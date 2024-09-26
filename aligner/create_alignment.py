@@ -7,10 +7,6 @@ from utilities import universal_frame_rate
 from utilities import conf, save_object_to_file, read_object_from_file
 from utilities import conversion_audio_sample_rate as sr
 
-from aligner.scoring_and_similarity import (
-    path_score,
-    print_path,
-)
 from aligner.create_trimmed_video import trim_and_concat_video
 from aligner.align_by_audio import paint_paths
 from aligner.align_by_image import build_image_matches
@@ -59,12 +55,11 @@ def create_aligned_reaction_video(reaction, extend_by=0, force=False):
                     "start_reaction_search_at", 3 * sr
                 )
 
-            best_path = paint_paths(reaction, seed_segments=(image_based_segments or []))
+            best_path, best_path_score, best_path_output = paint_paths(
+                reaction, seed_segments=(image_based_segments or [])
+            )
 
             alignment_duration = (time.perf_counter() - start) / 60  # in minutes
-            best_path_score = path_score(best_path, reaction)
-
-            best_path_output = print_path(best_path, reaction).get_string()
 
             metadata = {
                 "best_path_score": best_path_score,

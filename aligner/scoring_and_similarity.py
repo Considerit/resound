@@ -7,22 +7,24 @@ from utilities import conf
 
 from prettytable import PrettyTable
 
+from silence import get_quiet_parts_of_song
+
 
 ################
 # Scoring paths
 
 
-def path_score(path, reaction, end=None, start=0):
+def path_score(path, reaction, segments_by_key, end=None, start=0):
     global path_score_cache
     global path_score_cache_perf
 
-    base_audio = conf.get("song_audio_data")
+    song_length = conf.get("song_length")
     song_audio_mfcc = conf.get("song_audio_mfcc")
     hop_length = conf.get("hop_length")
     reaction_audio = reaction["reaction_audio_data"]
     reaction_audio_mfcc = reaction["reaction_audio_mfcc"]
 
-    key = f"{len(base_audio)} {len(reaction_audio)} {str(path)} {start} {end}"
+    key = f"{song_length} {len(reaction_audio)} {str(path)} {start} {end}"
 
     if key in path_score_cache:
         path_score_cache_perf["hits"] += 1
@@ -34,7 +36,7 @@ def path_score(path, reaction, end=None, start=0):
     # print(f"path score cache hits/misses = {path_score_cache_perf['hits']} / {path_score_cache_perf['misses']}")
 
     if end is None:
-        end = len(base_audio)
+        end = song_length
 
     duration = 0
     fill = 0
@@ -44,14 +46,11 @@ def path_score(path, reaction, end=None, start=0):
 
     segment_penalty = 1
 
+    quiet_parts = get_quiet_parts_of_song()
+
+    time_guided_by_image_alignment_during_quiet_parts = 0
     for segment in path:
-        (
-            reaction_start,
-            reaction_end,
-            current_start,
-            current_end,
-            is_filler,
-        ) = segment[:5]
+        (reaction_start, reaction_end, current_start, current_end, is_filler, key) = segment[:6]
 
         if reaction_start < 0:
             reaction_end += -1 * reaction_start
@@ -72,8 +71,39 @@ def path_score(path, reaction, end=None, start=0):
             fill += current_end - current_start
             total_length += round((current_end - current_start) / hop_length)
 
-        if current_end - current_start < sr:  # and not is_filler
+        if current_end - current_start < sr and not is_filler:
             segment_penalty *= 0.98
+
+        if key is not None:
+            full_segment = segments_by_key[key]
+            if full_segment.get("source") == "image-alignment":
+                seg_key = str((current_start, current_end))
+                if "during_quiet" not in full_segment:
+                    full_segment["during_quiet"] = {}
+
+                if seg_key not in full_segment["during_quiet"]:
+                    quiet_time = 0
+
+                    for qs, qe in quiet_parts:
+                        qs *= sr
+                        qe *= sr
+
+                        if max(current_start, qs) <= min(current_end, qe):
+                            overlap = min(current_end, qe) - max(current_start, qs)
+                            quiet_time += overlap
+
+                    full_segment["during_quiet"][seg_key] = quiet_time / sr
+
+                quiet_time = full_segment["during_quiet"][seg_key]
+
+                time_guided_by_image_alignment_during_quiet_parts += quiet_time
+
+    if time_guided_by_image_alignment_during_quiet_parts > 0:
+        segment_penalty *= 1 + 0.002 * time_guided_by_image_alignment_during_quiet_parts
+
+        # print(
+        #     f"\tYO! Time guided by image alignment = {time_guided_by_image_alignment_during_quiet_parts}s giving bonus of {1 + 0.001 * time_guided_by_image_alignment_during_quiet_parts}x"
+        # )
 
     # Derivation for below:
     #   earliness = |R| / temporal_center
@@ -83,19 +113,19 @@ def path_score(path, reaction, end=None, start=0):
     #      the reactions are really really long.
     #   middle_earliness = |R| / ( |R| / 2  ) = 2
     #   normalized earliness = earliness / middle_earliness
-    # normalized_earliness_score = len(base_audio) / (len(reaction_audio) * temporal_center)
-    # fill_score = 1 / (1 + abs(duration - len(base_audio)) / sr)
+    # normalized_earliness_score = song_length / (len(reaction_audio) * temporal_center)
+    # fill_score = 1 / (1 + abs(duration - song_length) / sr)
 
     # earliness = len(reaction_audio) / temporal_center
     # earliness = math.log(1 + earliness)
 
-    earliness = len(base_audio) / temporal_center
+    earliness = song_length / temporal_center
 
     fill_score = duration / (duration + fill)
 
     # mfcc_alignment = path_score_by_mfcc_mse_similarity(path, reaction)
     mfcc_alignment = 0
-    cosine_mfcc_alignment = path_score_by_mfcc_cosine_similarity(path, reaction)
+    cosine_mfcc_alignment = path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key)
 
     alignment = 100 * cosine_mfcc_alignment
 
@@ -114,11 +144,13 @@ def path_score(path, reaction, end=None, start=0):
         fill_score,
         mfcc_alignment,
         cosine_mfcc_alignment,
+        duration_score,
+        segment_penalty,
     ]
     return path_score_cache[key]
 
 
-def path_score_by_mfcc_cosine_similarity(path, reaction):
+def path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key):
     mfcc_sequence_sum_score = 0
 
     total_duration = 0
@@ -203,7 +235,7 @@ def get_chunk_score(reaction, reaction_start, reaction_end, current_start, curre
     return alignment
 
 
-def find_best_path(reaction, candidate_paths):
+def find_best_path(reaction, candidate_paths, segments_by_key=None):
     print(f"Finding the best of {len(candidate_paths)} paths")
 
     gt = reaction.get("ground_truth")
@@ -222,7 +254,7 @@ def find_best_path(reaction, candidate_paths):
 
     paths_with_scores = []
     for path in candidate_paths:
-        scores = path_score(path, reaction)
+        scores = path_score(path, reaction, segments_by_key=segments_by_key)
 
         if scores[0] > best_score:
             best_score = scores[0]
@@ -240,40 +272,41 @@ def find_best_path(reaction, candidate_paths):
                 best_gt_path = path
                 best_scores = scores
 
+        paths_with_scores.append([path, scores])
+
+    print(f"\tDone scoring, now processing paths")
+
+    normalized_scores = []
+    for path, scores in paths_with_scores:
         if (
             scores[0] > 0.9 * best_score
             or best_early_completion_score == scores[1]
             or best_similarity == scores[2]
             or best_duration == scores[3]
         ):  # winnow it down a bit
-            paths_with_scores.append([path, scores])
+            total_score = scores[0] / best_score
+            completion_score = scores[1] / best_early_completion_score
+            similarity_score = scores[2] / best_similarity
+            fill_score = scores[3] / best_duration
+            multiplier = scores[-1]
 
-    print(f"\tDone scoring, now processing paths")
-
-    normalized_scores = []
-    for path, scores in paths_with_scores:
-        total_score = scores[0] / best_score
-        completion_score = scores[1] / best_early_completion_score
-        similarity_score = scores[2] / best_similarity
-        fill_score = scores[3] / best_duration
-
-        normalized_scores.append(
-            (path, (total_score, completion_score, similarity_score, fill_score))
-        )
+            normalized_scores.append(
+                (path, (total_score, completion_score, similarity_score, fill_score, multiplier))
+            )
 
     normalized_scores.sort(key=lambda x: x[1][0], reverse=True)
 
     print("Paths by score:")
-    for idx, (path, scores) in enumerate(normalized_scores[:100]):
+    for idx, (path, scores) in enumerate(normalized_scores[:20]):
         if gt:
             gtpp = ground_truth_overlap(path, gt)
             gtp = f"Ground Truth: {gtpp}%"
         else:
             gtp = ""
         print(
-            f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]} {gtp}"
+            f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]} Mult={scores[-1]} {gtp}"
         )
-        print_path(path, reaction)
+        print_path(path, reaction, segments_by_key)
 
     if gt:
         print("***** Best Ground Truth Path *****")
@@ -281,7 +314,7 @@ def find_best_path(reaction, candidate_paths):
         print(
             f"\tScore={best_scores[0]}  EarlyThrough={best_scores[1]}  Similarity={best_scores[2]} Duration={best_scores[3]} {max_gt}"
         )
-        print_path(best_gt_path, reaction)
+        print_path(best_gt_path, reaction, segments_by_key)
 
     return normalized_scores[0][0]
 
@@ -450,11 +483,9 @@ def cosine_similarity(A, B):
 # Printing path
 
 
-def print_path(path, reaction, ignore_score=False):
+def print_path(path, reaction, segments_by_key=None, ignore_score=False):
     gt = reaction.get("ground_truth")
     print("\t\t****************")
-    if gt:
-        print(f"\t\tGround Truth Overlap {ground_truth_overlap(path, gt):.1f}%")
 
     x = PrettyTable()
     x.border = False
@@ -464,20 +495,26 @@ def print_path(path, reaction, ignore_score=False):
         "",
         "Base",
         "Reaction",
-        # "mfcc mse",
         "mfcc cosine",
         "raw cosine",
-        "ground truth",
+        "source",
     ]
 
+    if gt:
+        x.field_names.append("ground truth")
+        print(f"\t\tGround Truth Overlap {ground_truth_overlap(path, gt):.1f}%")
+
     for sequence in path:
-        (
-            reaction_start,
-            reaction_end,
-            current_start,
-            current_end,
-            is_filler,
-        ) = sequence[:5]
+        (reaction_start, reaction_end, current_start, current_end, is_filler, key) = sequence[:6]
+
+        if key is None:
+            src = "F"
+        else:
+            full_seg = segments_by_key[key]
+            if full_seg["source"] == "image-alignment":
+                src = "I"
+            else:
+                src = "A"
 
         gt_pr = "-"
         mfcc_mse_score = mfcc_cosine_score = raw_cosine_score = 0
@@ -505,18 +542,20 @@ def print_path(path, reaction, ignore_score=False):
 
                 gt_pr = f"{100 * total_overlap / (sequence[1] - sequence[0]):.1f}%"
 
-        x.add_row(
-            [
-                "\t\t",
-                "x" if is_filler else "",
-                f"{float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}",
-                f"{float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f}",
-                # f"{round(mfcc_mse_score)}",
-                f"{round(mfcc_cosine_score)}",
-                f"{round(raw_cosine_score)}",
-                gt_pr,
-            ]
-        )
+        row = [
+            "\t\t",
+            "x" if is_filler else "",
+            f"{float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}",
+            f"{float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f}",
+            # f"{round(mfcc_mse_score)}",
+            f"{round(mfcc_cosine_score)}",
+            f"{round(raw_cosine_score)}",
+            src,
+        ]
+        if gt:
+            row.append(gt_pr)
+
+        x.add_row(row)
 
     print(x)
 

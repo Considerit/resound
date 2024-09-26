@@ -360,7 +360,7 @@ def make_conf(song_def, options, temp_directory):
 
             reaction["priority"] += 20 * metrics_bonus
 
-            print(f"PRIORITY BONUS: {100*metrics_bonus:.1f} for {channel}")
+            # print(f"PRIORITY BONUS: {100*metrics_bonus:.1f} for {channel}")
 
         conf["reactions"] = reactions
 
