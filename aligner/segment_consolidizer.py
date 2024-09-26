@@ -40,6 +40,7 @@ def consolidate_segments(all_segments):
         max_bs = 0
         min_bs = 999999999999999999999999999999999
         not_subsumed = []
+        to_subsume = []
         for i, s in enumerate(segments):
             bs = s["end_points"][2]
             be = s["end_points"][3]
@@ -57,8 +58,21 @@ def consolidate_segments(all_segments):
 
                     break
 
-            if not subsumed_by_other or s.get("source", None) == "image-alignment":
+            if (
+                subsumed_by_other
+                and s.get("source", None) == "image-alignment"
+                and s2.get("source", None) == "audio-alignment"
+            ):
                 not_subsumed.append(s)
+                # For image and audio sourced segments that are very closely in agreement,
+                # adopt the image sourced one.
+                if abs(bs2 - bs) < 3 * sr and abs(be2 - be) < 3 * sr:
+                    to_subsume.append(s2)
+
+            elif not subsumed_by_other:
+                not_subsumed.append(s)
+
+        not_subsumed = [s for s in not_subsumed if s not in to_subsume]
 
         if len(not_subsumed) == 0:
             print(f"ERROR CASE: everything subsumed {intercept} {len(segments)}", segments)
@@ -88,11 +102,11 @@ def bridge_gaps(all_segments):
         merge_happened = False
 
         for i, (intercept, segment) in enumerate(by_intercept):
-            if i in merged:
+            if i in merged or segment.get("source", None) == "image-alignment":
                 continue
 
             for j in range(i + 1, len(by_intercept)):
-                if j in merged:
+                if j in merged or by_intercept[j][1].get("source", None) == "image-alignment":
                     continue
 
                 # we're done finding merge candidates if our current intercept is too far out of bounds
@@ -149,6 +163,6 @@ def bridge_gaps(all_segments):
     consolidated_segments = [s for i, (b, s) in enumerate(by_intercept) if i not in merged]
 
     print(
-        f"\t\tconsolidate_segments resulted in {len(consolidated_segments)} segments, down from {len(all_segments)}"
+        f"\t\tbridge_gaps resulted in {len(consolidated_segments)} segments, down from {len(all_segments)}"
     )
     return consolidated_segments
