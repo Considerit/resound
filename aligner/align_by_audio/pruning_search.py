@@ -1,7 +1,7 @@
 import random, copy
 
 from aligner.align_by_audio.bounds import in_bounds, get_bound
-from aligner.scoring_and_similarity import get_segment_mfcc_cosine_similarity_score
+from aligner.scoring_and_similarity import get_segment_score
 
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf, on_press_key
@@ -152,7 +152,7 @@ def is_path_quality_poor(reaction, path):
                 if short_segments >= 3:
                     return True
 
-        cosine_sim = get_segment_mfcc_cosine_similarity_score(reaction, segment)
+        cosine_sim = get_segment_score(reaction, segment)
         if not filler and cosine_sim < 0.250:
             prune_types["poor_path_cosine"] += 1
             return True

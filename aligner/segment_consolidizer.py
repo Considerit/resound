@@ -1,86 +1,76 @@
 import os
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
+from collections import defaultdict
 
 
-def consolidate_segments(all_segments):
-    intercepts = {}
-    seen = {}
-    intercept_map = {}
-    all_segments = [s for s in all_segments if not s.get("pruned", False)]
+def consolidate_segments(all_segments, neighborhood_size=int(sr / 2 + 1)):
+    segments = [s for s in all_segments if not s.get("pruned", False)]
 
-    for s in all_segments:
-        dup_key = (
-            f"{s['end_points'][2]}-{s['end_points'][3]}-{s['end_points'][0]}-{s['end_points'][1]}"
-        )
-        if dup_key in seen:
-            continue
-        seen[dup_key] = True
+    not_subsumed = []
+    to_subsume = []
 
-        intercept = s["end_points"][0] - s["end_points"][2]
-        key = round(intercept / sr / 2)
-        if key not in intercepts:
-            intercepts[key] = []
-            intercept_map[key] = intercept
+    def is_neighbor(seg, candidate):
+        rs, re, bs, be = seg["end_points"]
+        crs, cre, cbs, cbe = candidate["end_points"]
+        yint = rs - bs
+        candidate_yint = crs - cbs
 
-        intercepts[key].append(s)
+        return abs(candidate_yint - yint) <= neighborhood_size and max(bs, cbs) <= min(be, cbe)
 
-        intercept_map[key] = min(intercept_map[key], intercept)
+    for seg in segments:
+        intercept = seg["end_points"][0] - seg["end_points"][2]
+        if "candidate_intercepts" not in seg:
+            seg["candidate_intercepts"] = {st[0] - st[2]: True for st in seg["strokes"]}
 
-    filtered_segments = []
-    for key, segments in intercepts.items():
-        intercept = intercept_map[key]
-        if len(segments) == 1:
-            filtered_segments.append(segments[0])
+        neighbors = [s2 for s2 in segments if seg != s2 and is_neighbor(seg, s2)]
+
+        if len(neighbors) == 0:
+            not_subsumed.append(seg)
             continue
 
-        if len(segments) == 0:
-            raise (Exception("No segments!", key))
+        for n in neighbors:
+            seg["candidate_intercepts"].update({st[0] - st[2]: True for st in n["strokes"]})
 
-        max_bs = 0
-        min_bs = 999999999999999999999999999999999
-        not_subsumed = []
-        to_subsume = []
-        for i, s in enumerate(segments):
-            bs = s["end_points"][2]
-            be = s["end_points"][3]
-            # print('ABSORB:', intercept, bs/sr, be/sr)
+        # check if neighbor should absorb this segment
+        bs = seg["end_points"][2]
+        be = seg["end_points"][3]
 
-            subsumed_by_other = False
-            for j, s2 in enumerate(segments):
-                if i == j:
-                    continue
-                bs2 = s2["end_points"][2]
-                be2 = s2["end_points"][3]
+        subsumed_by_neighbor = False
+        for j, s2 in enumerate(neighbors):
+            if s2 in to_subsume:
+                continue
 
-                if bs2 <= bs and be2 >= be:
-                    subsumed_by_other = bs2 != bs or be2 != be
+            bs2 = s2["end_points"][2]
+            be2 = s2["end_points"][3]
 
-                    break
+            if bs2 <= bs and be2 >= be:
+                subsumed_by_neighbor = bs2 != bs or be2 != be
+                break
 
-            if (
-                subsumed_by_other
-                and s.get("source", None) == "image-alignment"
-                and s2.get("source", None) == "audio-alignment"
-            ):
-                not_subsumed.append(s)
-                # For image and audio sourced segments that are very closely in agreement,
-                # adopt the image sourced one.
-                if abs(bs2 - bs) < 3 * sr and abs(be2 - be) < 3 * sr:
-                    to_subsume.append(s2)
+        if (
+            subsumed_by_neighbor
+            and seg.get("source", None) == "image-alignment"
+            and s2.get("source", None) == "audio-alignment"
+        ):
+            not_subsumed.append(seg)
+            # For image and audio sourced segments that are very closely in agreement,
+            # adopt the image sourced one.
+            if abs(bs2 - bs) < 3 * sr and abs(be2 - be) < 3 * sr:
+                to_subsume.append(s2)
+        elif not subsumed_by_neighbor:
+            not_subsumed.append(seg)
 
-            elif not subsumed_by_other:
-                not_subsumed.append(s)
+    filtered_segments = [s for s in not_subsumed if s not in to_subsume]
 
-        not_subsumed = [s for s in not_subsumed if s not in to_subsume]
+    if len(filtered_segments) == 0:
+        print(f"ERROR CASE: everything subsumed {intercept} {len(segments)}")
+        print(len(not_subsumed), len(to_subsume))
 
-        if len(not_subsumed) == 0:
-            print(f"ERROR CASE: everything subsumed {intercept} {len(segments)}", segments)
-
-        filtered_segments += not_subsumed
+        raise Exception()
 
     print(
-        f"\t\tconsolidate_segments resulted in {len(filtered_segments)} segments, down from {len(all_segments)}"
+        f"\t\tConsolidation resulted in {len(filtered_segments)} segments (from {len(all_segments)})"
     )
     return filtered_segments
 

@@ -6,9 +6,7 @@ from scipy.signal import correlate
 import numpy as np
 import matplotlib.pyplot as plt
 
-from aligner.scoring_and_similarity import (
-    get_segment_mfcc_cosine_similarity_score,
-)
+from aligner.scoring_and_similarity import get_segment_score
 
 from aligner.align_by_audio.find_segment_end import find_segment_end
 
@@ -21,6 +19,7 @@ def find_best_intercept(
     include_cross_correlation=False,
     reaction_start=None,
     reaction_end=None,
+    use_image_scores=False,
     print_intercepts=False,
     visualize=False,
 ):
@@ -100,7 +99,7 @@ def find_best_intercept(
             base_end,
         ]
 
-        score = get_segment_mfcc_cosine_similarity_score(reaction, candidate_line_def)
+        score = get_segment_score(reaction, candidate_line_def, use_image_scores=use_image_scores)
         if include_cross_correlation and print_intercepts:
             if intercept == corr_intercept:
                 print(
@@ -139,7 +138,9 @@ def find_best_intercept(
                 base_start,
                 base_end,
             ]
-            score = get_segment_mfcc_cosine_similarity_score(reaction, candidate_line_def)
+            score = get_segment_score(
+                reaction, candidate_line_def, use_image_scores=use_image_scores
+            )
             scores.append(score)
 
         plot_scores_of_intercepts(
@@ -173,7 +174,9 @@ def plot_scores_of_intercepts(intercepts, scores, corr_intercept, base_start, ba
     plt.show()
 
 
-def sharpen_segment_intercept(reaction, segment, padding=None, apply_changes=True):
+def sharpen_segment_intercept(
+    reaction, segment, padding=None, apply_changes=True, use_image_scores=False
+):
     ###################################
     # if we have an imprecise segment composed of strokes that weren't exactly aligned,
     # we'll want to find the best line through them
@@ -187,7 +190,12 @@ def sharpen_segment_intercept(reaction, segment, padding=None, apply_changes=Tru
     int_reaction_start = max(segment["end_points"][0] - padding, 0)
     int_reaction_end = min(segment["end_points"][1] + padding, reaction_len)
 
-    stroke_intercepts = {s[0] - s[2]: True for s in segment["strokes"]}
+    if "candidate_intercepts" not in segment:
+        segment["candidate_intercepts"] = {s[0] - s[2]: True for s in segment["strokes"]}
+
+    stroke_intercepts = segment["candidate_intercepts"]
+
+    visualize = print_intercepts = False  # abs(segment.get("y-intercept", 0) - 325.000 * sr) <= 5
 
     intercept = find_best_intercept(
         reaction,
@@ -197,6 +205,9 @@ def sharpen_segment_intercept(reaction, segment, padding=None, apply_changes=Tru
         include_cross_correlation=True,
         reaction_start=int_reaction_start,
         reaction_end=int_reaction_end,
+        use_image_scores=use_image_scores,
+        visualize=visualize,
+        print_intercepts=print_intercepts,
     )
 
     base_start, base_end = segment["end_points"][2:4]
@@ -290,7 +301,7 @@ def sharpen_segment_endpoints(reaction, segment, step, padding):
             candidate_base_start + step,
         )
 
-        section_score = get_segment_mfcc_cosine_similarity_score(reaction, candidate_segment)
+        section_score = get_segment_score(reaction, candidate_segment)
 
         if first_score is None:
             first_score = section_score

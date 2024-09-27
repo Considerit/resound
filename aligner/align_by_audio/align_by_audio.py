@@ -58,7 +58,14 @@ def initialize_caches():
     initialize_segment_start_cache()
 
 
-def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacing=None, attempts=0):
+def paint_paths(
+    reaction,
+    seed_segments=None,
+    peak_tolerance=0.4,
+    allowed_spacing=None,
+    allowed_spacing_on_ends=10 * sr,
+    attempts=0,
+):
     initialize_caches()
 
     chunk_size = get_chunk_size(reaction, attempts=attempts)
@@ -66,6 +73,8 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
         allowed_spacing = attempts_progression["allowed_spacing"][attempts]
         # print(f"Attempts={attempts}   {attempts % 3}    {allowed_spacing}")
         allowed_spacing *= sr
+
+    allowed_spacing_on_ends = max(allowed_spacing, allowed_spacing_on_ends)
 
     print(
         f"\n###############################\n# {conf.get('song_key')} / {reaction.get('channel')}"
@@ -123,7 +132,7 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
     print("PRUNE UNREACHABLE")
 
     pruned_segments, __ = prune_unreachable_segments(
-        reaction, consolidated_segments, allowed_spacing, prune_links=False
+        reaction, consolidated_segments, allowed_spacing, allowed_spacing_on_ends, prune_links=False
     )
 
     splay_paint(
@@ -237,7 +246,7 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
     print("PRUNE UNREACHABLE2")
 
     pruned_segments, joinable_segment_map = prune_unreachable_segments(
-        reaction, pruned_segments, allowed_spacing, prune_links=False
+        reaction, pruned_segments, allowed_spacing, allowed_spacing_on_ends, prune_links=False
     )
 
     splay_paint(
@@ -260,6 +269,7 @@ def paint_paths(reaction, seed_segments=None, peak_tolerance=0.4, allowed_spacin
         pruned_segments,
         joinable_segment_map,
         allowed_spacing,
+        allowed_spacing_on_ends,
         chunk_size,
         segments_by_key,
     )
@@ -392,12 +402,12 @@ def visualize_clusters(clusters, base_audio_len, reaction_audio_len):
 #######
 
 
-def sharpen_intercept(reaction, segments):
+def sharpen_intercept(reaction, segments, use_image_scores=False):
     for segment in segments:
         if segment.get("pruned", False):
             continue
 
-        sharpen_segment_intercept(reaction, segment, padding=int(sr / 2))
+        sharpen_segment_intercept(reaction, segment, padding=int(sr / 2), use_image_scores=False)
 
 
 def sharpen_endpoints(reaction, chunk_size, step, segments):

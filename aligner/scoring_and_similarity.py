@@ -48,6 +48,8 @@ def path_score(path, reaction, segments_by_key, end=None, start=0):
 
     quiet_parts = get_quiet_parts_of_song()
 
+    img_segs = 0
+
     time_guided_by_image_alignment_during_quiet_parts = 0
     for segment in path:
         (reaction_start, reaction_end, current_start, current_end, is_filler, key) = segment[:6]
@@ -77,6 +79,7 @@ def path_score(path, reaction, segments_by_key, end=None, start=0):
         if key is not None:
             full_segment = segments_by_key[key]
             if full_segment.get("source") == "image-alignment":
+                img_segs += 1
                 seg_key = str((current_start, current_end))
                 if "during_quiet" not in full_segment:
                     full_segment["during_quiet"] = {}
@@ -99,7 +102,7 @@ def path_score(path, reaction, segments_by_key, end=None, start=0):
                 time_guided_by_image_alignment_during_quiet_parts += quiet_time
 
     if time_guided_by_image_alignment_during_quiet_parts > 0:
-        segment_penalty *= 1 + 0.002 * time_guided_by_image_alignment_during_quiet_parts
+        segment_penalty *= 1 + 0.001 * time_guided_by_image_alignment_during_quiet_parts
 
         # print(
         #     f"\tYO! Time guided by image alignment = {time_guided_by_image_alignment_during_quiet_parts}s giving bonus of {1 + 0.001 * time_guided_by_image_alignment_during_quiet_parts}x"
@@ -125,9 +128,11 @@ def path_score(path, reaction, segments_by_key, end=None, start=0):
 
     # mfcc_alignment = path_score_by_mfcc_mse_similarity(path, reaction)
     mfcc_alignment = 0
-    cosine_mfcc_alignment = path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key)
+    # cosine_mfcc_alignment = path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key)
 
-    alignment = 100 * cosine_mfcc_alignment
+    # alignment = 100 * cosine_mfcc_alignment
+
+    alignment = 100 * path_alignment_score(path, reaction, segments_by_key)
 
     duration_score = (duration + fill) / (end - start)
 
@@ -137,69 +142,86 @@ def path_score(path, reaction, segments_by_key, end=None, start=0):
     if duration == 0:
         total_score = alignment = 0
 
+    by_dict = {
+        "total_score": total_score,
+        "earliness": earliness,
+        "alignment": alignment,
+        "fill_score": fill_score,
+        "mfcc_alignment": mfcc_alignment,
+        "image_segments": img_segs,
+        "duration_score": duration_score,
+        "segment_penalty": segment_penalty,
+    }
+
     path_score_cache[key] = [
         total_score,
         earliness,
         alignment,
         fill_score,
         mfcc_alignment,
-        cosine_mfcc_alignment,
         duration_score,
         segment_penalty,
+        by_dict,
     ]
     return path_score_cache[key]
 
 
-def path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key):
-    mfcc_sequence_sum_score = 0
+def path_alignment_score(path, reaction, segments_by_key):
+    alignment_score = 0
 
     total_duration = 0
     for sequence in path:
         total_duration += sequence[1] - sequence[0]
-
-    min_sequence_score = 1
-    penalty = 1
 
     for sequence in path:
         is_fill = len(sequence) > 4 and sequence[4]
         if not is_fill:
             mfcc_score = get_segment_mfcc_cosine_similarity_score(reaction, sequence)
             duration_factor = (sequence[1] - sequence[0]) / total_duration
-            mfcc_sequence_sum_score += mfcc_score * mfcc_score * duration_factor
-        # else:
-        #     if (sequence[1] - sequence[0]) / sr < 1:  # penalize short fills
-        #         penalty *= 0.985
+            image_score = get_image_score_for_segment(reaction, sequence)
 
-        # if mfcc_score < min_sequence_score:
-        #     min_sequence_score = mfcc_score
+            alignment_score += mfcc_score * mfcc_score * image_score * duration_factor
 
-    # if min_sequence_score < 0.750:
-    #     mfcc_sequence_sum_score *= 0.95
-    # if min_sequence_score < 0.500:
-    #     mfcc_sequence_sum_score *= 0.95
-    # if min_sequence_score < 0.350:
-    #     mfcc_sequence_sum_score *= 0.95
-
-    return mfcc_sequence_sum_score * penalty
+    return alignment_score
 
 
-def path_score_by_raw_cosine_similarity(path, reaction):
-    sequence_sum_score = 0
+# def path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key):
+#     mfcc_sequence_sum_score = 0
 
-    total_duration = 0
-    for sequence in path:
-        reaction_start, reaction_end, current_start, current_end, is_filler = sequence[:5]
-        total_duration += reaction_end - reaction_start
+#     total_duration = 0
+#     for sequence in path:
+#         total_duration += sequence[1] - sequence[0]
 
-    for sequence in path:
-        reaction_start, reaction_end, current_start, current_end, is_filler = sequence[:5]
+#     min_sequence_score = 1
+#     penalty = 1
 
-        if not is_filler:
-            score = get_segment_raw_cosine_similarity_score(reaction, sequence)
-            duration_factor = (current_end - current_start) / total_duration
-            sequence_sum_score += score * duration_factor
+#     for sequence in path:
+#         is_fill = len(sequence) > 4 and sequence[4]
+#         if not is_fill:
+#             mfcc_score = get_segment_mfcc_cosine_similarity_score(reaction, sequence)
+#             duration_factor = (sequence[1] - sequence[0]) / total_duration
+#             mfcc_sequence_sum_score += mfcc_score * mfcc_score * duration_factor
 
-    return sequence_sum_score
+#     return mfcc_sequence_sum_score * penalty
+
+
+# def path_score_by_raw_cosine_similarity(path, reaction):
+#     sequence_sum_score = 0
+
+#     total_duration = 0
+#     for sequence in path:
+#         reaction_start, reaction_end, current_start, current_end, is_filler = sequence[:5]
+#         total_duration += reaction_end - reaction_start
+
+#     for sequence in path:
+#         reaction_start, reaction_end, current_start, current_end, is_filler = sequence[:5]
+
+#         if not is_filler:
+#             score = get_segment_raw_cosine_similarity_score(reaction, sequence)
+#             duration_factor = (current_end - current_start) / total_duration
+#             sequence_sum_score += score * duration_factor
+
+#     return sequence_sum_score
 
 
 # def path_score_by_mfcc_mse_similarity(path, reaction):
@@ -225,13 +247,64 @@ def path_score_by_raw_cosine_similarity(path, reaction):
 #     return similarity
 
 
-def get_chunk_score(reaction, reaction_start, reaction_end, current_start, current_end):
-    segment = (reaction_start, reaction_end, current_start, current_end, False)
-    # mse_score = get_segment_mfcc_mse_score(reaction, segment)
-    cosine_score = get_segment_mfcc_cosine_similarity_score(reaction, segment)
-    # raw_cosine_score = get_segment_raw_cosine_similarity_score(reaction, segment)
+def get_image_score_for_segment(reaction, segment):
+    if "image_alignment_matrix" not in reaction:
+        return 1
 
-    alignment = cosine_score  # * mse_score # * raw_cosine_score
+    image_scores, music_times, reaction_times = reaction["image_alignment_matrix"]
+
+    if type(segment) == dict:
+        rt, re, mt, me = segment["end_points"][:4]
+    else:
+        rt, re, mt, me = segment[:4]
+
+    sample_rate = music_times[1] - music_times[0]
+    initial_mt = music_times[0]
+    initial_rt = reaction_times[0]
+
+    # Calculate mt_adjustment and rt_adjustment to find the nearest sampled points
+    mt_adjustment = round((mt - initial_mt) / sample_rate) * sample_rate - (mt - initial_mt)
+    rt_adjustment = round((rt - initial_rt) / sample_rate) * sample_rate - (rt - initial_rt)
+
+    mt += mt_adjustment
+    rt += rt_adjustment
+
+    # key = str((mt, rt))
+    # assert key in image_scores
+
+    # key = str((mt + sample_rate, rt + sample_rate))
+    # assert key in image_scores
+
+    my_scores = []
+
+    not_in = present = 0
+    while mt <= me:
+        key = str((mt, rt))
+        if key in image_scores:
+            my_scores.append(image_scores[key][0])
+            present += 1
+        else:
+            not_in += 1
+        mt += sample_rate
+        rt += sample_rate
+
+    if not_in > 0:
+        print(f"\tFound {present} of {not_in + present} pairs")
+
+    mean = np.mean(np.array(my_scores))
+    return mean
+
+
+def get_segment_score(reaction, segment, use_image_scores=True):
+    # mse_score = get_segment_mfcc_mse_score(reaction, segment)
+    # raw_cosine_score = get_segment_raw_cosine_similarity_score(reaction, segment)
+    cosine_score = get_segment_mfcc_cosine_similarity_score(reaction, segment)
+    if use_image_scores:
+        image_score = get_image_score_for_segment(reaction, segment)
+    else:
+        image_score = 1
+
+    alignment = image_score * cosine_score  # * mse_score # * raw_cosine_score
     return alignment
 
 
@@ -246,6 +319,7 @@ def find_best_path(reaction, candidate_paths, segments_by_key=None):
     best_early_completion_score = 0
     best_similarity = 0
     best_duration = 0
+    most_image_segments = 1
 
     if gt:
         max_gt = 0
@@ -264,6 +338,8 @@ def find_best_path(reaction, candidate_paths, segments_by_key=None):
             best_similarity = scores[2]
         if scores[3] > best_duration:
             best_duration = scores[3]
+        if scores[-1]["image_segments"] > most_image_segments:
+            most_image_segments = scores[-1]["image_segments"]
 
         if gt:
             gtpp = ground_truth_overlap(path, gt)
@@ -283,15 +359,26 @@ def find_best_path(reaction, candidate_paths, segments_by_key=None):
             or best_early_completion_score == scores[1]
             or best_similarity == scores[2]
             or best_duration == scores[3]
+            or most_image_segments == scores[-1]["image_segments"]
         ):  # winnow it down a bit
             total_score = scores[0] / best_score
             completion_score = scores[1] / best_early_completion_score
             similarity_score = scores[2] / best_similarity
             fill_score = scores[3] / best_duration
-            multiplier = scores[-1]
+            image_score = scores[-1]["image_segments"] / most_image_segments
 
             normalized_scores.append(
-                (path, (total_score, completion_score, similarity_score, fill_score, multiplier))
+                (
+                    path,
+                    (
+                        total_score,
+                        completion_score,
+                        similarity_score,
+                        fill_score,
+                        image_score,
+                        scores[-1],
+                    ),
+                )
             )
 
     normalized_scores.sort(key=lambda x: x[1][0], reverse=True)
@@ -304,7 +391,7 @@ def find_best_path(reaction, candidate_paths, segments_by_key=None):
         else:
             gtp = ""
         print(
-            f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]} Mult={scores[-1]} {gtp}"
+            f"\tScore={scores[0]}  EarlyThrough={scores[1]}  Similarity={scores[2]} Duration={scores[3]} Img={scores[4]} Mult={scores[-1]['segment_penalty']} {gtp}"
         )
         print_path(path, reaction, segments_by_key)
 
@@ -495,8 +582,10 @@ def print_path(path, reaction, segments_by_key=None, ignore_score=False):
         "",
         "Base",
         "Reaction",
+        "y-int",
         "mfcc cosine",
         "raw cosine",
+        "image",
         "source",
     ]
 
@@ -517,20 +606,18 @@ def print_path(path, reaction, segments_by_key=None, ignore_score=False):
                 src = "A"
 
         gt_pr = "-"
-        mfcc_mse_score = mfcc_cosine_score = raw_cosine_score = 0
+        mfcc_cosine_score = raw_cosine_score = image_score = 0
 
         if not is_filler:
             if not ignore_score:
-                # mfcc_mse_score = 1000 * get_segment_mfcc_mse_score(reaction, sequence)
                 mfcc_cosine_score = 1000 * get_segment_mfcc_cosine_similarity_score(
                     reaction, sequence
                 )
                 raw_cosine_score = 1000 * get_segment_raw_cosine_similarity_score(
                     reaction, sequence
                 )
+                image_score = 100 * get_image_score_for_segment(reaction, sequence)
 
-                # if math.isnan(mfcc_mse_score):
-                #     mfcc_mse_score = -1
                 if math.isnan(mfcc_cosine_score):
                     mfcc_cosine_score = -1
                 if math.isnan(raw_cosine_score):
@@ -545,11 +632,12 @@ def print_path(path, reaction, segments_by_key=None, ignore_score=False):
         row = [
             "\t\t",
             "x" if is_filler else "",
-            f"{float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}",
-            f"{float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f}",
-            # f"{round(mfcc_mse_score)}",
+            f"{float(current_start)/sr:.3f}-{float(current_end)/sr:.3f}",
+            f"{float(reaction_start)/sr:.3f}-{float(reaction_end)/sr:.3f}",
+            f"{float(reaction_start - current_start)/sr:.3f}",
             f"{round(mfcc_cosine_score)}",
             f"{round(raw_cosine_score)}",
+            f"{round(image_score)}",
             src,
         ]
         if gt:

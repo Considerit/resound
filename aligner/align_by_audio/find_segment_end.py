@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from aligner.scoring_and_similarity import get_chunk_score
+from aligner.scoring_and_similarity import get_segment_score
 from aligner.align_by_audio.find_segment_start import find_segment_starts
 from aligner.align_by_audio.pruning_search import prune_types
 
@@ -43,8 +43,8 @@ def find_correlation_end(
         key = f"{current_start}:{current_end}"
 
         if key not in cache:
-            cache[key] = get_chunk_score(
-                reaction, reaction_start, reaction_end, current_start, current_end
+            cache[key] = get_segment_score(
+                reaction, (reaction_start, reaction_end, current_start, current_end)
             )
 
         chunk_score = cache[key]

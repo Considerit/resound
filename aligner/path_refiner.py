@@ -4,9 +4,7 @@ import numpy as np
 from utilities import conversion_audio_sample_rate as sr
 from utilities import conf
 
-from aligner.scoring_and_similarity import (
-    get_segment_mfcc_cosine_similarity_score,
-)
+from aligner.scoring_and_similarity import get_segment_score
 
 
 def sharpen_path_boundaries(reaction, original_path):
@@ -43,8 +41,8 @@ def sharpen_path_boundaries(reaction, original_path):
                 section1 = (start + b1, end + b1, start, end)
                 section2 = (start + b2, end + b2, start, end)
 
-                s1 = get_segment_mfcc_cosine_similarity_score(reaction, section1)
-                s2 = get_segment_mfcc_cosine_similarity_score(reaction, section2)
+                s1 = get_segment_score(reaction, section1)
+                s2 = get_segment_score(reaction, section2)
                 score1.append(s1)
                 score2.append(s2)
                 time_x.append(start)

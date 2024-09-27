@@ -6,14 +6,14 @@ from scipy.signal import correlate
 import numpy as np
 import matplotlib.pyplot as plt
 
-from aligner.scoring_and_similarity import (
-    get_segment_mfcc_cosine_similarity_score,
-)
+from aligner.scoring_and_similarity import get_segment_score
 
 from aligner.path_finder import prune_cache, near_song_end, near_song_beginning
 
 
-def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links=False):
+def prune_unreachable_segments(
+    reaction, segments, allowed_spacing, allowed_spacing_on_ends, prune_links=False
+):
     segments = [s for s in segments if not s.get("pruned", False)]
 
     starting_segment_num = len(segments)
@@ -27,7 +27,7 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links=
             reaction, segment, segments, allowed_spacing, prune_links=prune_links
         )
 
-        at_end = segment["at_end"] = near_song_end(segment, allowed_spacing)
+        at_end = segment["at_end"] = near_song_end(segment, allowed_spacing_on_ends)
 
         if len(joins) == 0 and not at_end:
             # if prune_links:
@@ -82,7 +82,7 @@ def prune_unreachable_segments(reaction, segments, allowed_spacing, prune_links=
         for segment in segments:
             segment_id = segment["key"]
             if segment_id not in segments_reached and not near_song_beginning(
-                segment, allowed_spacing
+                segment, allowed_spacing_on_ends
             ):
                 segment["pruned"] = True
                 if segment_id in joinable_segments:
@@ -166,9 +166,7 @@ def prune_poor_segments(
         # min_time = 999999999999999999999999999999999
         for s in ck_segments:
             if "mfcc_cosine_score" not in s:
-                s["mfcc_cosine_score"] = get_segment_mfcc_cosine_similarity_score(
-                    reaction, s["end_points"]
-                )
+                s["mfcc_cosine_score"] = get_segment_score(reaction, s["end_points"])
                 s["length"] = s["end_points"][3] - s["end_points"][2]
 
             if max_quality < s["mfcc_cosine_score"]:
@@ -212,9 +210,7 @@ def prune_poor_segments(
                         s["end_points"][2],
                         s["end_points"][3],
                     ]
-                    covering_score = get_segment_mfcc_cosine_similarity_score(
-                        reaction, covering_segment
-                    )
+                    covering_score = get_segment_score(reaction, covering_segment)
                     if covering_score > max_covering_score:
                         max_covering_score = covering_score
 
@@ -250,7 +246,7 @@ def get_link_score(reaction, link, reaction_start, base_start):
     link_segment[2] = max(base_start, link_segment[2])
 
     filler_penalty = 1 - filler / (link_segment[3] - link_segment[2])
-    score_link = filler_penalty * get_segment_mfcc_cosine_similarity_score(reaction, link_segment)
+    score_link = filler_penalty * get_segment_score(reaction, link_segment)
     return score_link
 
 

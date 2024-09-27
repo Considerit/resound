@@ -7,8 +7,8 @@ from prettytable import PrettyTable
 from aligner.visualize_alignment import GENERATE_FULL_ALIGNMENT_VIDEO
 from aligner.scoring_and_similarity import (
     print_path,
-    path_score_by_mfcc_cosine_similarity,
-    get_segment_mfcc_cosine_similarity_score,
+    path_alignment_score,
+    get_segment_score,
 )
 
 from aligner.align_by_audio.pruning_search import is_path_quality_poor
@@ -39,7 +39,13 @@ def initialize_paint_caches():
 
 
 def construct_all_paths(
-    reaction, segments, joinable_segment_map, allowed_spacing, chunk_size, segments_by_key
+    reaction,
+    segments,
+    joinable_segment_map,
+    allowed_spacing,
+    allowed_spacing_on_ends,
+    chunk_size,
+    segments_by_key,
 ):
     paths = []
     song_length = conf.get("song_length")
@@ -66,7 +72,7 @@ def construct_all_paths(
                 ]
             )
 
-        score = path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key)
+        score = path_alignment_score(path, reaction, segments_by_key)
         if (
             best_score_cache["best_overall_path"] is None
             or best_score_cache["best_overall_score"] < score
@@ -99,7 +105,7 @@ def construct_all_paths(
         if c.get("pruned", False):
             continue
 
-        if near_song_beginning(c, allowed_spacing):
+        if near_song_beginning(c, allowed_spacing_on_ends):
             reaction_start, reaction_end, base_start, base_end = c["end_points"]
             start_path = [[reaction_start, reaction_end, base_start, base_end, False, c["key"]]]
             if base_start > 0:
@@ -115,10 +121,10 @@ def construct_all_paths(
                     ],
                 )
 
-            score = path_score_by_mfcc_cosine_similarity(start_path, reaction, segments_by_key)
+            score = path_alignment_score(start_path, reaction, segments_by_key)
             partial_paths.append([[start_path, c], score])
 
-            if near_song_end(c, allowed_spacing):  # in the case of one long completion
+            if near_song_end(c, allowed_spacing_on_ends):  # in the case of one long completion
                 complete_path(start_path)
 
     i = 0
@@ -236,7 +242,7 @@ def construct_all_paths(
 
             for partial in next_partials:
                 path, last_segment = partial
-                if near_song_end(last_segment, allowed_spacing):
+                if near_song_end(last_segment, allowed_spacing_on_ends):
                     complete_path(path)
 
                 should_prune, score = should_prune_path(
@@ -259,7 +265,7 @@ def construct_all_paths(
 def should_prune_path(reaction, path, song_length, segments_by_key, score=None, threshold_base=0.7):
     reaction_end = path[-1][1]
 
-    score = path_score_by_mfcc_cosine_similarity(path, reaction, segments_by_key)
+    score = path_alignment_score(path, reaction, segments_by_key)
 
     # prune based on path length
     path_length = len(path)
@@ -294,7 +300,7 @@ def should_prune_for_location(reaction, path, song_length, score, threshold_base
             # NOTE: I changed this from segment[-1] because I think that was
             #       the original intention (score if not filler), but the
             #       format of segment has since changed.
-            segment_score = get_segment_mfcc_cosine_similarity_score(reaction, segment)
+            segment_score = get_segment_score(reaction, segment)
             if segment_score < segment_quality_threshold:
                 has_bad_segment = True
                 break

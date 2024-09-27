@@ -12,7 +12,6 @@ from tqdm import tqdm  # For the progress bar
 from collections import defaultdict, Counter
 
 
-from sklearn.cluster import DBSCAN
 from sklearn.neighbors import KDTree
 
 from utilities import conversion_audio_sample_rate as sr
@@ -32,10 +31,17 @@ from aligner.segment_pruner import prune_unreachable_segments
 from aligner.segment_refiner import sharpen_segment_intercept
 
 from tabulate import tabulate
+import seaborn
 
 
 def build_image_matches(
-    reaction, fps=2, min_coverage=0.5, similarity_threshold=0.95, lag=0, visualize=False
+    reaction,
+    fps=2,
+    min_coverage=0.5,
+    similarity_threshold=0.95,
+    lag=0,
+    allowed_spacing_on_ends=10,
+    visualize=False,
 ):
     lag = int(lag)
     channel = reaction.get("channel")
@@ -63,33 +69,18 @@ def build_image_matches(
             f"{channel}-{fps}fps-{tuple(crop_coordinates)}-{similarity_threshold}-lag{lag}.json"
         )
 
-    # This doesn't seem to actually improve matters:
-    # reaction_crop_coordinates, music_crop_coordinates = adjust_coordinates_for_offscreen_embed(
-    #     reaction_video_path,
-    #     music_video_path,
-    #     reaction_crop_coordinates=crop_coordinates,
-    #     threshold=0.03,
-    #     visualize=True,
-    # )
-    music_crop_coordinates = None
     reaction_crop_coordinates = crop_coordinates
+    music_hashes_file_name = f"{conf.get('song_key')}-{fps}fps.pckl"
+
+    hashes_file_name = f"{channel}-hashes-{fps}fps-{tuple(reaction_crop_coordinates)}.pckl"
+    hashes_file_path = os.path.join(hash_output_dir, hashes_file_name)
 
     hash_cache_path = os.path.join(hash_output_dir, hash_cache_file_name)
-
-    # if os.path.exists(hash_cache_path):
-    #     return
+    music_hashes_path = os.path.join(hash_output_dir, music_hashes_file_name)
 
     if not os.path.exists(hash_cache_path):
         # Extract frames from both videos
 
-        if music_crop_coordinates is not None:
-            music_hashes_file_name = (
-                f"{conf.get('song_key')}-{fps}fps-{tuple(reaction_crop_coordinates)}.pckl"
-            )
-        else:
-            music_hashes_file_name = f"{conf.get('song_key')}-{fps}fps.pckl"
-
-        music_hashes_path = os.path.join(hash_output_dir, music_hashes_file_name)
         if not os.path.exists(music_hashes_path):
             print("Extracting frames from the music video")
             music_frames = extract_frames(
@@ -103,9 +94,6 @@ def build_image_matches(
                     "dhashes": calculate_phash(music_frames, hash_method="dhash"),
                 },
             )
-
-        hashes_file_name = f"{channel}-hashes-{fps}fps-{tuple(reaction_crop_coordinates)}.pckl"
-        hashes_file_path = os.path.join(hash_output_dir, hashes_file_name)
 
         if not os.path.exists(hashes_file_path):
             print("Extracting frames from the reaction video")
@@ -143,6 +131,13 @@ def build_image_matches(
             {"phash_matches": phash_matches, "dhash_matches": dhash_matches},
         )
 
+    music_hashes = read_object_from_file(music_hashes_path)
+    reaction_hashes = read_object_from_file(hashes_file_path)
+
+    reaction["image_alignment_matrix"] = create_image_based_score_matrix(
+        reaction, music_hashes, reaction_hashes
+    )
+
     hash_matches = read_object_from_file(hash_cache_path)
     for k, v in hash_matches.items():
         hash_matches[k] = {float(key): value for key, value in v.items()}
@@ -171,6 +166,8 @@ def build_image_matches(
 
     if len([m for m in matches if m[3]]) == 0:
         print(f"**** {channel}: Failed to get reliable image alignment (matches=0)")
+
+        del reaction["image_alignment_matrix"]
         return None, None, None
 
     stutters, stutter_assignments = label_stutters(matches, fps=fps)
@@ -185,12 +182,19 @@ def build_image_matches(
 
     # Get the end points (and filter out segments outside those bounds)
     if coverage >= 1.0:
-        segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
+        segments, reaction_start, reaction_end = find_reaction_endpoints(
+            segments, max_dist_from_end=allowed_spacing_on_ends
+        )
 
     normalized_segments = normalize_segment_format_with_audio_segments(segments, fps)
 
     if coverage >= 1:
-        prune_unreachable_segments(reaction, normalized_segments, allowed_spacing=5 * sr)
+        prune_unreachable_segments(
+            reaction,
+            normalized_segments,
+            allowed_spacing=5 * sr,
+            allowed_spacing_on_ends=allowed_spacing_on_ends * sr,
+        )
 
     # Account for A/V lag
     detected_lag = get_lag(reaction, normalized_segments)
@@ -206,13 +210,18 @@ def build_image_matches(
             visualize=visualize,
         )
 
+    if visualize:
+        show_image_based_score_matrix(reaction, filter_to_segments=normalized_segments)
+        show_image_based_score_matrix(reaction)
+
     for segment in normalized_segments:
-        sharpen_segment_intercept(reaction, segment, padding=sr)
+        sharpen_segment_intercept(reaction, segment, padding=sr, use_image_scores=False)
 
     coverage = segment_coverage_of_song(segments, fps=fps)
 
     if coverage < min_coverage:
         print(f"**** {channel}: Failed to get reliable image alignment (coverage={coverage})")
+        del reaction["image_alignment_matrix"]
         return None, None, None
     else:
         print(f"**** {channel}: Segment coverage of image alignment is {coverage}")
@@ -229,6 +238,95 @@ def build_image_matches(
         )
     else:
         return segments_to_pass_along, None, None
+
+
+def create_image_based_score_matrix(reaction, music_hashes, reaction_hashes):
+    music_times = [x[0] for x in music_hashes["phashes"]]
+    reaction_times = [x[0] for x in reaction_hashes["phashes"]]
+
+    scores = {}
+
+    for mt, music_time in enumerate(music_times):
+        music_dhash = music_hashes["dhashes"][mt][1]
+        music_phash = music_hashes["phashes"][mt][1]
+        for rt, reaction_time in enumerate(reaction_times):
+            reaction_dhash = reaction_hashes["dhashes"][rt][1]
+            reaction_phash = reaction_hashes["phashes"][rt][1]
+
+            # Calculate perceptual hash similarity
+            distance = music_phash - reaction_phash
+            psimilarity = 1 - (distance / len(music_phash.hash) ** 2)
+
+            # Calculate difference hash similarity
+            distance = music_dhash - reaction_dhash
+            dsimilarity = 1 - (distance / len(music_dhash.hash) ** 2)
+
+            # Create a key for the current time pair
+            key = str((int(sr * music_time), int(sr * reaction_time)))
+            # Store the average of perceptual and difference similarities
+            scores[key] = ((psimilarity + dsimilarity) / 2, psimilarity, dsimilarity)
+
+    music_times = [int(sr * x[0]) for x in music_hashes["phashes"]]
+    reaction_times = [int(sr * x[0]) for x in reaction_hashes["phashes"]]
+
+    return scores, music_times, reaction_times
+
+
+def show_image_based_score_matrix(reaction, filter_to_segments=None):
+    scores, music_times, reaction_times = reaction["image_alignment_matrix"]
+
+    # Create a 2D matrix for heatmap visualization
+    score_matrix = np.zeros((len(reaction_times), len(music_times)))
+
+    if filter_to_segments is None:
+        for mt, music_time in enumerate(music_times):
+            for rt, reaction_time in enumerate(reaction_times):
+                key = str((music_time, reaction_time))
+                if key in scores:
+                    score_matrix[len(reaction_times) - 1 - rt, mt] = scores[key][
+                        0
+                    ]  # Average similarity score
+                else:
+                    score_matrix[len(reaction_times) - 1 - rt, mt] = np.nan  # No score available
+
+    else:
+        for segment in filter_to_segments:
+            if not segment.get("pruned"):
+                mt = 2 * int(segment["end_points"][2] / sr)
+                rt = 2 * int(segment["end_points"][0] / sr)
+                my_scores = []
+                while mt <= 2 * int(segment["end_points"][3] / sr):
+                    key = str((int(mt / 2 * sr), int(rt / 2 * sr)))
+                    if key in scores:
+                        score_matrix[len(reaction_times) - 1 - rt, mt] = scores[key][0]
+                        my_scores.append(scores[key][0])
+                    else:
+                        print(key, "key not in scores...")
+                    mt += 2
+                    rt += 2
+                print(np.mean(np.array(my_scores)), my_scores)
+
+    # Set up the plot
+    plt.figure(figsize=(12, 8))
+    ax = seaborn.heatmap(
+        score_matrix,
+        cmap="magma",
+        vmin=0,
+        vmax=1,
+        cbar=False,
+        # xticklabels=music_times,
+        # yticklabels=reaction_times,
+        # linewidths=0.5,
+        # linecolor="black",
+        square=False,
+        mask=np.isnan(score_matrix),
+    )
+
+    ax.set_xlabel("Music Time")
+    ax.set_ylabel("Reaction Time")
+    ax.set_title(f"{reaction.get('channel')}: Segment-Specific Scores Heatmap")
+
+    plt.show()
 
 
 # Find average segment adjustments for LOUD parts of the song. Are they consistent?
@@ -257,7 +355,11 @@ def get_lag(reaction, segments, max_lag=2):
             continue
 
         adjusted_intercept, adjusted_end_points = sharpen_segment_intercept(
-            reaction, segment, apply_changes=False, padding=int(2 * max_lag * sr)
+            reaction,
+            segment,
+            apply_changes=False,
+            padding=int(2 * max_lag * sr),
+            use_image_scores=False,
         )
         change = adjusted_intercept - segment.get("y-intercept")
         if change / sr <= max_lag:  # filter outliers
@@ -621,19 +723,20 @@ def find_reaction_endpoints(segments, max_dist_from_end=10):
             end_intercept = y_int
             reaction_end = segment
 
+    ################
     # Fill to start or end if necessary
-    if reaction_start:
-        min_t = reaction_start["min_music_time"]
-        if min_t > 1:
-            reaction_start["backfilled_by"] = min_t
+    # if reaction_start:
+    #     min_t = reaction_start["min_music_time"]
+    #     if min_t > 1:
+    #         reaction_start["backfilled_by"] = min_t
 
-        reaction_start["min_music_time"] = 0
+    #     reaction_start["min_music_time"] = 0
 
-    if reaction_end:
-        max_t = reaction_end["max_music_time"]
-        if song_length - max_t > 1:
-            reaction_end["backfilled_by"] = song_length - max_t
-        reaction_end["max_music_time"] = song_length
+    # if reaction_end:
+    #     max_t = reaction_end["max_music_time"]
+    #     if song_length - max_t > 1:
+    #         reaction_end["backfilled_by"] = song_length - max_t
+    #     reaction_end["max_music_time"] = song_length
 
     # Filter out segments that aren't within the new bounds
     if reaction_start and reaction_end:
