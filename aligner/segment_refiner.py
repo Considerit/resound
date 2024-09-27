@@ -173,7 +173,7 @@ def plot_scores_of_intercepts(intercepts, scores, corr_intercept, base_start, ba
     plt.show()
 
 
-def sharpen_segment_intercept(reaction, segment, padding=None):
+def sharpen_segment_intercept(reaction, segment, padding=None, apply_changes=True):
     ###################################
     # if we have an imprecise segment composed of strokes that weren't exactly aligned,
     # we'll want to find the best line through them
@@ -199,17 +199,21 @@ def sharpen_segment_intercept(reaction, segment, padding=None):
         reaction_end=int_reaction_end,
     )
 
-    base_start = segment["end_points"][2]
-    base_end = segment["end_points"][3]
+    base_start, base_end = segment["end_points"][2:4]
 
-    segment["old_end_points"] = segment["end_points"]
-
-    segment["end_points"] = [
+    new_end_points = [
         intercept + base_start,
         intercept + base_end,
         base_start,
         base_end,
     ]
+
+    if apply_changes:
+        segment["old_end_points"] = segment["end_points"]
+
+        segment["end_points"] = new_end_points
+    else:
+        return intercept, new_end_points
 
 
 def sharpen_segment_endpoints(reaction, segment, step, padding):

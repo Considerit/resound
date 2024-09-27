@@ -22,6 +22,8 @@ from utilities import (
     save_object_to_file,
 )
 
+from silence import get_quiet_parts_of_song
+
 from inventory.inventory import get_reactions_manifest
 from aligner.align_by_image.frame_operations import crop_with_noise
 from aligner.align_by_image.embedded_video_finder import get_bounding_box_of_music_video_in_reaction
@@ -33,8 +35,9 @@ from tabulate import tabulate
 
 
 def build_image_matches(
-    reaction, fps=2, min_coverage=0.5, similarity_threshold=0.95, visualize=False
+    reaction, fps=2, min_coverage=0.5, similarity_threshold=0.95, lag=0, visualize=False
 ):
+    lag = int(lag)
     channel = reaction.get("channel")
 
     music_video_path = conf.get("base_video_path")
@@ -51,9 +54,14 @@ def build_image_matches(
 
     print("Found embedded music video at", crop_coordinates)
 
-    hash_cache_file_name = (
-        f"{channel}-{fps}fps-{tuple(crop_coordinates)}-{similarity_threshold}.json"
-    )
+    if lag == 0:
+        hash_cache_file_name = (
+            f"{channel}-{fps}fps-{tuple(crop_coordinates)}-{similarity_threshold}.json"
+        )
+    else:
+        hash_cache_file_name = (
+            f"{channel}-{fps}fps-{tuple(crop_coordinates)}-{similarity_threshold}-lag{lag}.json"
+        )
 
     # This doesn't seem to actually improve matters:
     # reaction_crop_coordinates, music_crop_coordinates = adjust_coordinates_for_offscreen_embed(
@@ -121,11 +129,13 @@ def build_image_matches(
             music_hashes["phashes"],
             reaction_hashes["phashes"],
             similarity_threshold=similarity_threshold,
+            lag=lag,
         )
         dhash_matches = match_frames(
             music_hashes["dhashes"],
             reaction_hashes["dhashes"],
             similarity_threshold=similarity_threshold,
+            lag=lag,
         )
 
         save_object_to_file(
@@ -177,6 +187,28 @@ def build_image_matches(
     if coverage >= 1.0:
         segments, reaction_start, reaction_end = find_reaction_endpoints(segments)
 
+    normalized_segments = normalize_segment_format_with_audio_segments(segments, fps)
+
+    if coverage >= 1:
+        prune_unreachable_segments(reaction, normalized_segments, allowed_spacing=5 * sr)
+
+    # Account for A/V lag
+    detected_lag = get_lag(reaction, normalized_segments)
+    if detected_lag != 0:
+        print(f"DETECTED {detected_lag / sr}s A/V LAG for {channel}, trying to adjust...")
+        print("\n")
+        return build_image_matches(
+            reaction,
+            fps=fps,
+            min_coverage=min_coverage,
+            similarity_threshold=similarity_threshold,
+            lag=detected_lag + lag,
+            visualize=visualize,
+        )
+
+    for segment in normalized_segments:
+        sharpen_segment_intercept(reaction, segment, padding=sr)
+
     coverage = segment_coverage_of_song(segments, fps=fps)
 
     if coverage < min_coverage:
@@ -184,16 +216,6 @@ def build_image_matches(
         return None, None, None
     else:
         print(f"**** {channel}: Segment coverage of image alignment is {coverage}")
-
-    normalized_segments = normalize_segment_format_with_audio_segments(segments, fps)
-
-    if coverage >= 1:
-        prune_unreachable_segments(reaction, normalized_segments, allowed_spacing=5 * sr)
-
-    for segment in normalized_segments:
-        sharpen_segment_intercept(reaction, segment, padding=sr)
-
-    coverage = segment_coverage_of_song(segments, fps=fps)
 
     plot_matches(reaction, segments, matches, normalized_segments, visualize=visualize)
 
@@ -209,6 +231,56 @@ def build_image_matches(
         return segments_to_pass_along, None, None
 
 
+# Find average segment adjustments for LOUD parts of the song. Are they consistent?
+# If so, we can say that the avg represents A/V lag, and adjust all segments by the
+# same amount.
+def get_lag(reaction, segments, max_lag=2):
+    quiet_parts = get_quiet_parts_of_song()
+
+    changes = []
+    for segment in segments:
+        current_start, current_end = segment.get("end_points")[2:4]
+
+        if (current_end - current_start) / sr < 10:
+            continue
+
+        total_in_quiet = 0
+
+        for qs, qe in quiet_parts:
+            qs *= sr
+            qe *= sr
+
+            if max(current_start, qs) <= min(current_end, qe):
+                total_in_quiet += min(current_end, qe) - max(current_start, qs)
+
+        if total_in_quiet / (current_end - current_start) > 0.3:
+            continue
+
+        adjusted_intercept, adjusted_end_points = sharpen_segment_intercept(
+            reaction, segment, apply_changes=False, padding=int(2 * max_lag * sr)
+        )
+        change = adjusted_intercept - segment.get("y-intercept")
+        if change / sr <= max_lag:  # filter outliers
+            changes.append(change)
+
+    if len(changes) == 0:
+        print("DETECT LAG: Could not find any suitable segments")
+        return 0
+
+    changes = np.array(changes)
+    median = np.median(changes)
+    min_change = np.min(changes)
+    max_change = np.max(changes)
+
+    if abs(median / sr) > 0.1 and min_change * max_change > 0:
+        lag = median
+    else:
+        lag = 0
+
+    # print("lags", lag / sr, [ch / sr for ch in changes])
+    return lag
+
+
 def normalize_segment_format_with_audio_segments(segments, fps):
     normalized_segments = []
     chunk_size = 1 / fps
@@ -220,6 +292,7 @@ def normalize_segment_format_with_audio_segments(segments, fps):
         reaction_end = reaction_start + (music_end - music_start)
 
         normie = {
+            "y-intercept": int(sr * segment.get("y-intercept")),
             "end_points": [
                 int(sr * reaction_start),
                 int(sr * reaction_end),
@@ -259,7 +332,7 @@ def label_stutters(matches, fps, visualize=False):
 
     matrix = create_stutter_matrix(matches, x_min, x_max, y_min, y_max, spacing)
 
-    print("Detecting stutters")
+    # print("Detecting stutters")
     stutters = detect_stutters(matrix)
 
     stutter_assignments = assign_stutters(matches, stutters, spacing, x_min, y_min)
@@ -575,7 +648,7 @@ def find_reaction_endpoints(segments, max_dist_from_end=10):
 
 
 def match_frames(
-    music_hashes, reaction_hashes, similarity_threshold=0.95, at_most_x_per_reaction_time=5
+    music_hashes, reaction_hashes, lag=0, similarity_threshold=0.95, at_most_x_per_reaction_time=5
 ):
     """
     Match frames between the music video and the reaction video based on perceptual hashes.
@@ -592,13 +665,14 @@ def match_frames(
     for music_time, music_hash in music_hashes:
         similarities = []
         for reaction_time, reaction_hash in reaction_hashes:
+            delagged_reaction_time = reaction_time + lag / sr
             # Compute similarity as inverse of Hamming distance
             distance = music_hash - reaction_hash
             similarity = 1 - (distance / len(music_hash.hash) ** 2)
 
-            similarities.append((reaction_time, similarity))
+            similarities.append((delagged_reaction_time, similarity))
 
-            similarity_by_reaction_time[reaction_time].append((music_time, similarity))
+            similarity_by_reaction_time[delagged_reaction_time].append((music_time, similarity))
 
         all_similarities[music_time] = similarities
 
@@ -733,6 +807,7 @@ def create_segments_from_matches(
     min_length=3,
     max_stuttered=0.8,
     min_coverage=0.2,
+    tabulate=False,
 ):
     """
     Cluster matches into segments based on the y-intercept with a time constraint.
@@ -884,34 +959,35 @@ def create_segments_from_matches(
 
     evaluations.sort(key=lambda x: x[1])
 
-    table_data = []
-    headers = [
-        "Status",
-        "Y-Intercept",
-        "Music Time",
-        "Quality Score",
-        "Length",
-        "% Stuttered",
-        "% Coverage",
-    ]
-
-    for s, quality_score, coverage, length, stuttered in evaluations:
-        row = [
-            "KEPT"
-            if quality_score >= 1.5
-            and coverage >= min_coverage
-            and length >= min_length
-            and stuttered <= max_stuttered
-            else "FILTERED",
-            s["y-intercept"],
-            f"{s['min_music_time']}-{s['max_music_time']}",
-            f"{quality_score:.2f}",
-            f"{length:.2f}",
-            f"{stuttered:.2%}",
-            f"{coverage:.2%}",
+    if tabulate:
+        table_data = []
+        headers = [
+            "Status",
+            "Y-Intercept",
+            "Music Time",
+            "Quality Score",
+            "Length",
+            "% Stuttered",
+            "% Coverage",
         ]
-        table_data.append(row)
-    print(tabulate(table_data, headers=headers, tablefmt="grid"))
+
+        for s, quality_score, coverage, length, stuttered in evaluations:
+            row = [
+                "KEPT"
+                if quality_score >= 1.5
+                and coverage >= min_coverage
+                and length >= min_length
+                and stuttered <= max_stuttered
+                else "FILTERED",
+                s["y-intercept"],
+                f"{s['min_music_time']}-{s['max_music_time']}",
+                f"{quality_score:.2f}",
+                f"{length:.2f}",
+                f"{stuttered:.2%}",
+                f"{coverage:.2%}",
+            ]
+            table_data.append(row)
+        print(tabulate(table_data, headers=headers, tablefmt="grid"))
 
     for s, quality_score, coverage, length, stuttered in evaluations:
         if (
@@ -1049,24 +1125,24 @@ def plot_matches(reaction, segments, matches, normalized_segments, visualize=Fal
                 x_values[0] + segment["y-intercept"],
                 x_values[1] + segment["y-intercept"],
             ]
-            print(
-                "Segment:",
-                segment["y-intercept"],
-                segment["min_music_time"],
-                segment["max_music_time"],
-            )
+            # print(
+            #     "Segment:",
+            #     segment["y-intercept"],
+            #     segment["min_music_time"],
+            #     segment["max_music_time"],
+            # )
             plt.plot(x_values, y_values, linestyle="-", lw=1, color="red")
 
     for segment in normalized_segments:
         if not segment.get("pruned", False):
             x_values = [segment["end_points"][2] / sr, segment["end_points"][3] / sr]
             y_values = [segment["end_points"][0] / sr, segment["end_points"][1] / sr]
-            print(
-                "NORMALIZED Segment:",
-                (segment["end_points"][0] - segment["end_points"][2]) / sr,
-                segment["end_points"][1] / sr,
-                segment["end_points"][2] / sr,
-            )
+            # print(
+            #     "NORMALIZED Segment:",
+            #     (segment["end_points"][0] - segment["end_points"][2]) / sr,
+            #     segment["end_points"][1] / sr,
+            #     segment["end_points"][2] / sr,
+            # )
             plt.plot(x_values, y_values, linestyle="-", lw=1, color="green")
 
     plt.gca().spines["top"].set_visible(False)
