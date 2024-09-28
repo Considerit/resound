@@ -21,6 +21,8 @@ from utilities import (
     save_object_to_file,
 )
 
+from utilities.utilities import check_and_fix_fps
+
 from silence import get_quiet_parts_of_song
 
 from inventory.inventory import get_reactions_manifest
@@ -48,6 +50,8 @@ def build_image_matches(
 
     music_video_path = conf.get("base_video_path")
     reaction_video_path = reaction.get("video_path")
+
+    check_and_fix_fps(reaction_video_path)
 
     hash_output_dir = os.path.join(conf.get("temp_directory"), "image_hashes")
     if not os.path.exists(hash_output_dir):
@@ -211,8 +215,8 @@ def build_image_matches(
         )
 
     if visualize:
-        show_image_based_score_matrix(reaction, filter_to_segments=normalized_segments)
         show_image_based_score_matrix(reaction)
+        show_image_based_score_matrix(reaction, filter_to_segments=normalized_segments)
 
     for segment in normalized_segments:
         sharpen_segment_intercept(reaction, segment, padding=sr, use_image_scores=False)
@@ -277,6 +281,9 @@ def show_image_based_score_matrix(reaction, filter_to_segments=None):
 
     # Create a 2D matrix for heatmap visualization
     score_matrix = np.zeros((len(reaction_times), len(music_times)))
+
+    sample_rate_mt = music_times[1] - music_times[0]
+    sample_rate_rt = reaction_times[1] - reaction_times[0]
 
     if filter_to_segments is None:
         for mt, music_time in enumerate(music_times):

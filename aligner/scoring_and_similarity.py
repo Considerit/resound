@@ -80,29 +80,11 @@ def path_score(path, reaction, segments_by_key, end=None, start=0):
             full_segment = segments_by_key[key]
             if full_segment.get("source") == "image-alignment":
                 img_segs += 1
-                seg_key = str((current_start, current_end))
-                if "during_quiet" not in full_segment:
-                    full_segment["during_quiet"] = {}
-
-                if seg_key not in full_segment["during_quiet"]:
-                    quiet_time = 0
-
-                    for qs, qe in quiet_parts:
-                        qs *= sr
-                        qe *= sr
-
-                        if max(current_start, qs) <= min(current_end, qe):
-                            overlap = min(current_end, qe) - max(current_start, qs)
-                            quiet_time += overlap
-
-                    full_segment["during_quiet"][seg_key] = quiet_time / sr
-
-                quiet_time = full_segment["during_quiet"][seg_key]
-
+                quiet_time = quiet_time_during_segment(segment, segments_by_key)
                 time_guided_by_image_alignment_during_quiet_parts += quiet_time
 
     if time_guided_by_image_alignment_during_quiet_parts > 0:
-        segment_penalty *= 1 + 0.001 * time_guided_by_image_alignment_during_quiet_parts
+        segment_penalty *= 1 + 0.01 * time_guided_by_image_alignment_during_quiet_parts
 
         # print(
         #     f"\tYO! Time guided by image alignment = {time_guided_by_image_alignment_during_quiet_parts}s giving bonus of {1 + 0.001 * time_guided_by_image_alignment_during_quiet_parts}x"
@@ -166,6 +148,33 @@ def path_score(path, reaction, segments_by_key, end=None, start=0):
     return path_score_cache[key]
 
 
+def quiet_time_during_segment(sequence, segments_by_key):
+    (reaction_start, reaction_end, current_start, current_end, __, key) = sequence[:6]
+    full_segment = segments_by_key[key]
+
+    quiet_parts = get_quiet_parts_of_song()
+
+    seg_key = str((current_start, current_end))
+    if "during_quiet" not in full_segment:
+        full_segment["during_quiet"] = {}
+
+    if seg_key not in full_segment["during_quiet"]:
+        quiet_time = 0
+
+        for qs, qe in quiet_parts:
+            qs *= sr
+            qe *= sr
+
+            if max(current_start, qs) <= min(current_end, qe):
+                overlap = min(current_end, qe) - max(current_start, qs)
+                quiet_time += overlap
+
+        full_segment["during_quiet"][seg_key] = quiet_time / sr
+
+    quiet_time = full_segment["during_quiet"][seg_key]
+    return quiet_time
+
+
 def path_alignment_score(path, reaction, segments_by_key):
     alignment_score = 0
 
@@ -180,7 +189,12 @@ def path_alignment_score(path, reaction, segments_by_key):
             duration_factor = (sequence[1] - sequence[0]) / total_duration
             image_score = get_image_score_for_segment(reaction, sequence)
 
-            alignment_score += mfcc_score * mfcc_score * image_score * duration_factor
+            quiet_time = quiet_time_during_segment(sequence, segments_by_key)
+            quiet_perc = math.sqrt(quiet_time / (sequence[1] - sequence[0]))
+
+            loudness_score = (1 - quiet_perc) * mfcc_score + quiet_perc * image_score
+
+            alignment_score += loudness_score * mfcc_score * image_score * duration_factor
 
     return alignment_score
 
@@ -258,22 +272,28 @@ def get_image_score_for_segment(reaction, segment):
     else:
         rt, re, mt, me = segment[:4]
 
-    sample_rate = music_times[1] - music_times[0]
+    sample_rate_mt = music_times[1] - music_times[0]
+    sample_rate_rt = reaction_times[1] - reaction_times[0]
+
     initial_mt = music_times[0]
     initial_rt = reaction_times[0]
 
     # Calculate mt_adjustment and rt_adjustment to find the nearest sampled points
-    mt_adjustment = round((mt - initial_mt) / sample_rate) * sample_rate - (mt - initial_mt)
-    rt_adjustment = round((rt - initial_rt) / sample_rate) * sample_rate - (rt - initial_rt)
+
+    mt_adjustment = (mt - initial_mt) % sample_rate_mt
+    if mt_adjustment > 0:
+        mt_adjustment = sample_rate_mt - mt_adjustment
+
+    rt_adjustment = (rt - initial_rt) % sample_rate_rt
+    if rt_adjustment > 0:
+        rt_adjustment = sample_rate_rt - rt_adjustment
+
+    assert sample_rate_rt > rt_adjustment >= 0 and sample_rate_mt > mt_adjustment >= 0
 
     mt += mt_adjustment
     rt += rt_adjustment
 
-    # key = str((mt, rt))
-    # assert key in image_scores
-
-    # key = str((mt + sample_rate, rt + sample_rate))
-    # assert key in image_scores
+    assert (mt - initial_mt) % sample_rate_mt == 0 and (rt - initial_rt) % sample_rate_rt == 0
 
     my_scores = []
 
@@ -285,11 +305,27 @@ def get_image_score_for_segment(reaction, segment):
             present += 1
         else:
             not_in += 1
-        mt += sample_rate
-        rt += sample_rate
+        mt += sample_rate_mt
+        rt += sample_rate_rt
 
     if not_in > 0:
-        print(f"\tFound {present} of {not_in + present} pairs")
+        if type(segment) == dict:
+            rt, re, mt, me = segment["end_points"][:4]
+        else:
+            rt, re, mt, me = segment[:4]
+
+        print(
+            f"\tFound {present} of {not_in + present} pairs. Sample rate={sample_rate_mt} / {sample_rate_rt}",
+            mt_adjustment,
+            rt_adjustment,
+            initial_mt,
+            initial_rt,
+            rt,
+            mt,
+        )
+
+    if len(my_scores) == 0:
+        return 1
 
     mean = np.mean(np.array(my_scores))
     return mean
