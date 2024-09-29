@@ -184,8 +184,6 @@ def make_conf(song_def, options, temp_directory):
             channel, __ = os.path.splitext(os.path.basename(reaction_video_path))
 
             target_score = song_def.get("target_scores", {}).get(channel, None)
-            if conf.get("alignment_test", False) and target_score is None:
-                continue
 
             if len(constrain_to) > 0 and channel not in constrain_to:
                 continue
@@ -483,11 +481,11 @@ def get_normalization_factor(reaction):
 to_delete = ["aligned_reaction_data", "mixed_audio"]
 for source in ["_", "_vocals", "_accompaniment"]:
     for metric in [
-        "_data",
-        "_mfcc",
-        "_pitch_contour",
-        "_spectral_flux",
-        "_root_mean_square_energy",
+        "data",
+        "mfcc",
+        "pitch_contour",
+        "spectral_flux",
+        "root_mean_square_energy",
     ]:  # _continuous_wavelet_transform
         to_delete.append(f"reaction_audio{source}{metric}")
 
