@@ -194,10 +194,9 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
     text_clips = create_channel_labels_video(active_segments, cell_size, output_size)
     clips += text_clips
 
-    print("\tComposing clips")
-    final_clip = compose_video_clips(
-        base_video, clips, clip_length, extend_by, output_size
-    )
+    print(f"\tComposing {len(clips)} clips")
+
+    final_clip = compose_video_clips(base_video, clips, clip_length, extend_by, output_size)
 
     # final_clip = animateZoomPans(final_clip, show_viewport=False) #.set_duration(10)
     # final_clip.preview()
@@ -216,7 +215,7 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
     for idx, tile in enumerate(tiles):
         # tile = tile.set_duration(3)
 
-        print(f"\tWriting Tile {idx} of {len(tiles)}")
+        print(f"\tWriting Tile {idx+1} of {len(tiles)}")
         if idx == 0:
             tile_path = output_path
         else:
@@ -342,9 +341,7 @@ def create_tiles(composite_clip, output_size, zoom_level=1):
             # Create a tile CompositeVideoClip with visible clips
             if len(visible_clips) > 0:  # and i == j == 1:
                 tile_clip = (
-                    CompositeVideoClip(
-                        visible_clips, size=(int(tile_width), int(tile_height))
-                    )
+                    CompositeVideoClip(visible_clips, size=(int(tile_width), int(tile_height)))
                     .resize(zoom_level)
                     .without_audio()
                 )
@@ -365,9 +362,7 @@ def get_video_background(output_size, clip_length):
 
             if video_background.duration < clip_length:
                 if not reversing_bg:
-                    loops_required = int(
-                        np.ceil(clip_length / video_background.duration)
-                    )
+                    loops_required = int(np.ceil(clip_length / video_background.duration))
                     video_clips = [video_background] * loops_required
 
                 else:
@@ -377,9 +372,7 @@ def get_video_background(output_size, clip_length):
                         reversed_frames = frames[::-1]
                         return ImageSequenceClip(reversed_frames, fps=clip.fps)
 
-                    loops_required = int(
-                        np.ceil(clip_length / (2 * video_background.duration))
-                    )
+                    loops_required = int(np.ceil(clip_length / (2 * video_background.duration)))
 
                     video_clips = []
                     reversed_clip = None
@@ -393,9 +386,7 @@ def get_video_background(output_size, clip_length):
         else:
             video_background = ImageClip(video_background_path)
 
-        video_background = video_background.resize(output_size).set_duration(
-            clip_length
-        )
+        video_background = video_background.resize(output_size).set_duration(clip_length)
     return video_background
 
 
@@ -442,14 +433,10 @@ def compose_audio_clips(audio_clips):
 
         # sf.write(os.path.join( conf.get('temp_directory'),  f"MAIN-full-mixed-directly-{i}.wav"   ), track_padded, sr)
 
-    audio_output = os.path.join(
-        conf.get("temp_directory"), f"MAIN-full-mixed-directly.wav"
-    )
+    audio_output = os.path.join(conf.get("temp_directory"), f"MAIN-full-mixed-directly.wav")
     sf.write(audio_output, mixed_track, sr)
 
-    audio_output = os.path.join(
-        conf.get("temp_directory"), "MAIN-full-mixed-directly.flac"
-    )
+    audio_output = os.path.join(conf.get("temp_directory"), "MAIN-full-mixed-directly.flac")
     sf.write(audio_output, mixed_track, sr, format="FLAC")
 
     print(f"\t\t\tMIXED {len(audio_clips)} audio clips together!")
@@ -482,9 +469,7 @@ def find_active_segments(audible_segments, duration_threshold=1.5):
 from moviepy.editor import ImageSequenceClip
 
 
-def create_progress_bar_clip(
-    duration, width, height, start_time, bar_color=(0, 255, 0)
-):
+def create_progress_bar_clip(duration, width, height, start_time, bar_color=(0, 255, 0)):
     """Creates a progress bar clip using a lazy frame generation method."""
 
     def make_frame(t):
@@ -535,9 +520,7 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
         if (
             y >= output_size[1] + cell_size + text_height + progress_bar_height + 4 + 4
         ):  # Bottom row
-            y = (
-                y - text_height // 2 - progress_bar_height - 4 - 4
-            )  # Place above the channel
+            y = y - text_height // 2 - progress_bar_height - 4 - 4  # Place above the channel
         else:
             y += (
                 cell_size + text_height // 2 - progress_bar_height - 4 - 4
@@ -554,19 +537,13 @@ def create_channel_labels_video(active_segments, cell_size, output_size):
         # channel_textclips.append(comp_clip)
 
         shadow_clip = (
-            shadow_clip.set_position((x + 2, y + 2))
-            .set_duration(duration)
-            .set_start(start / sr)
+            shadow_clip.set_position((x + 2, y + 2)).set_duration(duration).set_start(start / sr)
         )
         shadow_clip2 = (
-            shadow_clip2.set_position((x - 1, y - 1))
-            .set_duration(duration)
-            .set_start(start / sr)
+            shadow_clip2.set_position((x - 1, y - 1)).set_duration(duration).set_start(start / sr)
         )
 
-        txt_clip = (
-            txt_clip.set_position((x, y)).set_duration(duration).set_start(start / sr)
-        )
+        txt_clip = txt_clip.set_position((x, y)).set_duration(duration).set_start(start / sr)
 
         channel_textclips.append(shadow_clip2)
         channel_textclips.append(shadow_clip)
@@ -603,9 +580,7 @@ def create_video_clips(
     #####################
     # Create video clips
 
-    base_video, video_background = incorporate_asides_video(
-        base_video, video_background
-    )
+    base_video, video_background = incorporate_asides_video(base_video, video_background)
 
     all_clips = []
 
@@ -685,9 +660,7 @@ downsample_factor = 100
 def create_audio_clips(base_video, output_size):
     base_audio_clip, audible_segments = mix_audio(base_video, output_size)
 
-    base_audio_clip = incorporate_asides_audio(
-        base_video, base_audio_clip, audible_segments
-    )
+    base_audio_clip = incorporate_asides_audio(base_video, base_audio_clip, audible_segments)
 
     all_clips = []
 
@@ -737,9 +710,7 @@ def create_mask_shape(shape, width, height, border_thickness):
                 (cx - size / 2, cy),
             ]  # Left
 
-        vertices_large = calc_diamond_vertices(
-            width / 2, height / 2, min(width, height)
-        )
+        vertices_large = calc_diamond_vertices(width / 2, height / 2, min(width, height))
         vertices_small = calc_diamond_vertices(
             width / 2, height / 2, min(width, height) - border_thickness
         )
@@ -769,9 +740,7 @@ def create_mask_shape(shape, width, height, border_thickness):
             return vertices
 
         vertices_large = calc_hexagon_vertices(width / 2, height / 2, width)
-        vertices_small = calc_hexagon_vertices(
-            width / 2, height / 2, width - border_thickness
-        )
+        vertices_small = calc_hexagon_vertices(width / 2, height / 2, width - border_thickness)
 
         # Draw the larger and smaller hexagons on the mask images
         draw_large.polygon(vertices_large, fill=1)
@@ -948,9 +917,7 @@ def create_border_clip(
     if clips:
         border_clip = clips
     else:
-        border_clip = (
-            []
-        )  # Or an empty clip with duration set to the original video duration
+        border_clip = []  # Or an empty clip with duration set to the original video duration
 
     # print("BORDER CLIP COUNT", len(clips))
     return border_clip
@@ -971,9 +938,7 @@ def create_masked_video(
 ):
     audible_segments = audible_segments.copy()
 
-    mask_img_large, mask_img_small = create_mask_shape(
-        shape, width, height, border_thickness
-    )
+    mask_img_large, mask_img_small = create_mask_shape(shape, width, height, border_thickness)
 
     # print(f"MAKING MASKED VIDEO FOR {channel}")
     clips = create_border_clip(
