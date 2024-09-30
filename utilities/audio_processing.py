@@ -26,9 +26,7 @@ def apply_compression(audio_data, threshold_db=-30.0, ratio=2.0):
     )
 
     # Convert back to amplitude
-    compressed_audio_data = librosa.db_to_amplitude(compressed_audio_db) * np.sign(
-        audio_data
-    )
+    compressed_audio_data = librosa.db_to_amplitude(compressed_audio_db) * np.sign(audio_data)
 
     return compressed_audio_data
 
@@ -73,9 +71,7 @@ def find_normalization_factor(song_data, reaction_data, ref_tuple, search_window
         search_window = int(sr / 2)
 
     # Find the best alignment
-    song_sr, reaction_sr = find_best_alignment(
-        song_data, reaction_data, ref_tuple, search_window
-    )
+    song_sr, reaction_sr = find_best_alignment(song_data, reaction_data, ref_tuple, search_window)
 
     # Ensure the segments do not exceed the bounds of the data
     song_start = max(0, song_sr - search_window)
@@ -162,8 +158,7 @@ def best_matching_segment(
         song_mfcc_segment,
         reaction_mfcc[
             :,
-            potential_match_start_mfcc : potential_match_start_mfcc
-            + song_mfcc_segment.shape[1],
+            potential_match_start_mfcc : potential_match_start_mfcc + song_mfcc_segment.shape[1],
         ],
     )
 
@@ -189,7 +184,7 @@ def find_matches_for_loudest_parts_of_song(
     from utilities import conf
 
     match_file = os.path.join(
-        conf.get("temp_directory"), f"{reaction.get('channel')}-loudest_matches.json"
+        conf.get("reaction_directory"), f"{reaction.get('channel')}-loudest_matches.json"
     )
 
     modified = False
@@ -200,8 +195,7 @@ def find_matches_for_loudest_parts_of_song(
     if f"{segment_length}" not in cached:
         cached[f"{segment_length}"] = {
             "top_song_indices": [
-                int(s)
-                for s in get_highest_amplitude_segments(song_audio, segment_length)
+                int(s) for s in get_highest_amplitude_segments(song_audio, segment_length)
             ],
             "matches": {},
         }
@@ -225,18 +219,12 @@ def find_matches_for_loudest_parts_of_song(
             song_segment = song_audio[song_time : song_time + window_length]
             song_mfcc_segment = song_mfcc[
                 :,
-                int(song_time / hop_length) : int(
-                    (song_time + window_length) / hop_length
-                ),
+                int(song_time / hop_length) : int((song_time + window_length) / hop_length),
             ]
 
             try:
-                reaction_start = max(
-                    song_time, reaction.get("start_reaction_search_at", 0)
-                )
-                reaction_end = reaction.get(
-                    "end_reaction_search_at", len(reaction_audio)
-                )
+                reaction_start = max(song_time, reaction.get("start_reaction_search_at", 0))
+                reaction_end = reaction.get("end_reaction_search_at", len(reaction_audio))
                 reaction_audio_segment = reaction_audio[reaction_start:reaction_end]
                 reaction_mfcc_segment = reaction_mfcc[
                     :, int(reaction_start / hop_length) : int(reaction_end / hop_length)
@@ -430,9 +418,7 @@ def normalize_waveform(waveform, reference_waveform):
     return waveform * scale_factor
 
 
-def get_normalized_waveform(
-    reaction_signal, song_signal=None, window_size=4410, hop_size=2205
-):
+def get_normalized_waveform(reaction_signal, song_signal=None, window_size=4410, hop_size=2205):
     """
     Get the normalized waveform of a reaction signal based on a song signal.
     If no song signal is provided, returns the unnormalized waveform of the reaction signal.
@@ -467,9 +453,7 @@ def pitch_contour(y, sr, fmin=50, fmax=4000, hop_length=512):
     """
 
     # Compute pitch using Yin algorithm
-    pitches, _ = librosa.piptrack(
-        y=y, sr=sr, fmin=fmin, fmax=fmax, hop_length=hop_length
-    )
+    pitches, _ = librosa.piptrack(y=y, sr=sr, fmin=fmin, fmax=fmax, hop_length=hop_length)
 
     # Extract the maximum pitch for each frame
     pitch_values = []
@@ -559,9 +543,7 @@ def convert_to_mono(soundfile_audio):
     elif soundfile_audio.shape[1] > 1:
         return np.mean(soundfile_audio, axis=1)  # Convert stereo to mono
     else:
-        return (
-            soundfile_audio  # It's mono with a shape like (n, 1), just return it as-is
-        )
+        return soundfile_audio  # It's mono with a shape like (n, 1), just return it as-is
 
 
 def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=None):
@@ -579,9 +561,7 @@ def calculate_perceptual_loudness(audio, frame_length=2048, hop_length=None):
     )
 
     # Interpolate the rms to match the length of audio
-    rms_interp = np.interp(
-        np.arange(len(audio)), np.arange(0, len(audio), hop_length), rms
-    )
+    rms_interp = np.interp(np.arange(len(audio)), np.arange(0, len(audio), hop_length), rms)
 
     return rms_interp
 
@@ -613,9 +593,7 @@ def calculate_percentile_loudness(loudness, window_size=1000, std_dev=None):
     window /= window.sum()
 
     # Convolve audio with window using fftconvolve
-    percent_of_max_loudness = signal.fftconvolve(
-        percent_of_max_loudness, window, mode="same"
-    )
+    percent_of_max_loudness = signal.fftconvolve(percent_of_max_loudness, window, mode="same")
 
     return percent_of_max_loudness
 
@@ -627,9 +605,7 @@ def audio_percentile_loudness(
     std_dev_percentile=None,
     hop_length=1,
 ):
-    loudness = calculate_loudness(
-        audio, window_size=loudness_window_size, hop_length=hop_length
-    )
+    loudness = calculate_loudness(audio, window_size=loudness_window_size, hop_length=hop_length)
 
     percentile_loudness = calculate_percentile_loudness(
         loudness, window_size=percentile_window_size, std_dev=std_dev_percentile
@@ -710,9 +686,7 @@ def match_audio(reaction_audio, song_audio):
 
     segment_length = 10 * sr
 
-    reaction_audio = adaptive_normalize_volume(
-        song_audio, reaction_audio, segment_length
-    )
+    reaction_audio = adaptive_normalize_volume(song_audio, reaction_audio, segment_length)
 
     # reaction_audio = adaptive_pitch_matching(song_audio, reaction_audio, segment_length)
 
@@ -746,9 +720,7 @@ def adaptive_normalize_volume(song, reaction, segment_length):
 
     # Reshape the song and reaction into a 2D array of segments
     song_segments = song[: num_segments * segment_length].reshape(-1, segment_length)
-    reaction_segments = reaction[: num_segments * segment_length].reshape(
-        -1, segment_length
-    )
+    reaction_segments = reaction[: num_segments * segment_length].reshape(-1, segment_length)
 
     # Calculate the RMS volume of each segment
     song_volumes = np.sqrt(np.mean(song_segments**2, axis=1))
@@ -771,9 +743,7 @@ def adaptive_normalize_volume(song, reaction, segment_length):
 
     # If the original reaction was longer than num_segments*segment_length, append the leftover samples without scaling
     if len(reaction) > len(normalized_reaction):
-        normalized_reaction = np.append(
-            normalized_reaction, reaction[len(normalized_reaction) :]
-        )
+        normalized_reaction = np.append(normalized_reaction, reaction[len(normalized_reaction) :])
 
     return normalized_reaction
 
@@ -789,9 +759,7 @@ def adaptive_pitch_matching(song, reaction, segment_length):
 
     # Reshape the song and reaction into a 2D array of segments
     song_segments = song[: num_segments * segment_length].reshape(-1, segment_length)
-    reaction_segments = reaction[: num_segments * segment_length].reshape(
-        -1, segment_length
-    )
+    reaction_segments = reaction[: num_segments * segment_length].reshape(-1, segment_length)
 
     # For each segment
     for i in range(num_segments):
@@ -865,3 +833,26 @@ def spectral_subtraction_with_stft(audio1, audio2, n_fft=2048, hop_length=512):
     audio_diff = librosa.istft(stft_diff, hop_length=hop_length)
 
     return audio_diff
+
+
+def determine_dominance(vocal_data, accompaniment_data):
+    """
+    Determines if a segment is vocal-dominated or accompaniment-dominated.
+
+    Parameters:
+    - vocal_data: Array representing the audio data of the vocal segment.
+    - accompaniment_data: Array representing the audio data of the accompaniment segment.
+
+    Returns:
+    - "vocal" if the segment is vocal-dominated, "accompaniment" otherwise.
+    """
+
+    # Calculate the energy (or RMS value) for each segment
+    vocal_energy = np.sqrt(np.mean(np.square(vocal_data)))
+    accompaniment_energy = np.sqrt(np.mean(np.square(accompaniment_data)))
+
+    # Determine dominance
+    if vocal_energy > 0.1 * accompaniment_energy:
+        return "vocal"
+    else:
+        return "accompaniment"
