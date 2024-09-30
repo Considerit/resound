@@ -35,6 +35,8 @@ from utilities import (
     conf,
     conversion_frame_rate,
     conversion_audio_sample_rate as sr,
+    save_object_to_file,
+    read_object_from_file,
 )
 
 from compositor.layout import create_layout_for_composition, set_reactor_positions
@@ -148,10 +150,16 @@ def create_reaction_concert(extend_by=0, output_size=(3840, 2160), shape="hexago
 
     ###########################
     # Create final audio track
-    audio_clips, audible_segments = create_audio_clips(base_video, output_size)
-    audio_output = compose_audio_clips(audio_clips)
-    audio_clips = []
-    gc.collect()
+    audio_output = os.path.join(conf.get("temp_directory"), "MAIN-full-mixed-directly.flac")
+    audible_segments_file = os.path.join(conf.get("temp_directory"), "audible_segments.pckl")
+    if True or not os.path.exists(audio_output) or not os.path.exists(audible_segments_file):
+        audio_clips, audible_segments = create_audio_clips(base_video, output_size)
+        save_object_to_file(audible_segments_file, audible_segments)
+        audio_output = compose_audio_clips(audio_clips, force=False)
+        audio_clips = []
+        gc.collect()
+    else:
+        audible_segments = read_object_from_file(audible_segments_file)
     ###########################
 
     active_segments = find_active_segments(audible_segments)
@@ -272,7 +280,7 @@ def create_tiles(composite_clip, output_size, zoom_level=1):
     #     return [composite_clip]
 
     # Calculate the number of tiles
-    tiles_count = 2**zoom_level
+    tiles_count = 2 ** (zoom_level - 1)
     tile_width = output_size[0] / zoom_level
     tile_height = output_size[1] / zoom_level
 
@@ -411,35 +419,36 @@ def merge_audio_and_video(output_path, audio_output):
     subprocess.run(command)
 
 
-def compose_audio_clips(audio_clips):
-    # Determine the maximum length among all audio clips
-    max_len = max([track.shape[0] for track in audio_clips])
-
-    # Check if the audio clips are stereo (2 channels)
-    if any(track.shape[1] != 2 for track in audio_clips if len(track.shape) > 1):
-        raise ValueError("All tracks must be stereo (2 channels)")
-
-    # Initialize the mixed_track with zeros
-    mixed_track = np.zeros((max_len, 2), dtype=np.float64)
-
-    for i, track in enumerate(audio_clips):
-        # Pad the track if it's shorter than the longest one
-        pad_length = max_len - track.shape[0]
-
-        track_padded = np.pad(track, ((0, pad_length), (0, 0)), "constant")
-
-        # Mix the tracks (simple averaging)
-        mixed_track += track_padded
-
-        # sf.write(os.path.join( conf.get('temp_directory'),  f"MAIN-full-mixed-directly-{i}.wav"   ), track_padded, sr)
-
-    audio_output = os.path.join(conf.get("temp_directory"), f"MAIN-full-mixed-directly.wav")
-    sf.write(audio_output, mixed_track, sr)
-
+def compose_audio_clips(audio_clips, force=False):
+    wav_audio_output = os.path.join(conf.get("temp_directory"), f"MAIN-full-mixed-directly.wav")
     audio_output = os.path.join(conf.get("temp_directory"), "MAIN-full-mixed-directly.flac")
-    sf.write(audio_output, mixed_track, sr, format="FLAC")
 
-    print(f"\t\t\tMIXED {len(audio_clips)} audio clips together!")
+    if not os.path.exists(audio_output) or force:
+        # Determine the maximum length among all audio clips
+        max_len = max([track.shape[0] for track in audio_clips])
+
+        # Check if the audio clips are stereo (2 channels)
+        if any(track.shape[1] != 2 for track in audio_clips if len(track.shape) > 1):
+            raise ValueError("All tracks must be stereo (2 channels)")
+
+        # Initialize the mixed_track with zeros
+        mixed_track = np.zeros((max_len, 2), dtype=np.float64)
+
+        for i, track in enumerate(audio_clips):
+            # Pad the track if it's shorter than the longest one
+            pad_length = max_len - track.shape[0]
+
+            track_padded = np.pad(track, ((0, pad_length), (0, 0)), "constant")
+
+            # Mix the tracks (simple averaging)
+            mixed_track += track_padded
+
+            # sf.write(os.path.join( conf.get('temp_directory'),  f"MAIN-full-mixed-directly-{i}.wav"   ), track_padded, sr)
+
+        sf.write(wav_audio_output, mixed_track, sr)
+        sf.write(audio_output, mixed_track, sr, format="FLAC")
+
+        print(f"\t\t\tMIXED {len(audio_clips)} audio clips together!")
 
     return audio_output
 
@@ -590,6 +599,7 @@ def create_video_clips(
         # print(f"\t\tCreating video clip for {name}")
         reactors = reaction.get("reactors")
         if reactors is None:
+            print(f"{name} has no reactors!")
             continue
 
         reaction_color = reactor_colors.pop()
@@ -639,6 +649,8 @@ def create_video_clips(
 
             all_clips.append(clip_info)
             # print('\t\t\t\t...done!')
+
+    print(f"...created {len(all_clips)} reactor clips!")
 
     base_opacity = conf.get("base_video_transformations").get("opacity", False)
     if base_opacity:
