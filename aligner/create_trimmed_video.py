@@ -36,9 +36,7 @@ def trim_and_concat_video(
     # check_compatibility(filler_video, video_file)
 
     video_segments = [
-        list(s)
-        for s in video_segments
-        if ((not s[4]) and s[0] < s[1]) or (s[4] and s[2] < s[3])
+        list(s) for s in video_segments if ((not s[4]) and s[0] < s[1]) or (s[4] and s[2] < s[3])
     ]  # integrity check
 
     # process video  target_resolution=(1080, 1920)
@@ -68,7 +66,11 @@ def trim_and_concat_video(
             else:
                 video = reaction_video
 
+            start_frame = min(start_frame, video.duration)
             end_frame = min(end_frame, video.duration)
+
+            if end_frame - start_frame <= 0:
+                continue
 
             subclip = video.subclip(float(start_frame), float(end_frame))
             if filler:
@@ -76,11 +78,12 @@ def trim_and_concat_video(
                 subclip = subclip.without_audio()
         else:
             clip_duration = float(filler_end - filler_start)
-            subclip = (
-                ColorClip(size=(width, height), color=(0, 0, 0))
-                .set_duration(clip_duration)
-                .without_audio()
-            )
+            if clip_duration > 0:
+                subclip = (
+                    ColorClip(size=(width, height), color=(0, 0, 0))
+                    .set_duration(clip_duration)
+                    .without_audio()
+                )
 
         print(f"Adding frames from {start_frame}s to {end_frame}s filler? {filler}")
         clips.append(subclip)
@@ -104,12 +107,15 @@ def trim_and_concat_video(
             filler = False
 
             # print(reaction.get('reaction_audio_vocals_data'), start, end, filler_end)
-            end_frame = min(end_frame, reaction_video.duration)
-            subclip = reaction_video.subclip(float(start), float(end))
-            # replace audio with the source-separated vocal track
-            # vocals_audio = AudioArrayClip(reaction.get('reaction_audio_vocals_data')[int(start*sr):int(end*sr)])
-            # subclip = subclip.set_audio(vocals_audio)
-            clips.append(subclip)
+            start = min(start, reaction_video.duration)
+            end = min(end, reaction_video.duration)
+            if end - start > 0:
+                subclip = reaction_video.subclip(float(start), float(end))
+                # replace audio with the source-separated vocal track
+                # vocals_audio = AudioArrayClip(reaction.get('reaction_audio_vocals_data')[int(start*sr):int(end*sr)])
+                # subclip = subclip.set_audio(vocals_audio)
+                clips.append(subclip)
+                print(f"Extending {start}s to {end}s")
 
     # Concatenate the clips together
     final_clip = concatenate_videoclips(clips)
@@ -184,9 +190,7 @@ def _extract_video_info_from_file(video_file):
         "-show_format",
         "-show_streams",
     ]
-    result = subprocess.run(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     json_start_idx = result.stdout.find("{")
     json_output = result.stdout[json_start_idx:]
@@ -209,19 +213,11 @@ def check_compatibility(video1, video2):
         print("no video info to check compatibility for", video1_info, video2_info)
         return
 
-    video1_video_stream = next(
-        s for s in video1_info["streams"] if s["codec_type"] == "video"
-    )
-    video2_video_stream = next(
-        s for s in video2_info["streams"] if s["codec_type"] == "video"
-    )
+    video1_video_stream = next(s for s in video1_info["streams"] if s["codec_type"] == "video")
+    video2_video_stream = next(s for s in video2_info["streams"] if s["codec_type"] == "video")
 
-    video1_audio_stream = next(
-        s for s in video1_info["streams"] if s["codec_type"] == "audio"
-    )
-    video2_audio_stream = next(
-        s for s in video2_info["streams"] if s["codec_type"] == "audio"
-    )
+    video1_audio_stream = next(s for s in video1_info["streams"] if s["codec_type"] == "audio")
+    video2_audio_stream = next(s for s in video2_info["streams"] if s["codec_type"] == "audio")
 
     video_attributes_to_check = [
         "codec_name",
@@ -252,9 +248,7 @@ def check_compatibility(video1, video2):
         v1_attr = video1_video_stream.get(attribute, "Unavailable")
         v2_attr = video2_video_stream.get(attribute, "Unavailable")
         if v1_attr != v2_attr:
-            print(
-                f"Different {attribute}: {video1} has {v1_attr}, while {video2} has {v2_attr}"
-            )
+            print(f"Different {attribute}: {video1} has {v1_attr}, while {video2} has {v2_attr}")
 
     if video1_audio_stream and video2_audio_stream:
         for attribute in audio_attributes_to_check:
