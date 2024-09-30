@@ -42,16 +42,26 @@ def build_image_matches(
     min_coverage=0.5,
     similarity_threshold=0.95,
     lag=0,
+    lags=[],
     allowed_spacing_on_ends=10,
     visualize=False,
 ):
     lag = int(lag)
+
+    if lag in lags:
+        print("Lag cycle detected. Adjusting.")
+        lag /= 2
+
+    lags.append(lag)
+
     channel = reaction.get("channel")
+    song_length = conf.get("song_length")
+    reaction_length = len(reaction.get("reaction_audio_data"))
 
     music_video_path = conf.get("base_video_path")
     reaction_video_path = reaction.get("video_path")
 
-    check_and_fix_fps(reaction_video_path)
+    fixed = check_and_fix_fps(reaction_video_path)
 
     hash_output_dir = os.path.join(conf.get("temp_directory"), "image_hashes")
     if not os.path.exists(hash_output_dir):
@@ -82,7 +92,7 @@ def build_image_matches(
     hash_cache_path = os.path.join(hash_output_dir, hash_cache_file_name)
     music_hashes_path = os.path.join(hash_output_dir, music_hashes_file_name)
 
-    if not os.path.exists(hash_cache_path):
+    if not os.path.exists(hash_cache_path) or fixed:
         # Extract frames from both videos
 
         if not os.path.exists(music_hashes_path):
@@ -99,7 +109,7 @@ def build_image_matches(
                 },
             )
 
-        if not os.path.exists(hashes_file_path):
+        if not os.path.exists(hashes_file_path) or fixed:
             print("Extracting frames from the reaction video")
             reaction_frames = extract_frames(
                 reaction_video_path, fps=fps, crop_coords=reaction_crop_coordinates
@@ -211,6 +221,7 @@ def build_image_matches(
             min_coverage=min_coverage,
             similarity_threshold=similarity_threshold,
             lag=detected_lag + lag,
+            lags=lags,
             visualize=visualize,
         )
 
