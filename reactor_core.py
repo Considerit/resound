@@ -20,8 +20,8 @@ from backchannel_isolator import (
 from compositor import create_reaction_concert
 from compositor.asides import create_asides
 
-from aligner import create_aligned_reaction_video
-from aligner.scoring_and_similarity import print_path, ground_truth_overlap
+from aligner import create_alignment_for_reaction_video, write_aligned_reaction_video
+from aligner.scoring_and_similarity import ground_truth_overlap
 
 import cProfile
 import pstats
@@ -118,21 +118,24 @@ def reaction_fully_processed(reaction):
     )
 
 
-def handle_reaction_video(reaction, extend_by=15):
+def handle_reaction_video(reaction, jobs, extend_by=15):
     # if '40' not in reaction['channel']:
     #     return
 
     # print("processing ", reaction['channel'])
     # Create the output video file name
+    if "create_alignment" in jobs:
+        create_alignment_for_reaction_video(reaction)
 
-    create_aligned_reaction_video(reaction, extend_by=extend_by)
+    if "output_alignment_video" in jobs:
+        write_aligned_reaction_video(reaction, extend_by=extend_by)
 
-    if not conf.get("isolate_commentary"):
+    if "isolate_commentary" not in jobs:
         return []
 
     reaction["backchannel_audio"] = isolate_reactor_backchannel(reaction, extended_by=extend_by)
 
-    if not conf.get("create_reactor_view"):
+    if "create_reactor_view" not in jobs:
         return []
 
     # backchannel_audio is used by create_reactor_view to replace the audio track of the reactor trace
@@ -150,8 +153,12 @@ def create_reaction_compilation(
     progress,
     output_dir: str = "aligned",
     include_base_video=True,
+    extend_by=12,
     options={},
+    jobs=[],
 ):
+    job_sequence = jobs
+    jobs = {j: max_workers for j, max_workers in jobs}
     failed_reactions = []
 
     try:
@@ -205,62 +212,48 @@ def create_reaction_compilation(
         if conf.get("only_manifest", False):
             return []
 
-        extend_by = 12
-
         conf.get("load_reactions")()
 
         all_reactions = list(conf.get("reactions").keys())
         all_reactions.sort()
 
-        def handle_all_reaction_videos(return_if_ready_for_compilation):
-            for i, channel in enumerate(all_reactions):
-                reaction = conf.get("reactions").get(channel)
+        for i, channel in enumerate(all_reactions):
+            reaction = conf.get("reactions").get(channel)
 
-                print_profiling()
+            print_profiling()
 
-                if not request_lock(channel):
-                    continue
+            if not request_lock(channel):
+                continue
 
-                try:
-                    # profiler = cProfile.Profile()
-                    # profiler.enable()
+            try:
+                # profiler = cProfile.Profile()
+                # profiler.enable()
 
-                    if (
-                        not reaction_fully_processed(reaction)
-                        or not return_if_ready_for_compilation
-                    ):
-                        handle_reaction_video(reaction, extend_by=extend_by)
+                if not reaction_fully_processed(reaction):
+                    handle_reaction_video(reaction, jobs=jobs, extend_by=extend_by)
 
-                    # profiler.disable()
-                    # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
-                    # stats.print_stats()
+                # profiler.disable()
+                # stats = pstats.Stats(profiler).sort_stats('tottime')  # 'tottime' for total time
+                # stats.print_stats()
 
-                except Exception as e:
-                    traceback.print_exc()
-                    print(e)
-                    traceback_str = traceback.format_exc()
-                    failed_reactions.append((reaction.get("channel"), e, traceback_str))
-                    conf["remove_reaction"](reaction.get("channel"))
-                    if conf.get("break_on_exception"):
-                        raise (e)
+            except Exception as e:
+                traceback.print_exc()
+                print(e)
+                traceback_str = traceback.format_exc()
+                failed_reactions.append((reaction.get("channel"), e, traceback_str))
+                conf["remove_reaction"](reaction.get("channel"))
+                if conf.get("break_on_exception"):
+                    raise (e)
 
-                log_progress(progress)
+            log_progress(progress)
 
-                unload_reaction(channel)
-                free_lock(channel)
-
-        handle_all_reaction_videos(True)
+            unload_reaction(channel)
+            free_lock(channel)
 
         print_progress(progress)
         compilation_exists = os.path.exists(compilation_path)
         print("COMP EXISTS?", compilation_exists, compilation_path)
-        if (
-            not compilation_exists
-            and conf.get("create_compilation")
-            and request_lock("compilation")
-        ):
-            # handle_all_reaction_videos(False)
-
+        if not compilation_exists and "create_compilation" in jobs and request_lock("compilation"):
             for channel in all_reactions:
                 reaction = conf.get("reactions").get(channel)
                 reaction["backchannel_audio"] = get_reactor_backchannel_path(reaction)
@@ -439,22 +432,29 @@ if __name__ == "__main__":
         conf["free_conf"]()
 
     options = {
-        "create_alignment": True,
         "save_alignment_metadata": True,
-        "output_alignment_video": True,
-        "isolate_commentary": True,
-        "create_reactor_view": False,
-        "create_compilation": False,
         "download_and_parse": False,
-        "alignment_test": False,
         "draft": True,
         "break_on_exception": False,
         "skip_asides": False,
     }
+
+    jobs = [
+        ["create_alignment", 6],
+        ["output_alignment_video", 1],
+        ["isolate_commentary", 1],
+        ["create_reactor_view", 1],
+        ["create_compilation", 1],
+    ]
+
     failures = []
     for song in drafts:
         failed = create_reaction_compilation(
-            song, progress, output_dir=results_output_dir, options=options
+            song,
+            progress,
+            output_dir=results_output_dir,
+            options=options,
+            jobs=jobs,
         )
         if len(failed) > 0:
             failures.append((song, failed))
@@ -463,7 +463,11 @@ if __name__ == "__main__":
     failures = []
     for song in songs:
         failed = create_reaction_compilation(
-            song, progress, output_dir=results_output_dir, options=options
+            song,
+            progress,
+            output_dir=results_output_dir,
+            options=options,
+            jobs=jobs,
         )
         if len(failed) > 0:
             failures.append((song, failed))

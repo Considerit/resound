@@ -320,8 +320,8 @@ def get_image_score_for_segment(reaction, segment):
             rt_adjustment,
             initial_mt,
             initial_rt,
-            rt,
             mt,
+            rt,
         )
 
     if len(my_scores) == 0:
@@ -668,8 +668,8 @@ def print_path(path, reaction, segments_by_key=None, ignore_score=False):
         row = [
             "\t\t",
             "x" if is_filler else "",
-            f"{float(current_start)/sr:.3f}-{float(current_end)/sr:.3f}",
-            f"{float(reaction_start)/sr:.3f}-{float(reaction_end)/sr:.3f}",
+            f"{float(current_start)/sr:.1f}-{float(current_end)/sr:.1f}",
+            f"{float(reaction_start)/sr:.1f}-{float(reaction_end)/sr:.1f}",
             f"{float(reaction_start - current_start)/sr:.3f}",
             f"{round(mfcc_cosine_score)}",
             f"{round(raw_cosine_score)}",
