@@ -80,7 +80,8 @@ def find_best_intercept(
         #     or reaction_start - 0.05 * sr <= b + base_start <= reaction_end + 0.05 * sr
         # ):
 
-        unique_intercepts[b] = True
+        if b >= 0:
+            unique_intercepts[b] = True
     #     # else:
     #     #     print('intr', base_start / sr, base_end / sr, reaction_start/sr, reaction_end/sr, (b + base_start) / sr, b/sr, reaction_start <= b + base_start <= reaction_end)
 
