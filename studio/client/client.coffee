@@ -385,7 +385,7 @@ dom.LAYOUT = ->
 
             DIV 
               style: 
-                backgroundColor: if seat not of assigned_seats then '#eaeaea'
+                backgroundColor: if seat not of assigned_seats then '#eaeaea' else '#ccc'
 
                 width: seat_size * adjustment - inner_border * 2
                 height: seat_size * adjustment - inner_border * 2

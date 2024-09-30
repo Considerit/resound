@@ -250,11 +250,22 @@ def generate_grid(width, height, min_cells, outside_bounds=None, center=None, sh
 
             # Add the hexagon to the list if it's fully inside the width x height area
             fully_inside_grid = x - a >= 0 and y - a >= 0 and x + a <= width and y + a <= height
-            not_covering_base = (
-                distance_from_region((x, y), outside_bounds)
-                > a - (outside_bounds[3] - outside_bounds[1]) / 10
+
+            # Calculate bounding box of the current cell
+            cell_x, cell_y, cell_x2, cell_y2 = (
+                x - a / 2,  # Adjust the size to account for the hexagon shape
+                y - a / 2,
+                x + a / 2,
+                y + a / 2,
             )
-            if fully_inside_grid and not_covering_base:
+
+            # Check if the hexagon's bounding box does NOT overlap with the base
+            base_x, base_y, base_x2, base_y2 = outside_bounds
+            does_not_overlap_base = (
+                cell_x2 < base_x or cell_x > base_x2 or cell_y2 < base_y or cell_y > base_y2
+            )
+
+            if fully_inside_grid and does_not_overlap_base:
                 filtered_coords.append(centroid)
 
         coords = filtered_coords
@@ -278,6 +289,7 @@ def generate_grid(width, height, min_cells, outside_bounds=None, center=None, sh
     # I'm not sure if it is desirable when the video isn't centered horizontally.
     min_x = 99999999
     max_x = 0
+
     for x, y in coords:
         if x - cell_size / 2 < min_x:
             min_x = x - cell_size / 2
