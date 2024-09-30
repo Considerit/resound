@@ -347,7 +347,7 @@ def check_and_fix_fps(video_file):
     """Check if the FPS is even, and if not, reencode the video at 30 FPS."""
     fps = get_video_fps(video_file)
     if fps is None:
-        return
+        return False
 
     if int(fps) % 2 != 0:
         print(f"FPS {fps} of {video_file} is not even. Reencoding to 30 FPS.")
@@ -356,6 +356,9 @@ def check_and_fix_fps(video_file):
 
         # Rename to .mp4 if reencoded to 30 FPS
         os.rename(output_file, os.path.splitext(video_file)[0] + ".mp4")
+        return True
+
+    return False
 
 
 # Start the listener

@@ -18,6 +18,7 @@ from reactor_core import load_songs
 from inventory.inventory import get_reactions_manifest
 
 from aligner.align_by_image.embedded_video_finder import get_bounding_box_of_music_video_in_reaction
+from utilities.utilities import check_and_fix_fps
 
 
 def do_something_per_reaction(callback):
@@ -36,6 +37,7 @@ def do_something_per_reaction(callback):
     yet_to_encounter = True
     jump_to = None
 
+    lags = []
     for i, channel in enumerate(all_reactions):
         reaction = conf.get("reactions").get(channel)
         manifest = all_manifests[channel]
@@ -43,24 +45,41 @@ def do_something_per_reaction(callback):
         # if not manifest.get("alignment_done"):
         #     continue
 
-        if channel not in ["Duane Reacts"]:
-            continue
-
         # if channel not in [
-        #     "mister energy",
-        #     "Gimmickless Reactions",
-        #     "Headbangers Guild",
-        #     "Second Covers",
-        #     "Touchy Reactions",
-        #     "iamsickflowz",
-        #     "RJJ's Reactions",
-        #     "Justin Hackert",
-        #     "Headbangers Guild",
-        #     "Crypt",
-        #     "COUNTY GAINS",
-        # ]:
+        #     "1K Z A Y"
+        # ]:  # , "AR", "Chris Liepe", "LEE REACTS - IMR Media & Gaming"]:
         #     continue
 
+        if channel not in [
+            # "1K Z A Y",
+            # "BigNickOfficial",
+            # "Bisscute",
+            # "Adnan Reacts",
+            # "CADZ Crew",
+            # "COM8E Reacts",  # bad transitions
+            # "DLace Reacts",
+            # "DonVon",
+            "Elmo Reacts",  # bad transitions
+            # "Face Famous",
+            # "FrankValchiria",
+            # # "Jahherbz",
+            # "JND",  # transitions
+            # "JördzReacts",  ## didnt' finish
+            # "LEE REACTS - IMR Media & Gaming",
+            # "LucieV Reacts",
+            # "Mr Network",  # There's a middle section that is slightly misaligned
+            # "MRLBOYD MUSIC",  # Still poorly chosen (maybe even filtered)
+            # "Niloyasha",
+            # "RikaShae",
+            # "Shadow Aeternum",  # Slow
+            # "Simply Not Simple",
+            # "SnakeVenomV",  # Slow
+            # "TeeSpicerReacts",  # Slow
+            # "TheReactTwinss",
+            # "UglyAceEnt",
+            # "Youngblood Poetry",
+        ]:
+            continue
         if channel == jump_to:
             yet_to_encounter = False
 
@@ -87,15 +106,25 @@ def do_something_per_reaction(callback):
 
             continue
 
+        # check_and_fix_fps(reaction.get("video_path"))
+
         # conf["load_base"]()
 
         callback(reaction)
+        # if type(lag) == float or type(lag) == int:
+        #     lags.append((channel, lag / sr))
+        #     print("")
+        #     for channel, lag in lags:
+        #         print(f"{lag} ({channel})")
+        #     print("")
+        # else:
+        #     print(lag)
 
         unload_reaction(channel)
 
 
 def something(reaction):
-    build_image_matches(reaction, visualize=False)
+    return build_image_matches(reaction, visualize=True)
 
 
 if __name__ == "__main__":

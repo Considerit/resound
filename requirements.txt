@@ -9,7 +9,6 @@ scikit-learn
 pydub
 pygetwindow
 noisereduce
-spleeter
 objgraph
 python-youtube
 requests
@@ -21,3 +20,5 @@ torch
 mtcnn
 screeninfo
 openai-whisper
+git+https://github.com/adefossez/demucs#egg=demucs
+seaborn

@@ -21,7 +21,7 @@ from aligner.align_by_image.align_by_image import build_image_matches
 from reactor_core import load_songs
 from inventory.inventory import get_reactions_manifest
 
-from aligner.create_alignment import create_aligned_reaction_video
+from aligner.create_alignment import create_alignment_for_reaction_video
 
 
 def do_something_per_reaction(callback):
@@ -47,23 +47,39 @@ def do_something_per_reaction(callback):
         # if not manifest.get("alignment_done"):
         #     continue
 
-        if channel not in ["AleksReacts"]:
-            continue
-
-        # if channel not in [
-        #     "mister energy",
-        #     "Gimmickless Reactions",
-        #     "Headbangers Guild",
-        #     "Second Covers",
-        #     "Touchy Reactions",
-        #     "iamsickflowz",
-        #     "RJJ's Reactions",
-        #     "Justin Hackert",
-        #     "Headbangers Guild",
-        #     "Crypt",
-        #     "COUNTY GAINS",
-        # ]:
+        # if channel not in ["Jahherbz"]:
         #     continue
+
+        if channel not in [
+            # "1K Z A Y",
+            # "BigNickOfficial",
+            # "Bisscute",
+            # "Adnan Reacts",
+            # "CADZ Crew",
+            # "COM8E Reacts",  # bad transition perhaps caused by a poor consolidation where the audio alignment went too far into silence?
+            # "DLace Reacts",
+            # "DonVon",
+            # "Elmo Reacts",  # Still poorly chosen
+            # "Face Famous",
+            # "FrankValchiria",
+            # # "Jahherbz",
+            # "JND",  # I think this is poorly chosen xxx
+            "JördzReacts",  ## didnt' finish
+            # "LEE REACTS - IMR Media & Gaming",
+            # "LucieV Reacts",
+            # "Mr Network",  # There's a middle section that is slightly misaligned
+            # "MRLBOYD MUSIC",  # Still poorly chosen (maybe even filtered)
+            # "Niloyasha",
+            # "RikaShae",
+            # "Shadow Aeternum",  # legit slow due to a hyper extended segment
+            # "Simply Not Simple",
+            # "SnakeVenomV",  # poorly chosen audio segment at end. There's a perfect image one available.
+            # "TeeSpicerReacts",  # poorly chosen audio segment at end. There's a perfect image one available.
+            # "TheReactTwinss",
+            # "UglyAceEnt",
+            # "Youngblood Poetry",
+        ]:
+            continue
 
         use_best_path_filter = False
         ###############################
@@ -130,6 +146,7 @@ def do_something_per_reaction(callback):
                 else:
                     os.remove(f)
         ###############################
+
         continue
 
         try:
@@ -146,7 +163,7 @@ def do_something_per_reaction(callback):
 
 
 def something(reaction):
-    create_aligned_reaction_video(reaction, extend_by=12, force=True)
+    create_alignment_for_reaction_video(reaction, extend_by=12, force=True)
 
 
 if __name__ == "__main__":
