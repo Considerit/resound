@@ -294,7 +294,7 @@ bus = require('statebus').serve
 
           return matchingFiles
         catch error
-          console.error('Error reading directory:', error)
+          console.error("Error reading directory:", error)
           return []
 
       # reactors_pattern = /.*-CROSS-EXPANDER-cropped-.*\.mp4$/
@@ -328,7 +328,10 @@ bus = require('statebus').serve
       # full_backchannel = "#{reaction_file_prefix}-CROSS-EXPANDER/vocals-post-high-passed.wav"
 
       if obj.scope == 'alignment' and obj.action == 'delete'
-        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-", metadata_dir)
+        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-CROSS-EXPANDER", metadata_dir)
+        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-isolated", metadata_dir)
+        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-aside-", metadata_dir)
+        deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-painting", metadata_dir)
         deleteFilesAndDirsStartingWithSync("#{reaction_file_prefix}-", cache_dir)
 
       else if obj.scope.startsWith('cropped reactors') and obj.action == 'delete'
